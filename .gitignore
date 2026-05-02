@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Runtime logs and diagnostics
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment and local machine state
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Temporary files
+tmp/
+temp/
+.cache/
+
+# Adapter/debug session artifacts
+.dap-cli/
+*.pid
+*.sock
