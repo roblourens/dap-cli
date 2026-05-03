@@ -30,6 +30,10 @@ export function createFakeAdapterScript(name: string): FakeAdapterScript {
     };
   }
 
+  if (name === 'playwright-inspection') {
+    return createPlaywrightInspectionScript(name);
+  }
+
   if (name === 'stderr-close') {
     return {
       name,
@@ -49,6 +53,26 @@ export function createFakeAdapterScript(name: string): FakeAdapterScript {
   }
 
   return createLifecycleScript(name, 'launch');
+}
+
+function createPlaywrightInspectionScript(name: string): FakeAdapterScript {
+  return {
+    name,
+    steps: [
+      { kind: 'expectRequest', command: 'initialize', respond: { seq: 1, type: 'response', request_seq: 0, success: true, command: 'initialize', body: { supportsConfigurationDoneRequest: true } } },
+      { kind: 'expectRequest', command: 'launch', respond: { seq: 2, type: 'response', request_seq: 0, success: true, command: 'launch' } },
+      { kind: 'sendEvent', event: { seq: 3, type: 'event', event: 'initialized' } },
+      { kind: 'expectRequest', command: 'configurationDone', respond: { seq: 4, type: 'response', request_seq: 0, success: true, command: 'configurationDone' } },
+      { kind: 'sendEvent', event: { seq: 5, type: 'event', event: 'stopped', body: { reason: 'breakpoint', threadId: 1 } } },
+      { kind: 'expectRequest', command: 'threads', respond: { seq: 6, type: 'response', request_seq: 0, success: true, command: 'threads', body: { threads: [{ id: 1, name: 'main' }] } } },
+      { kind: 'expectRequest', command: 'stackTrace', respond: { seq: 7, type: 'response', request_seq: 0, success: true, command: 'stackTrace', body: { stackFrames: [{ id: 10, name: 'calculate', line: 2, column: 3, source: { name: 'app.js', path: 'tests/fixtures/simple-chrome-page/app.js' } }], totalFrames: 1 } } },
+      { kind: 'expectRequest', command: 'scopes', respond: { seq: 8, type: 'response', request_seq: 0, success: true, command: 'scopes', body: { scopes: [{ name: 'Locals', variablesReference: 100, expensive: false }] } } },
+      { kind: 'expectRequest', command: 'variables', respond: { seq: 9, type: 'response', request_seq: 0, success: true, command: 'variables', body: { variables: [{ name: 'left', value: '4', variablesReference: 0 }, { name: 'right', value: '6', variablesReference: 0 }, { name: 'result', value: '10', variablesReference: 0 }] } } },
+      { kind: 'expectRequest', command: 'continue', respond: { seq: 10, type: 'response', request_seq: 0, success: true, command: 'continue', body: { allThreadsContinued: true } } },
+      { kind: 'expectRequest', command: 'disconnect', respond: { seq: 11, type: 'response', request_seq: 0, success: true, command: 'disconnect' } },
+      { kind: 'sendEvent', event: { seq: 12, type: 'event', event: 'terminated' } },
+    ],
+  };
 }
 
 export function createFakeAdapterTransport(script: FakeAdapterScript): DapTransport {

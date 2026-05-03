@@ -7,7 +7,8 @@ export interface AdapterDescriptor {
   label: string;
   transport:
     | { kind: 'stdio'; command: string; args: string[]; cwd?: string | undefined; env?: Record<string, string> | undefined }
-    | { kind: 'socket'; host: '127.0.0.1'; port: number };
+    | { kind: 'socket'; host: '127.0.0.1'; port: number }
+    | { kind: 'server'; command: string; args: string[]; host: '127.0.0.1'; cwd?: string | undefined; env?: Record<string, string> | undefined };
 }
 
 export const adapterDescriptorSchema: z.ZodType<AdapterDescriptor> = z.object({
@@ -25,6 +26,14 @@ export const adapterDescriptorSchema: z.ZodType<AdapterDescriptor> = z.object({
       kind: z.literal('socket'),
       host: z.literal('127.0.0.1'),
       port: z.number().int().positive(),
+    }),
+    z.object({
+      kind: z.literal('server'),
+      command: z.string().min(1),
+      args: z.array(z.string()),
+      host: z.literal('127.0.0.1'),
+      cwd: z.string().min(1).optional(),
+      env: z.record(z.string(), z.string()).optional(),
     }),
   ]),
 });

@@ -21,6 +21,19 @@ export function getDapCliLogDir(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(getDapCliHome(env), 'logs');
 }
 
+export function getDapCliAdaptersDir(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getDapCliHome(env), 'adapters');
+}
+
+export function getDapCliVenvPythonPath(env: NodeJS.ProcessEnv = process.env): string {
+  const venvDirectory = path.join(getDapCliHome(env), 'venv');
+  if (process.platform === 'win32') {
+    return path.join(venvDirectory, 'Scripts', 'python.exe');
+  }
+
+  return path.join(venvDirectory, 'bin', 'python3');
+}
+
 function getDefaultDapCliHome(): string {
   return path.join(homedir(), appDirectoryName);
 }

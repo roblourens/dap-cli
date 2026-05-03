@@ -106,8 +106,14 @@ export function mapJsDebugFlags(flags: Record<string, unknown>): Record<string, 
   copyDefined(mapped, flags, 'sourceMaps');
   copyDefined(mapped, flags, 'outFiles');
 
+  if (flags.type === 'node') {
+    mapped.type = 'pwa-node';
+  }
+  if (flags.type === 'chrome') {
+    mapped.type = 'pwa-chrome';
+  }
   if (flags.runtimeExecutable === 'electron') {
-    mapped.type = 'node';
+    mapped.type = 'pwa-node';
   }
 
   return mapped;

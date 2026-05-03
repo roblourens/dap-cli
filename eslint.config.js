@@ -8,7 +8,7 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
-    files: ['src/**/*.ts', 'tests/**/*.ts', '*.config.ts'],
+    files: ['src/**/*.ts', 'tests/**/*.ts', 'scripts/**/*.ts', '*.config.ts'],
     languageOptions: {
       parserOptions: {
         projectService: true,

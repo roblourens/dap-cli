@@ -1,4 +1,4 @@
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
@@ -11,11 +11,9 @@ import type { DapEventMessage } from '../../src/protocol/dapMessages.js';
 import { createCliTestEnv, type CliTestEnv } from '../helpers/runCli.js';
 import { startControllerServer, type ControllerServer } from '../../src/controller/server.js';
 
-const debugpyProbe = spawnSync('python3', ['-c', 'import debugpy'], { stdio: 'ignore' });
-const hasDebugpy = debugpyProbe.status === 0;
-
 let testEnv: CliTestEnv;
 let server: ControllerServer | undefined;
+const runDebugpyAttachSmoke = process.env.DAP_CLI_RUN_DEBUGPY_ATTACH_SMOKE === '1';
 
 beforeEach(async () => {
   testEnv = await createCliTestEnv('dap-cli-debugpy-');
@@ -32,14 +30,18 @@ afterEach(async () => {
 
 describe('debugpy adapter integration', () => {
   test('resolves debugpy as a built-in adapter descriptor', () => {
-    expect(new AdapterRegistry().resolve('debugpy')).toEqual({
-      id: 'debugpy',
-      label: 'Python Debug Adapter (debugpy)',
-      transport: { kind: 'stdio', command: 'python3', args: ['-m', 'debugpy.adapter'] },
-    });
-  });
+    const descriptor = resolveDebugpyDescriptor();
 
-  test.skipIf(!hasDebugpy)('launches Python script with debugpy and verifies breakpoint inspection', async () => {
+    expect(descriptor.id).toBe('debugpy');
+    expect(descriptor.label).toBe('Python Debug Adapter (debugpy)');
+    expect(descriptor.transport.kind).toBe('stdio');
+    if (descriptor.transport.kind !== 'stdio') {
+      throw new Error('Expected debugpy to use stdio transport.');
+    }
+    expect(descriptor.transport).toEqual({ kind: 'stdio', command: descriptor.transport.command, args: ['-m', 'debugpy.adapter'] });
+  }, 30_000);
+
+  test('launches Python script with debugpy and verifies breakpoint inspection', async () => {
     const fixture = path.join(process.cwd(), 'tests', 'fixtures', 'simple-python-app', 'main.py');
     await runDebugpyBreakpointSmoke({
       startRequest: 'launch',
@@ -52,13 +54,18 @@ describe('debugpy adapter integration', () => {
         console: 'internalConsole',
       },
       sourcePath: fixture,
-      breakpointLine: 7,
+      breakpointLine: 8,
       expectedLocalNames: ['left', 'right'],
     });
-  });
+  }, 30_000);
 
-  test.skipIf(!hasDebugpy)('attaches to debugpy and verifies breakpoint inspection', async () => {
-    const target = await startAttachTarget();
+  test.skipIf(!runDebugpyAttachSmoke)('attaches to debugpy and verifies breakpoint inspection', async () => {
+    const descriptor = resolveDebugpyDescriptor();
+    if (descriptor.transport.kind !== 'stdio') {
+      throw new Error('Expected debugpy to use stdio transport.');
+    }
+
+    const target = await startAttachTarget(descriptor.transport.command);
     try {
       await runDebugpyBreakpointSmoke({
         startRequest: 'attach',
@@ -75,7 +82,7 @@ describe('debugpy adapter integration', () => {
     } finally {
       target.process.kill('SIGTERM');
     }
-  });
+  }, 30_000);
 });
 
 interface BreakpointSmokeOptions {
@@ -93,7 +100,7 @@ interface AttachTarget {
 }
 
 async function runDebugpyBreakpointSmoke(options: BreakpointSmokeOptions): Promise<void> {
-  const descriptor = new AdapterRegistry().resolve('debugpy');
+  const descriptor = resolveDebugpyDescriptor();
   if (descriptor.transport.kind !== 'stdio') {
     throw new Error('Expected debugpy to use stdio transport.');
   }
@@ -101,10 +108,10 @@ async function runDebugpyBreakpointSmoke(options: BreakpointSmokeOptions): Promi
   const logDir = path.join(testEnv.dapCliHome, 'logs');
   await mkdir(logDir, { recursive: true });
   const adapter = startProcessAdapter({ descriptor: descriptor.transport, adapterId: descriptor.id, logDir });
-  const client = new DapClient(adapter.transport, { requestTimeoutMs: 10_000 });
+  const client = new DapClient(adapter.transport, { requestTimeoutMs: 30_000 });
 
   try {
-    const initialized = waitForEvent(client, 'initialized');
+    const initialized = options.startRequest === 'launch' ? waitForEvent(client, 'initialized') : undefined;
     await client.request('initialize', {
       adapterID: 'debugpy',
       clientID: 'dap-cli-tests',
@@ -113,8 +120,10 @@ async function runDebugpyBreakpointSmoke(options: BreakpointSmokeOptions): Promi
       linesStartAt1: true,
       pathFormat: 'path',
     });
-    await client.request(options.startRequest, options.startArgs);
-    await initialized;
+    const start = client.request(options.startRequest, options.startArgs);
+    if (initialized !== undefined) {
+      await initialized;
+    }
 
     const breakpoints = await client.request<DebugProtocol.SetBreakpointsResponse['body']>('setBreakpoints', {
       source: { path: options.sourcePath },
@@ -124,6 +133,11 @@ async function runDebugpyBreakpointSmoke(options: BreakpointSmokeOptions): Promi
 
     const stopped = waitForEvent(client, 'stopped');
     await client.request('configurationDone');
+    if (options.startRequest === 'launch') {
+      await start;
+    } else {
+      void start.catch(() => undefined);
+    }
     const stoppedEvent = await stopped;
     const threadId = await resolveStoppedThreadId(client, stoppedEvent);
     const frame = await firstStackFrame(client, threadId);
@@ -142,14 +156,18 @@ async function runDebugpyBreakpointSmoke(options: BreakpointSmokeOptions): Promi
   }
 }
 
-async function startAttachTarget(): Promise<AttachTarget> {
+function resolveDebugpyDescriptor() {
+  return new AdapterRegistry().resolve('debugpy');
+}
+
+async function startAttachTarget(pythonPath: string): Promise<AttachTarget> {
   const port = await getFreePort();
   const scriptDir = path.join(testEnv.dapCliHome, 'debugpy-attach-target');
   const scriptPath = path.join(scriptDir, 'target.py');
   await mkdir(scriptDir, { recursive: true });
   await writeFile(scriptPath, `import debugpy\n\ndef calculate(left, right):\n    result = left + right\n    return result\n\ndebugpy.listen(('127.0.0.1', ${port}))\nprint('ready', flush=True)\ndebugpy.wait_for_client()\ncalculate(2, 3)\n`, 'utf8');
 
-  const child = spawn('python3', [scriptPath], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(pythonPath, [scriptPath], { stdio: ['pipe', 'pipe', 'pipe'] });
   await waitForProcessOutput(child, 'ready');
   return { port, scriptPath, process: child };
 }

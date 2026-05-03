@@ -46,8 +46,8 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [x] **AGNT-01**: dap-cli commands return machine-readable JSON output suitable for agent parsing.
 - [x] **AGNT-02**: dap-cli uses stable nonzero exit codes and structured error payloads for failed commands.
 - [x] **AGNT-03**: dap-cli surfaces adapter stderr, log paths, request names, session IDs, and actionable diagnostics when a command fails.
-- [ ] **AGNT-04**: Documentation includes agent-oriented workflows that interleave dap-cli commands with Playwright CLI commands.
-- [ ] **AGNT-05**: Documentation includes examples for polling session status instead of relying on event streaming in v1.
+- [x] **AGNT-04**: Documentation includes agent-oriented workflows that interleave dap-cli commands with Playwright CLI commands.
+- [x] **AGNT-05**: Documentation includes examples for polling session status instead of relying on event streaming in v1.
 
 ### Verification
 
@@ -124,8 +124,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AGNT-01 | Phase 1 | Complete |
 | AGNT-02 | Phase 1 | Complete |
 | AGNT-03 | Phase 1 | Complete |
-| AGNT-04 | Phase 4 | Pending |
-| AGNT-05 | Phase 4 | Pending |
+| AGNT-04 | Phase 4 | Complete |
+| AGNT-05 | Phase 4 | Complete |
 | TEST-01 | Phase 1 | Complete |
 | TEST-02 | Phase 2 | Complete |
 | TEST-03 | Phase 1 | Complete |

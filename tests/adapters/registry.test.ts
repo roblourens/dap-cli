@@ -58,12 +58,16 @@ describe('AdapterRegistry', () => {
 
   test('includes debugpy as a built-in adapter', () => {
     const registry = new AdapterRegistry();
+    const descriptor = registry.resolve('debugpy');
 
-    expect(registry.resolve('debugpy')).toEqual({
-      id: 'debugpy',
-      label: 'Python Debug Adapter (debugpy)',
-      transport: { kind: 'stdio', command: 'python3', args: ['-m', 'debugpy.adapter'] },
-    });
+    expect(descriptor.id).toBe('debugpy');
+    expect(descriptor.label).toBe('Python Debug Adapter (debugpy)');
+    expect(descriptor.transport.kind).toBe('stdio');
+    if (descriptor.transport.kind !== 'stdio') {
+      throw new Error('Expected debugpy to use stdio transport.');
+    }
+    expect(descriptor.transport.command.length).toBeGreaterThan(0);
+    expect(descriptor.transport.args).toEqual(['-m', 'debugpy.adapter']);
   });
 });
 

@@ -50,7 +50,7 @@ export function registerDapAliasCommands(program: Command, stdout: JsonWritable)
     .requiredOption('--source <path>', 'source path')
     .requiredOption('--line <number...>', 'breakpoint line')
     .option('--name <name>', 'session name or id')
-    .description('Replace breakpoints for a source')
+    .description('Set breakpoints at source file line numbers')
     .action(async (options: BreakpointsSetOptions) => {
       const lines = parseIntegerValues(options.line, 'line');
       await sendAliasRequest(stdout, 'setBreakpoints', {
@@ -60,11 +60,11 @@ export function registerDapAliasCommands(program: Command, stdout: JsonWritable)
       }, options.name, 'breakpoints set');
     });
 
-  program.command('threads').option('--name <name>', 'session name or id').description('List debuggee threads').action(async (options: NamedOptions) => {
+  program.command('threads').option('--name <name>', 'session name or id').description('List active threads in a paused session').addHelpText('after', workflowHelp()).action(async (options: NamedOptions) => {
     await sendAliasRequest(stdout, 'threads', {}, options.name, 'threads');
   });
 
-  program.command('stack').requiredOption('--thread-id <number>', 'thread id').option('--start-frame <number>', 'start frame').option('--levels <number>', 'frame count').option('--name <name>', 'session name or id').description('Return stack frames').action(async (options: StackOptions) => {
+  program.command('stack').requiredOption('--thread-id <number>', 'thread id').option('--start-frame <number>', 'start frame').option('--levels <number>', 'frame count').option('--name <name>', 'session name or id').description('Get stack frames for a thread (requires thread-id from threads command)').addHelpText('after', workflowHelp()).action(async (options: StackOptions) => {
     await sendAliasRequest(stdout, 'stackTrace', compactObject({
       threadId: parseRequiredIntegerOption(options.threadId, 'thread-id'),
       startFrame: parseIntegerOption(options.startFrame, 'start-frame'),
@@ -72,11 +72,11 @@ export function registerDapAliasCommands(program: Command, stdout: JsonWritable)
     }), options.name, 'stack');
   });
 
-  program.command('scopes').requiredOption('--frame-id <number>', 'frame id').option('--name <name>', 'session name or id').description('Return scopes for a frame').action(async (options: ScopesOptions) => {
+  program.command('scopes').requiredOption('--frame-id <number>', 'frame id').option('--name <name>', 'session name or id').description('List scopes for a stack frame (requires frame-id from stack command)').addHelpText('after', workflowHelp()).action(async (options: ScopesOptions) => {
     await sendAliasRequest(stdout, 'scopes', { frameId: parseRequiredIntegerOption(options.frameId, 'frame-id') }, options.name, 'scopes');
   });
 
-  program.command('variables').requiredOption('--variables-reference <number>', 'variables reference').option('--name <name>', 'session name or id').description('Return variables for a reference').action(async (options: VariablesOptions) => {
+  program.command('variables').requiredOption('--variables-reference <number>', 'variables reference').option('--name <name>', 'session name or id').description('Inspect variables for a scope (requires variables-reference from scopes command)').addHelpText('after', workflowHelp()).action(async (options: VariablesOptions) => {
     await sendAliasRequest(stdout, 'variables', { variablesReference: parseRequiredIntegerOption(options.variablesReference, 'variables-reference') }, options.name, 'variables');
   });
 
@@ -115,6 +115,19 @@ export function registerDapAliasCommands(program: Command, stdout: JsonWritable)
   program.command('step-out').requiredOption('--thread-id <number>', 'thread id').option('--single-thread', 'step only one thread').option('--name <name>', 'session name or id').description('Step out').action(async (options: ThreadControlOptions) => {
     await sendThreadControlAlias(stdout, 'stepOut', options, 'step-out');
   });
+}
+
+function workflowHelp(): string {
+  return `
+
+Polling workflow:
+  $ dap-cli status
+  $ dap-cli events --after-cursor 0
+  $ dap-cli threads
+  $ dap-cli stack --thread-id 1
+  $ dap-cli scopes --frame-id 1000
+  $ dap-cli variables --variables-reference 2000
+`;
 }
 
 async function sendThreadControlAlias(stdout: JsonWritable, dapCommand: 'continue' | 'pause' | 'next' | 'stepIn' | 'stepOut', options: ThreadControlOptions, commandLabel: string): Promise<void> {

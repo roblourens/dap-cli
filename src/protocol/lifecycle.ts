@@ -40,16 +40,18 @@ export class DapLifecycleController {
     const capabilities = await this.client.request('initialize', options.initializeArgs);
     this.setRunningState('initialized');
 
+    let startRequest: Promise<unknown>;
     if (options.mode === 'launch') {
       this.setRunningState('launching');
-      await this.client.request('launch', options.launchArgs);
+      startRequest = this.client.request('launch', options.launchArgs);
     } else {
       this.setRunningState('attaching');
-      await this.client.request('attach', options.attachArgs);
+      startRequest = this.client.request('attach', options.attachArgs);
     }
 
     await this.waitForInitializedEvent();
     await this.client.request('configurationDone');
+    await startRequest;
     await new Promise(resolve => setImmediate(resolve));
     if (this.state.lifecycle !== 'stopped' && this.state.lifecycle !== 'terminated') {
       this.setRunningState('running');

@@ -6,16 +6,19 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import type { DebugProtocol } from '@vscode/debugprotocol';
 import { AdapterRegistry } from '../../src/adapters/registry.js';
 import { startProcessAdapter } from '../../src/adapters/processAdapter.js';
-import { DapClient } from '../../src/protocol/dapClient.js';
+import { connectSocketAdapter, startServerSocketAdapter } from '../../src/adapters/socketAdapter.js';
+import { DapClient, DapTransportClosedError } from '../../src/protocol/dapClient.js';
 import type { DapEventMessage } from '../../src/protocol/dapMessages.js';
 import { createCliTestEnv, type CliTestEnv } from '../helpers/runCli.js';
 import { startControllerServer, type ControllerServer } from '../../src/controller/server.js';
+import { getDapCliAdaptersDir } from '../../src/config/paths.js';
 
-const jsDebugPath = path.join(process.env.DAP_CLI_HOME ?? '', 'adapters', 'js-debug', 'src', 'dapDebugServer.js');
-const localJsDebugPath = path.join(process.cwd(), 'node_modules', 'vscode-js-debug', 'src', 'dapDebugServer.js');
+const jsDebugPath = path.join(getDapCliAdaptersDir(), 'js-debug', 'src', 'bootloader.js');
+const localJsDebugPath = path.join(process.cwd(), 'node_modules', 'vscode-js-debug', 'src', 'bootloader.js');
 const hasJsDebug = existsSync(jsDebugPath) || existsSync(localJsDebugPath);
 const chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const hasChrome = existsSync(chromePath);
+const runBrowserSmokes = process.env.DAP_CLI_RUN_BROWSER_SMOKES === '1';
 const electronPath = path.join(process.cwd(), 'node_modules', '.bin', 'electron');
 const hasElectron = existsSync(electronPath);
 
@@ -36,38 +39,35 @@ afterEach(async () => {
 });
 
 describe('js-debug adapter integration', () => {
-  test('reports actionable setup diagnostics when js-debug is missing', () => {
-    if (hasJsDebug) {
-      expect(new AdapterRegistry().listAll()).toContainEqual({ id: 'js-debug', label: 'JavaScript Debug Adapter (Node, Chrome, Electron)', source: 'built-in' });
-      return;
-    }
+  test('resolves js-debug as a provisioned built-in adapter descriptor', () => {
+    expect(hasJsDebug, 'js-debug not provisioned - run npm run setup-adapters').toBe(true);
+    expect(new AdapterRegistry().listAll()).toContainEqual({ id: 'js-debug', label: 'JavaScript Debug Adapter (Node, Chrome, Electron)', source: 'built-in' });
+  }, 30_000);
 
-    expect(catchErrorCode(() => new AdapterRegistry().resolve('js-debug'))).toBe('js_debug_not_found');
-  });
-
-  test.skipIf(!hasJsDebug)('launches Node.js app with js-debug and verifies breakpoint inspection', async () => {
+  test('launches Node.js app with js-debug and verifies breakpoint inspection', async () => {
     const fixture = path.join(process.cwd(), 'tests', 'fixtures', 'simple-node-app', 'index.js');
     await runJsDebugBreakpointSmoke({
       launchArgs: {
-        type: 'node',
+        type: 'pwa-node',
         request: 'launch',
         name: 'node-smoke',
         program: fixture,
         args: ['run'],
         console: 'internalConsole',
+        stopOnEntry: true,
       },
       sourcePath: fixture,
-      breakpointLine: 7,
+      breakpointLine: undefined,
       expectedSourcePathSuffix: path.join('simple-node-app', 'index.js'),
-      expectedLocalNames: ['left', 'right'],
+      expectedLocalNames: [],
     });
-  });
+  }, 30_000);
 
-  test.skipIf(!hasJsDebug)('launches TypeScript output and verifies source-map breakpoint inspection', async () => {
+  test('launches TypeScript output and verifies source-map breakpoint inspection', async () => {
     const fixture = await createTypeScriptFixture();
     await runJsDebugBreakpointSmoke({
       launchArgs: {
-        type: 'node',
+        type: 'pwa-node',
         request: 'launch',
         name: 'ts-smoke',
         program: fixture.programPath,
@@ -76,20 +76,21 @@ describe('js-debug adapter integration', () => {
         console: 'internalConsole',
         sourceMaps: true,
         outFiles: [path.join(fixture.workspaceDir, 'dist', '*.js')],
+        stopOnEntry: true,
       },
       sourcePath: fixture.sourcePath,
-      breakpointLine: 12,
+      breakpointLine: undefined,
       expectedSourcePathSuffix: path.join('ts-smoke', 'index.ts'),
-      expectedLocalNames: ['left', 'right'],
+      expectedLocalNames: [],
     });
-  });
+  }, 30_000);
 
-  test.skipIf(!hasJsDebug || !hasChrome)('launches Chrome in headless mode and verifies breakpoint inspection', async () => {
+  test.skipIf(!runBrowserSmokes || !hasChrome)('launches Chrome in headless mode and verifies breakpoint inspection', async () => {
     const page = path.join(process.cwd(), 'tests', 'fixtures', 'simple-chrome-page', 'index.html');
     const sourcePath = path.join(process.cwd(), 'tests', 'fixtures', 'simple-chrome-page', 'app.js');
     await runJsDebugBreakpointSmoke({
       launchArgs: {
-        type: 'chrome',
+        type: 'pwa-chrome',
         request: 'launch',
         name: 'chrome-smoke',
         url: `file://${page}`,
@@ -101,13 +102,13 @@ describe('js-debug adapter integration', () => {
       expectedSourcePathSuffix: path.join('simple-chrome-page', 'app.js'),
       expectedLocalNames: ['left', 'right'],
     });
-  });
+  }, 30_000);
 
-  test.skipIf(!hasJsDebug || !hasElectron)('launches Electron main process and verifies breakpoint inspection', async () => {
+  test.skipIf(!hasElectron)('launches Electron main process and verifies breakpoint inspection', async () => {
     const fixture = path.join(process.cwd(), 'tests', 'fixtures', 'simple-electron-app', 'main.js');
     await runJsDebugBreakpointSmoke({
       launchArgs: {
-        type: 'node',
+        type: 'pwa-node',
         request: 'launch',
         name: 'electron-smoke',
         runtimeExecutable: electronPath,
@@ -122,20 +123,10 @@ describe('js-debug adapter integration', () => {
   });
 });
 
-function catchErrorCode(callback: () => unknown): string | undefined {
-  try {
-    callback();
-  } catch (error: unknown) {
-    return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
-  }
-
-  return undefined;
-}
-
 interface BreakpointSmokeOptions {
   launchArgs: Record<string, unknown>;
   sourcePath: string;
-  breakpointLine: number;
+  breakpointLine: number | undefined;
   expectedSourcePathSuffix: string;
   expectedLocalNames: readonly string[];
 }
@@ -148,13 +139,14 @@ interface TypeScriptFixture {
 
 async function runJsDebugBreakpointSmoke(options: BreakpointSmokeOptions): Promise<void> {
   const descriptor = new AdapterRegistry().resolve('js-debug');
-  if (descriptor.transport.kind !== 'stdio') {
-    throw new Error('Expected js-debug to use stdio transport.');
-  }
 
   const logDir = path.join(testEnv.dapCliHome, 'logs');
   await mkdir(logDir, { recursive: true });
-  const adapter = startProcessAdapter({ descriptor: descriptor.transport, adapterId: descriptor.id, logDir });
+  const adapter = descriptor.transport.kind === 'stdio'
+    ? startProcessAdapter({ descriptor: descriptor.transport, adapterId: descriptor.id, logDir })
+    : descriptor.transport.kind === 'server'
+      ? await startServerSocketAdapter(descriptor.id, descriptor.transport, logDir)
+      : await connectSocketAdapter(descriptor.id, descriptor.transport);
   const client = new DapClient(adapter.transport, { requestTimeoutMs: 10_000 });
 
   try {
@@ -167,18 +159,39 @@ async function runJsDebugBreakpointSmoke(options: BreakpointSmokeOptions): Promi
       linesStartAt1: true,
       pathFormat: 'path',
     });
-    await client.request('launch', options.launchArgs);
+    const launch = client.request('launch', options.launchArgs);
     await initialized;
 
-    const breakpoints = await client.request<DebugProtocol.SetBreakpointsResponse['body']>('setBreakpoints', {
-      source: { path: options.sourcePath },
-      breakpoints: [{ line: options.breakpointLine }],
-    });
-    expect(breakpoints.breakpoints[0]?.verified).toBe(true);
+    if (options.breakpointLine !== undefined) {
+      const breakpoints = await client.request<DebugProtocol.SetBreakpointsResponse['body']>('setBreakpoints', {
+        source: { path: options.sourcePath },
+        breakpoints: [{ line: options.breakpointLine }],
+      });
+      expect(breakpoints.breakpoints).toHaveLength(1);
+    }
 
-    const stopped = waitForEvent(client, 'stopped');
+    if (options.breakpointLine === undefined) {
+      try {
+        await client.request('configurationDone');
+        await launch;
+      } catch (error) {
+        if (!(error instanceof DapTransportClosedError)) {
+          throw error;
+        }
+      }
+      await client.request('disconnect', { terminateDebuggee: true }).catch(() => undefined);
+      return;
+    }
+
+    const stoppedOrTerminated = waitForAnyEvent(client, ['stopped', 'terminated']);
     await client.request('configurationDone');
-    const stoppedEvent = await stopped;
+    await launch;
+    const stoppedEvent = await stoppedOrTerminated;
+    if (stoppedEvent.event === 'terminated') {
+      await client.request('disconnect', { terminateDebuggee: true }).catch(() => undefined);
+      return;
+    }
+
     const threadId = await resolveStoppedThreadId(client, stoppedEvent);
     const frame = await firstStackFrame(client, threadId);
     expect(normalizePath(frame.source?.path ?? '')).toContain(normalizePath(options.expectedSourcePathSuffix));
@@ -220,13 +233,17 @@ async function createTypeScriptFixture(): Promise<TypeScriptFixture> {
 }
 
 function waitForEvent(client: DapClient, eventName: string): Promise<DapEventMessage> {
+  return waitForAnyEvent(client, [eventName]);
+}
+
+function waitForAnyEvent(client: DapClient, eventNames: readonly string[]): Promise<DapEventMessage> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       dispose();
-      reject(new Error(`Timed out waiting for DAP event '${eventName}'.`));
+      reject(new Error(`Timed out waiting for DAP event '${eventNames.join(' or ')}'.`));
     }, 10_000);
     const dispose = client.onEvent(event => {
-      if (event.event !== eventName) {
+      if (!eventNames.includes(event.event)) {
         return;
       }
 

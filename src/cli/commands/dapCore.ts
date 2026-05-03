@@ -97,7 +97,13 @@ export function registerDapCoreCommands(program: Command, stdout: JsonWritable):
     .argument('<command>', 'DAP request command')
     .option('--json <json>', 'request arguments as JSON', '{}')
     .option('--name <name>', 'session name or id')
-    .description('Send an internal Phase 1 DAP request to a fake/custom session')
+    .description('Send raw DAP request with JSON arguments (escape hatch)')
+    .addHelpText('after', `
+
+Examples:
+  $ dap-cli request threads
+  $ dap-cli request stackTrace --json '{"threadId":1}'
+`)
     .action(async (command: string, options: DapRequestCommandOptions) => {
       await withController(stdout, 'request', async client => client.request('dap.request', {
         command,
@@ -119,7 +125,13 @@ export function registerDapCoreCommands(program: Command, stdout: JsonWritable):
     .option('--name <name>', 'session name or id')
     .option('--after-cursor <cursor>', 'return events after cursor')
     .option('--limit <count>', 'maximum events to return')
-    .description('List cached events for a fake/custom session')
+    .description('Poll recent DAP events with cursor-based pagination')
+    .addHelpText('after', `
+
+Examples:
+  $ dap-cli events
+  $ dap-cli events --after-cursor 12 --limit 25
+`)
     .action(async (options: DapEventsCommandOptions) => {
       await withController(stdout, 'events', async client => client.request('events.recent', {
         name: options.name,

@@ -18,7 +18,7 @@ interface ControllerStartResult {
 export function registerControllerCommands(program: Command, stdout: JsonWritable): void {
   program
     .command('start')
-    .description('Start the local dap-cli controller')
+    .description('Start the persistent controller for debug sessions')
     .action(async () => {
       writeJsonSuccess(await startControllerProcess(), { command: 'start' }, stdout);
     });
@@ -26,7 +26,13 @@ export function registerControllerCommands(program: Command, stdout: JsonWritabl
   program
     .command('status')
     .option('--name <name>', 'session name or id')
-    .description('Inspect local controller or session status')
+    .description('Poll session status (running, stopped, terminated)')
+    .addHelpText('after', `
+
+Examples:
+  $ dap-cli status
+  $ dap-cli status --name demo
+`)
     .action(async (options: { name?: string }) => {
       const client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME });
       try {

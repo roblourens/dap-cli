@@ -1,0 +1,170 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { describe, expect, test } from 'vitest';
+import { createProgram } from '../../src/cli/program.js';
+
+const docsToValidate = [
+  'README.md',
+  'docs/AGENT-WORKFLOWS.md',
+  'docs/PLAYWRIGHT-INTEROP.md',
+  'docs/ADAPTER-SETUP.md',
+];
+
+interface CommandExample {
+  file: string;
+  line: number;
+  commandPath: string;
+  source: string;
+}
+
+describe('documentation command examples', () => {
+  test('use registered dap-cli command names', async () => {
+    const commandPaths = collectCommandPaths();
+    const examples = await collectDapCliExamples(docsToValidate);
+
+    const invalidExamples = examples.filter(example => !commandPaths.has(example.commandPath));
+
+    expect(invalidExamples, formatInvalidExamples(invalidExamples, commandPaths)).toEqual([]);
+    expect(examples.length).toBeGreaterThan(0);
+  });
+});
+
+function collectCommandPaths(): Set<string> {
+  const program = createProgram();
+  const paths = new Set<string>();
+
+  for (const command of program.commands) {
+    const topLevelName = command.name();
+    paths.add(topLevelName);
+
+    for (const subcommand of command.commands) {
+      paths.add(`${topLevelName} ${subcommand.name()}`);
+    }
+  }
+
+  return paths;
+}
+
+async function collectDapCliExamples(files: readonly string[]): Promise<CommandExample[]> {
+  const examples: CommandExample[] = [];
+
+  for (const file of files) {
+    const absolutePath = path.join(process.cwd(), file);
+    const content = await readOptionalFile(absolutePath);
+    if (content === undefined) {
+      continue;
+    }
+
+    examples.push(...extractDapCliExamples(file, content));
+  }
+
+  return examples;
+}
+
+function extractDapCliExamples(file: string, content: string): CommandExample[] {
+  const examples: CommandExample[] = [];
+  const lines = content.split('\n');
+  let inFence = false;
+  let fenceLanguage = '';
+  let pendingCommand = '';
+  let pendingLine = 0;
+
+  for (const [index, line] of lines.entries()) {
+    const lineNumber = index + 1;
+    const fenceMatch = line.match(/^```(\S*)/);
+    if (fenceMatch !== null) {
+      inFence = !inFence;
+      fenceLanguage = inFence ? fenceMatch[1] ?? '' : '';
+      pendingCommand = '';
+      pendingLine = 0;
+      continue;
+    }
+
+    if (!inFence || !isShellFence(fenceLanguage)) {
+      continue;
+    }
+
+    const rawLine = stripShellPrompt(line).trim();
+    if (rawLine.length === 0 || rawLine.startsWith('#')) {
+      continue;
+    }
+
+    const commandLine = pendingCommand.length === 0 ? rawLine : `${pendingCommand} ${rawLine}`;
+    if (pendingCommand.length === 0) {
+      pendingLine = lineNumber;
+    }
+
+    if (commandLine.endsWith('\\')) {
+      pendingCommand = commandLine.slice(0, -1).trim();
+      continue;
+    }
+
+    pendingCommand = '';
+    const normalized = commandLine.replace(/\s+#.*$/, '').trim();
+    const commandPath = parseDapCliCommandPath(normalized);
+    if (commandPath === undefined) {
+      continue;
+    }
+
+    examples.push({ file, line: pendingLine, commandPath, source: normalized });
+  }
+
+  return examples;
+}
+
+function isShellFence(language: string): boolean {
+  return language === '' || language === 'bash' || language === 'sh' || language === 'shell' || language === 'console';
+}
+
+function stripShellPrompt(line: string): string {
+  return line.replace(/^\s*[$>]\s+/, '');
+}
+
+function parseDapCliCommandPath(line: string): string | undefined {
+  const tokens = line.split(/\s+/);
+  const dapCliIndex = tokens.findIndex(token => token === 'dap-cli');
+  if (dapCliIndex === -1) {
+    return undefined;
+  }
+
+  const command = tokens[dapCliIndex + 1];
+  if (command === undefined || command.startsWith('-')) {
+    return undefined;
+  }
+
+  const maybeSubcommand = tokens[dapCliIndex + 2];
+  if (command === 'breakpoints' && maybeSubcommand !== undefined && !maybeSubcommand.startsWith('-')) {
+    return `${command} ${maybeSubcommand}`;
+  }
+
+  return command;
+}
+
+async function readOptionalFile(filePath: string): Promise<string | undefined> {
+  try {
+    return await fs.readFile(filePath, 'utf8');
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === 'object' && error !== null && 'code' in error;
+}
+
+function formatInvalidExamples(invalidExamples: readonly CommandExample[], commandPaths: ReadonlySet<string>): string {
+  if (invalidExamples.length === 0) {
+    return '';
+  }
+
+  const knownCommands = [...commandPaths].sort().join(', ');
+  const invalidLines = invalidExamples
+    .map(example => `${example.file}:${example.line} uses '${example.commandPath}' in: ${example.source}`)
+    .join('\n');
+
+  return `Invalid dap-cli command examples:\n${invalidLines}\n\nKnown commands: ${knownCommands}`;
+}

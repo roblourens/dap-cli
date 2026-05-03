@@ -25,6 +25,7 @@ const scripts: Record<string, FakeStep[]> = {
 	'stopped-on-entry': createLifecycleScript('launch'),
 	'attach-stopped': createLifecycleScript('attach'),
 	'alias-inspection': createAliasInspectionScript(),
+	'playwright-inspection': createPlaywrightInspectionScript(),
 	'execution-control': createExecutionControlScript(),
 	'failed-threads': createFailedThreadsScript(),
 	'expect-launch-overrides': createLifecycleScript('launch', { request: 'launch', program: 'flag.js', cwd: 'flag-cwd' }),
@@ -116,6 +117,20 @@ function createAliasInspectionScript(): FakeStep[] {
 		{ command: 'variables', body: { variables: [{ name: 'value', value: '1', variablesReference: 0 }] } },
 		{ command: 'source', body: { content: 'const value = 1;\n', mimeType: 'text/typescript' } },
 		{ command: 'evaluate', body: { result: '2', variablesReference: 0 } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	];
+}
+
+function createPlaywrightInspectionScript(): FakeStep[] {
+	return [
+		...createLifecycleScript('launch').slice(0, 5),
+		{ command: 'threads', body: { threads: [{ id: 1, name: 'main' }] } },
+		{ command: 'stackTrace', body: { stackFrames: [{ id: 10, name: 'calculate', line: 2, column: 3, source: { name: 'app.js', path: 'tests/fixtures/simple-chrome-page/app.js' } }], totalFrames: 1 } },
+		{ command: 'scopes', body: { scopes: [{ name: 'Locals', variablesReference: 100, expensive: false }] } },
+		{ command: 'variables', body: { variables: [{ name: 'left', value: '4', variablesReference: 0 }, { name: 'right', value: '6', variablesReference: 0 }, { name: 'result', value: '10', variablesReference: 0 }] } },
+		{ command: 'continue', body: { allThreadsContinued: true } },
 		{ command: 'disconnect' },
 		{ event: 'terminated' },
 		{ close: true },

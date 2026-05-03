@@ -1,7 +1,7 @@
 import type net from 'node:net';
 import { parseAdapterDescriptor, type AdapterDescriptor } from '../adapters/descriptor.js';
 import { startProcessAdapter, type StartedProcessAdapter } from '../adapters/processAdapter.js';
-import { connectSocketAdapter, type ConnectedSocketAdapter } from '../adapters/socketAdapter.js';
+import { connectSocketAdapter, startServerSocketAdapter, type ConnectedSocketAdapter, type StartedServerSocketAdapter } from '../adapters/socketAdapter.js';
 import { adapterError, CliError, dapError, timeoutError, usageError, type CliErrorAdapterContext, type CliErrorOptions, type CliErrorRequestContext } from '../cli/errors.js';
 import { DapClient, DapResponseError, DapTransportClosedError } from '../protocol/dapClient.js';
 import { DapEventCache } from '../protocol/eventCache.js';
@@ -313,8 +313,8 @@ export class ControllerServer {
     let startResult: Awaited<ReturnType<DapLifecycleController['start']>>;
     try {
       startResult = await lifecycle.start(startParams.mode === 'launch'
-        ? { mode: 'launch', launchArgs: startParams.config }
-        : { mode: 'attach', attachArgs: startParams.config });
+        ? { mode: 'launch', initializeArgs: createInitializeArgs(descriptor.id), launchArgs: startParams.config }
+        : { mode: 'attach', initializeArgs: createInitializeArgs(descriptor.id), attachArgs: startParams.config });
     } catch (error) {
       await manager.updateLifecycle(session.id, 'failed').catch(() => undefined);
       await client.close().catch(() => undefined);
@@ -396,6 +396,9 @@ export class ControllerServer {
     if (descriptor.transport.kind === 'stdio') {
       return startProcessAdapter({ descriptor: descriptor.transport, adapterId: descriptor.id, logDir });
     }
+    if (descriptor.transport.kind === 'server') {
+      return startServerSocketAdapter(descriptor.id, descriptor.transport, logDir);
+    }
 
     return connectSocketAdapter(descriptor.id, descriptor.transport);
   }
@@ -447,7 +450,18 @@ export class ControllerServer {
   }
 }
 
-type AdapterRuntime = (StartedProcessAdapter | ConnectedSocketAdapter) & { transport: DapTransport };
+function createInitializeArgs(adapterId: string): Record<string, unknown> {
+  return {
+    adapterID: adapterId,
+    clientID: 'dap-cli',
+    clientName: 'dap-cli',
+    columnsStartAt1: true,
+    linesStartAt1: true,
+    pathFormat: 'path',
+  };
+}
+
+type AdapterRuntime = (StartedProcessAdapter | ConnectedSocketAdapter | StartedServerSocketAdapter) & { transport: DapTransport };
 
 interface DapSessionRuntime {
   sessionId: string;

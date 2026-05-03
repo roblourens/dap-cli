@@ -121,19 +121,68 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 04-01: Write README, user docs, agent workflow guide, and Playwright interop examples
-- [ ] 04-02: Polish command help, examples, packaging, and project readiness checks
-- [ ] 04-03: Add smoke and self-hosting verification workflows for dap-cli and fixtures
-- [ ] 04-04: Run agentic exploratory dynamic debugging scenarios and finalize v1 verification notes
+**Wave 1** *(parallel)*
+- [x] 04-01-PLAN.md — README-first docs, agent workflows, Playwright interop examples, docs validation (AGNT-04, AGNT-05)
+- [x] 04-02-PLAN.md — Command help polish, adapter provisioning, package readiness (D-04, D-08 support)
+
+**Wave 2** *(blocked on Wave 1 adapter provisioning)*
+- [x] 04-03-PLAN.md — Real adapter smokes default-runnable, self-hosting workflows (TEST-06)
+
+**Wave 3** *(blocked on Wave 2 stable smokes)*
+- [x] 04-04-PLAN.md — Playwright interop automation, exploratory verification, v1 readiness notes (AGNT-04, TEST-07)
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Project Foundation, Controller, and DAP Core | 8/8 | Complete | 2026-05-02 |
 | 2. Complete Typed DAP Command Surface | 4/4 | Complete | 2026-05-03 |
 | 3. Built-in and Custom Adapter Support | 4/4 | Complete | 2026-05-03 |
-| 4. Agent Workflow, Documentation, and Self-Hosting Verification | 0/4 | Not started | - |
+| 4. Agent Workflow, Documentation, and Self-Hosting Verification | 4/4 | Complete | 2026-05-03 |
+| 5. Stabilize real Chrome/js-debug Playwright same-browser handoff | 0/0 | Not started | - |
+| 6. Add conditional breakpoint Playwright interop coverage | 0/0 | Not started | - |
+| 7. Add evaluate-and-mutate browser state coverage | 0/0 | Not started | - |
+| 8. Expand multi-breakpoint UI flow fixture | 0/0 | Not started | - |
+
+### Phase 5: Stabilize real Chrome/js-debug Playwright same-browser handoff
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 4
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 5 to break down)
+
+### Phase 6: Add conditional breakpoint Playwright interop coverage
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 5
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 6 to break down)
+
+### Phase 7: Add evaluate-and-mutate browser state coverage
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 6
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 7 to break down)
+
+### Phase 8: Expand multi-breakpoint UI flow fixture
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 7
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 8 to break down)

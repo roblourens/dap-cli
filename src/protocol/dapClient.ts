@@ -1,5 +1,8 @@
+import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
+import { z } from 'zod';
 import { DapFrameError, DapMessageParser, encodeDapMessage } from './framing.js';
-import type { DapEventMessage, DapProtocolMessage, DapResponseMessage } from './dapMessages.js';
+import type { DapEventMessage, DapProtocolMessage, DapRequestMessage, DapResponseMessage } from './dapMessages.js';
 import type { DapTransport } from './transport.js';
 
 export interface LastDapRequest {
@@ -28,6 +31,12 @@ export class DapTransportClosedError extends Error {
 
 type EventListener = (event: DapEventMessage) => void;
 
+const runInTerminalArgumentsSchema = z.object({
+  args: z.array(z.string()).min(1),
+  cwd: z.string().optional(),
+  env: z.record(z.string(), z.string()).optional(),
+});
+
 interface PendingRequest {
   command: string;
   resolve(value: unknown): void;
@@ -39,6 +48,7 @@ export class DapClient {
   private readonly parser = new DapMessageParser();
   private readonly pending = new Map<number, PendingRequest>();
   private readonly eventListeners = new Set<EventListener>();
+  private readonly childProcesses = new Set<ChildProcess>();
   private nextSeq = 1;
   private closed = false;
   public lastRequest: LastDapRequest | undefined;
@@ -90,6 +100,7 @@ export class DapClient {
   public async close(): Promise<void> {
     this.handleClosed();
     this.detachTransportHandlers();
+    await this.terminateChildProcesses();
     await this.transport.close();
   }
 
@@ -125,7 +136,10 @@ export class DapClient {
 
     if (message.type === 'response') {
       this.handleResponse(message);
+      return;
     }
+
+    this.handleAdapterRequest(message);
   }
 
   private handleResponse(response: DapResponseMessage): void {
@@ -153,6 +167,39 @@ export class DapClient {
     }
   }
 
+  private handleAdapterRequest(request: DapRequestMessage): void {
+    if (request.command !== 'runInTerminal') {
+      this.writeAdapterResponse(request, false, undefined, `Unsupported adapter request: ${request.command}`);
+      return;
+    }
+
+    try {
+      const body = this.handleRunInTerminal(request.arguments);
+      this.writeAdapterResponse(request, true, body);
+    } catch (error) {
+      this.writeAdapterResponse(request, false, undefined, error instanceof Error ? error.message : 'runInTerminal failed.');
+    }
+  }
+
+  private writeAdapterResponse(request: DapRequestMessage, success: boolean, body?: unknown, message?: string): void {
+    const response: DapResponseMessage = {
+      seq: this.nextSeq,
+      type: 'response',
+      request_seq: request.seq,
+      success,
+      command: request.command,
+    };
+    this.nextSeq += 1;
+    if (body !== undefined) {
+      response.body = body;
+    }
+    if (message !== undefined) {
+      response.message = message;
+    }
+
+    this.transport.writable.write(encodeDapMessage(response));
+  }
+
   private rejectPending(error: Error): void {
     for (const pending of this.pending.values()) {
       if (pending.timeout !== undefined) {
@@ -169,4 +216,56 @@ export class DapClient {
     this.transport.readable.removeListener('end', this.handleClosed);
     this.transport.readable.removeListener('error', this.handleTransportError);
   }
+
+  private handleRunInTerminal(argumentsValue: unknown): { processId?: number } {
+    const parsed = runInTerminalArgumentsSchema.safeParse(argumentsValue);
+    if (!parsed.success) {
+      throw new Error('Invalid runInTerminal request arguments.');
+    }
+
+    const command = parsed.data.args[0];
+    const args = parsed.data.args.slice(1);
+    const env = parsed.data.env === undefined ? process.env : { ...process.env, ...parsed.data.env };
+    if (command === undefined) {
+      throw new Error('Invalid runInTerminal command.');
+    }
+
+    const child = spawn(command, args, { cwd: parsed.data.cwd, env, stdio: 'ignore', shell: false });
+    this.childProcesses.add(child);
+    child.once('exit', () => this.childProcesses.delete(child));
+
+    return child.pid === undefined ? {} : { processId: child.pid };
+  }
+
+  private async terminateChildProcesses(): Promise<void> {
+    for (const child of this.childProcesses) {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGTERM');
+        if (!await waitForExit(child, 100)) {
+          child.kill('SIGKILL');
+          await waitForExit(child, 100);
+        }
+      }
+    }
+    this.childProcesses.clear();
+  }
 }
+
+function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      child.off('exit', onExit);
+      resolve(false);
+    }, timeoutMs);
+    const onExit = (): void => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    child.once('exit', onExit);
+  });
+}
+

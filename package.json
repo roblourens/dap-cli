@@ -13,9 +13,10 @@
   "scripts": {
     "build": "tsup",
     "generate:dap-commands": "node --experimental-strip-types src/generator/dapCommandRegistryGenerator.ts",
+    "setup-adapters": "node --experimental-strip-types scripts/setup-adapters.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "lint": "eslint src tests *.config.ts",
+    "lint": "eslint src tests scripts *.config.ts",
     "check": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.38.0",
+    "@playwright/test": "^1.59.1",
     "@types/node": "^24.9.1",
     "eslint": "^9.38.0",
     "tsup": "^8.5.0",

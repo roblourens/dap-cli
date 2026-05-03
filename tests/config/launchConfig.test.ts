@@ -74,7 +74,7 @@ describe('launch config resolution', () => {
 
   test('maps js-debug flags to native config fields', () => {
     expect(mapJsDebugFlags({ type: 'node', program: 'app.ts', cwd: '/repo', runtimeExecutable: 'node', url: 'http://localhost:3000', port: 9229 })).toEqual({
-      type: 'node',
+      type: 'pwa-node',
       program: 'app.ts',
       cwd: '/repo',
       runtimeExecutable: 'node',
@@ -93,7 +93,7 @@ describe('launch config resolution', () => {
   });
 
   test('maps electron runtime flag to node type for js-debug', () => {
-    expect(mapJsDebugFlags({ runtimeExecutable: 'electron' })).toEqual({ runtimeExecutable: 'electron', type: 'node' });
+    expect(mapJsDebugFlags({ runtimeExecutable: 'electron' })).toEqual({ runtimeExecutable: 'electron', type: 'pwa-node' });
   });
 });
 

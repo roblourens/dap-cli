@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { main } from '../../src/cli/main.js';
 import { getDapCliHome, getDapCliLogDir, getDapCliStateDir } from '../../src/config/paths.js';
@@ -72,6 +74,7 @@ describe('JSON output contract', () => {
   });
 
   test('main maps handled command failures to stdout JSON and empty stderr', async () => {
+    vi.stubEnv('DAP_CLI_HOME', path.join(tmpdir(), `dap-cli-json-output-${Date.now()}`));
     const stdout = new MemoryStream();
     const stderr = new MemoryStream();
 
