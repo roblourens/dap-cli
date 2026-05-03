@@ -14,7 +14,11 @@ Agents can reliably control a DAP debug session from repeatable CLI commands and
 
 ### Validated
 
-(None yet - ship to validate)
+- ✓ Persistent controller and session state foundation — Phase 1
+- ✓ Vanilla, language-neutral DAP core with stdio and localhost socket transports — Phase 1
+- ✓ Polling-based status and bounded recent event inspection — Phase 1
+- ✓ Structured JSON output, stable exit codes, and bounded diagnostics — Phase 1
+- ✓ Modular CLI/controller/session/protocol/adapter boundaries with deterministic fake-adapter tests — Phase 1
 
 ### Active
 
@@ -59,12 +63,12 @@ Agents can reliably control a DAP debug session from repeatable CLI commands and
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Use a Playwright-style stateful CLI controller | Agents need to make separate shell calls while targeting the same debug session. | - Pending |
-| Start with polling for pause detection | Simple v1 behavior is enough, and richer event handling can be added later. | - Pending |
+| Use a Playwright-style stateful CLI controller | Agents need to make separate shell calls while targeting the same debug session. | Validated in Phase 1 controller/session foundation |
+| Start with polling for pause detection | Simple v1 behavior is enough, and richer event handling can be added later. | Validated in Phase 1 event cache and status commands |
 | Bundle JavaScript and Python adapters initially | These cover common agent debugging use cases and make the CLI useful immediately. | - Pending |
 | Expose typed commands for all DAP requests | The user wants DAP methods available as CLI arguments, with a command surface agents can discover and use. | - Pending |
-| Keep core DAP-first and language-neutral | Adapter-specific behavior should not leak into the core architecture. | - Pending |
-| Treat debug adapters as external services | Adapter-specific launch, attach, process, and transport behavior should live behind descriptors/config instead of inside protocol core. | - Pending |
+| Keep core DAP-first and language-neutral | Adapter-specific behavior should not leak into the core architecture. | Validated in Phase 1 protocol and architecture gates |
+| Treat debug adapters as external services | Adapter-specific launch, attach, process, and transport behavior should live behind descriptors/config instead of inside protocol core. | Validated in Phase 1 generic descriptor and fake-adapter harness |
 | Make docs and project polish part of v1 | The CLI should be usable by agents and humans as a professional project, not just as raw implementation code. | - Pending |
 
 ## Evolution
@@ -85,4 +89,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-02 after roadmap creation*
+*Last updated: 2026-05-02 after Phase 1 transition*

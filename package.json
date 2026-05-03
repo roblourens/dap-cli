@@ -1,0 +1,34 @@
+{
+  "name": "dap-cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent-facing Debug Adapter Protocol CLI.",
+  "bin": {
+    "dap-cli": "dist/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src tests *.config.ts",
+    "check": "npm run typecheck && npm run lint && npm test && npm run build"
+  },
+  "dependencies": {
+    "@vscode/debugprotocol": "^1.68.0",
+    "commander": "^14.0.1",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0",
+    "@types/node": "^24.9.1",
+    "eslint": "^9.38.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.2",
+    "vitest": "^3.2.4"
+  }
+}

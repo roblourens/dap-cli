@@ -9,16 +9,16 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### Sessions
 
-- [ ] **SESS-01**: Agent can start a persistent dap-cli controller that preserves debugger sessions across separate CLI invocations.
+- [x] **SESS-01**: Agent can start a persistent dap-cli controller that preserves debugger sessions across separate CLI invocations.
 - [ ] **SESS-02**: Agent can launch a debug target through a configured adapter and receive a stable session ID.
 - [ ] **SESS-03**: Agent can attach or open a session against an existing adapter or debug target when the adapter supports it.
-- [ ] **SESS-04**: Agent can list sessions, inspect session status, and target a default active session without repeating the session ID on every command.
-- [ ] **SESS-05**: Agent can stop, detach, close, and clean up sessions without leaving stale controller state or orphaned adapter processes.
+- [x] **SESS-04**: Agent can list sessions, inspect session status, and target a default active session without repeating the session ID on every command.
+- [x] **SESS-05**: Agent can stop, detach, close, and clean up sessions without leaving stale controller state or orphaned adapter processes.
 
 ### Protocol
 
-- [ ] **DAP-01**: dap-cli can communicate with debug adapters over DAP using stdio and socket-style transports.
-- [ ] **DAP-02**: dap-cli models the DAP lifecycle explicitly, including initialize, launch or attach, initialized, breakpoint setup, configurationDone, stopped events, and termination.
+- [x] **DAP-01**: dap-cli can communicate with debug adapters over DAP using stdio and socket-style transports.
+- [x] **DAP-02**: dap-cli models the DAP lifecycle explicitly, including initialize, launch or attach, initialized, breakpoint setup, configurationDone, stopped events, and termination.
 - [ ] **DAP-03**: Agent can invoke every DAP request through a generated typed CLI command derived from official protocol metadata.
 - [ ] **DAP-04**: Agent can use a raw JSON DAP request passthrough as an escape hatch for protocol features not yet covered by ergonomic command UX.
 - [ ] **DAP-05**: dap-cli reports adapter capabilities and unsupported requests clearly before or after command execution.
@@ -29,8 +29,8 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [ ] **DBG-02**: Agent can inspect threads, stack traces, scopes, and variables for a paused session.
 - [ ] **DBG-03**: Agent can continue, pause, step over, step in, and step out of execution when the adapter supports those requests.
 - [ ] **DBG-04**: Agent can evaluate expressions and inspect source context through CLI commands when the adapter supports those requests.
-- [ ] **DBG-05**: Agent can poll current session status to determine whether execution is running, paused, terminated, or unavailable.
-- [ ] **DBG-06**: Agent can inspect a bounded recent event history for a session to understand how the current state was reached.
+- [x] **DBG-05**: Agent can poll current session status to determine whether execution is running, paused, terminated, or unavailable.
+- [x] **DBG-06**: Agent can inspect a bounded recent event history for a session to understand how the current state was reached.
 
 ### Adapters
 
@@ -43,17 +43,17 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### Agent Workflow
 
-- [ ] **AGNT-01**: dap-cli commands return machine-readable JSON output suitable for agent parsing.
-- [ ] **AGNT-02**: dap-cli uses stable nonzero exit codes and structured error payloads for failed commands.
-- [ ] **AGNT-03**: dap-cli surfaces adapter stderr, log paths, request names, session IDs, and actionable diagnostics when a command fails.
+- [x] **AGNT-01**: dap-cli commands return machine-readable JSON output suitable for agent parsing.
+- [x] **AGNT-02**: dap-cli uses stable nonzero exit codes and structured error payloads for failed commands.
+- [x] **AGNT-03**: dap-cli surfaces adapter stderr, log paths, request names, session IDs, and actionable diagnostics when a command fails.
 - [ ] **AGNT-04**: Documentation includes agent-oriented workflows that interleave dap-cli commands with Playwright CLI commands.
 - [ ] **AGNT-05**: Documentation includes examples for polling session status instead of relying on event streaming in v1.
 
 ### Verification
 
-- [ ] **TEST-01**: Protocol framing, request sequencing, event caching, and session state are covered by deterministic fake-adapter tests.
+- [x] **TEST-01**: Protocol framing, request sequencing, event caching, and session state are covered by deterministic fake-adapter tests.
 - [ ] **TEST-02**: Generated typed DAP command coverage is tested against the selected official DAP protocol metadata so missing requests are detected automatically.
-- [ ] **TEST-03**: CLI parsing and JSON output contracts are covered by automated tests for representative commands and failure cases.
+- [x] **TEST-03**: CLI parsing and JSON output contracts are covered by automated tests for representative commands and failure cases.
 - [ ] **TEST-04**: JavaScript and Python built-in adapters have end-to-end smoke tests that agents can run without relying on manual user validation.
 - [ ] **TEST-05**: The repository includes a deterministic scripted test suite that exercises every implemented feature and supported command path.
 - [ ] **TEST-06**: Once dap-cli reaches a minimally usable form, development and validation include self-hosting workflows that use dap-cli to debug dap-cli or its fixtures.
@@ -99,13 +99,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SESS-01 | Phase 1 | Pending |
+| SESS-01 | Phase 1 | Complete |
 | SESS-02 | Phase 3 | Pending |
 | SESS-03 | Phase 3 | Pending |
-| SESS-04 | Phase 1 | Pending |
-| SESS-05 | Phase 1 | Pending |
-| DAP-01 | Phase 1 | Pending |
-| DAP-02 | Phase 1 | Pending |
+| SESS-04 | Phase 1 | Complete |
+| SESS-05 | Phase 1 | Complete |
+| DAP-01 | Phase 1 | Complete |
+| DAP-02 | Phase 1 | Complete |
 | DAP-03 | Phase 2 | Pending |
 | DAP-04 | Phase 2 | Pending |
 | DAP-05 | Phase 2 | Pending |
@@ -113,22 +113,22 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DBG-02 | Phase 2 | Pending |
 | DBG-03 | Phase 2 | Pending |
 | DBG-04 | Phase 2 | Pending |
-| DBG-05 | Phase 1 | Pending |
-| DBG-06 | Phase 1 | Pending |
+| DBG-05 | Phase 1 | Complete |
+| DBG-06 | Phase 1 | Complete |
 | ADPT-01 | Phase 3 | Pending |
 | ADPT-02 | Phase 3 | Pending |
 | ADPT-03 | Phase 3 | Pending |
 | ADPT-04 | Phase 3 | Pending |
 | ADPT-05 | Phase 3 | Pending |
 | ADPT-06 | Phase 3 | Pending |
-| AGNT-01 | Phase 1 | Pending |
-| AGNT-02 | Phase 1 | Pending |
-| AGNT-03 | Phase 1 | Pending |
+| AGNT-01 | Phase 1 | Complete |
+| AGNT-02 | Phase 1 | Complete |
+| AGNT-03 | Phase 1 | Complete |
 | AGNT-04 | Phase 4 | Pending |
 | AGNT-05 | Phase 4 | Pending |
-| TEST-01 | Phase 1 | Pending |
+| TEST-01 | Phase 1 | Complete |
 | TEST-02 | Phase 2 | Pending |
-| TEST-03 | Phase 1 | Pending |
+| TEST-03 | Phase 1 | Complete |
 | TEST-04 | Phase 3 | Pending |
 | TEST-05 | Phase 2 | Pending |
 | TEST-06 | Phase 4 | Pending |

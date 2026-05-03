@@ -12,7 +12,7 @@ v1 builds dap-cli from a clean TypeScript/Node foundation into a professional ag
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Project Foundation, Controller, and DAP Core** - Establish the modular CLI architecture, persistent controller, language-neutral DAP client, polling state, diagnostics, and deterministic fake-adapter tests.
+- [x] **Phase 1: Project Foundation, Controller, and DAP Core** - Establish the modular CLI architecture, persistent controller, language-neutral DAP client, polling state, diagnostics, and deterministic fake-adapter tests.
 - [ ] **Phase 2: Complete Typed DAP Command Surface** - Generate and verify typed CLI commands for every DAP request, with ergonomic debugging operations and scripted command coverage.
 - [ ] **Phase 3: Built-in and Custom Adapter Support** - Add JavaScript, Python, and user-defined adapter flows through descriptor/config/process/transport boundaries, including JS source maps and E2E smoke tests.
 - [ ] **Phase 4: Agent Workflow, Documentation, and Self-Hosting Verification** - Polish the agent experience with README/user docs, Playwright interop examples, self-hosting, smoke verification, and agentic exploratory tests.
@@ -29,13 +29,31 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Agent can poll session status and inspect bounded recent event history as stable JSON, with structured nonzero failures that include session IDs, request names, adapter stderr summaries, log paths, and actionable diagnostics.
   4. CLI, controller/session store, protocol transport/client, adapter descriptor, config, and testing modules are separated by explicit internal boundaries suitable for a professional modular TypeScript project.
   5. Deterministic fake-adapter tests verify protocol framing, request sequencing, lifecycle transitions, event caching, session state, CLI parsing, JSON output, and representative failure contracts.
-**Plans**: 4 plans
+**Plans**: 8 plans
 
 Plans:
-- [ ] 01-01: Scaffold TypeScript/Node CLI foundation and internal architecture boundaries
-- [ ] 01-02: Implement persistent controller, session state, active session targeting, and cleanup lifecycle
-- [ ] 01-03: Implement language-neutral DAP transport/client lifecycle and bounded event cache
-- [ ] 01-04: Add JSON/error output contracts, diagnostics, and deterministic fake-adapter/CLI tests
+**Wave 1**
+- [x] 01-01: Scaffold package tooling, CLI entrypoint, and architecture boundary tests
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 01-02: Implement CLI command shell, JSON envelopes, exit codes, and path contracts
+- [x] 01-05: Implement DAP message framing and bounded event cache primitives
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 01-03: Implement controller discovery, local IPC, client/server lifecycle, and controller commands
+- [x] 01-06: Implement stdio/socket transports, DAP client sequencing, and lifecycle state machine
+
+**Wave 4** *(blocked on Wave 3 controller completion)*
+- [x] 01-04: Implement session manager, store, active targeting, status projection, and cleanup lifecycle
+
+**Wave 5** *(blocked on Wave 4 and Wave 3 protocol completion)*
+- [x] 01-07: Integrate generic adapter descriptors, fake adapter harness, and controller DAP routes
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [x] 01-08: Harden diagnostics, error contracts, deterministic integration tests, and final scope gates
+
+Cross-cutting constraints:
+- No exact `must_haves.truths` entries appear in two or more Phase 1 plans.
 
 ### Phase 2: Complete Typed DAP Command Surface
 **Goal**: Agents can discover and invoke every DAP request through generated typed CLI commands while using ergonomic aliases for common debugging workflows.
@@ -98,7 +116,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Project Foundation, Controller, and DAP Core | 0/4 | Not started | - |
+| 1. Project Foundation, Controller, and DAP Core | 8/8 | Complete | 2026-05-02 |
 | 2. Complete Typed DAP Command Surface | 0/4 | Not started | - |
 | 3. Built-in and Custom Adapter Support | 0/4 | Not started | - |
 | 4. Agent Workflow, Documentation, and Self-Hosting Verification | 0/4 | Not started | - |
