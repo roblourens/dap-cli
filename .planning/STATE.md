@@ -5,21 +5,21 @@
 See: .planning/PROJECT.md (updated 2026-05-02)
 
 **Core value:** Agents can reliably control a DAP debug session from repeatable CLI commands and inspect paused application state without needing language-specific debugger knowledge.
-**Current focus:** Phase 3 - Built-in and Custom Adapter Support
+**Current focus:** Phase 4 - Agent Workflow, Documentation, and Self-Hosting Verification
 
 ## Current Position
 
-Phase: 3 of 4 (Built-in and Custom Adapter Support)
-Plan: 0 of 4 planned in current phase
-Status: Ready to discuss
-Last activity: 2026-05-03 - Completed Phase 2 typed DAP command surface execution.
+Phase: 4 of 4 (Agent Workflow, Documentation, and Self-Hosting Verification)
+Plan: 0 of 4 complete in current phase
+Status: Phase 3 verified complete; ready to start Phase 4
+Last activity: 2026-05-03 - Verified Phase 3 built-in/custom adapter support and updated requirement traceability.
 
-Progress: [██████████████------] 70%
+Progress: [████████████████----] 80%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 12
+- Total plans completed: 16
 - Average duration: n/a
 - Total execution time: 0.0 hours
 
@@ -29,10 +29,12 @@ Progress: [██████████████------] 70%
 |-------|-------|-------|----------|
 | Phase 1 | 8/8 | n/a | n/a |
 | Phase 2 | 4/4 complete | n/a | n/a |
+| Phase 3 | 4/4 complete | n/a | n/a |
+| Phase 4 | 0/4 | n/a | n/a |
 
 **Recent Trend:**
-- Last 5 plans: 01-08, 02-01, 02-02, 02-03, 02-04
-- Trend: Phase 2 complete; Phase 3 ready to discuss
+- Last 5 plans: 02-04, 03-01, 03-02, 03-03, 03-04
+- Trend: Phase 3 verified complete; Phase 4 ready to start
 
 *Updated after each plan completion*
 
@@ -50,7 +52,7 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-- Discuss and plan Phase 3 built-in/custom adapter support.
+- Start Phase 4 agent workflow, documentation, and self-hosting verification.
 
 ### Blockers/Concerns
 
@@ -65,5 +67,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-05-03
-Stopped at: Phase 2 complete; Phase 3 ready to discuss
-Resume file: .planning/ROADMAP.md
+Stopped at: Phase 3 verified complete and Phase 4 ready to start
+Resume file: .planning/phases/03-built-in-and-custom-adapter-support/03-VERIFICATION.md

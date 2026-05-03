@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import path from 'node:path';
 import type { OwnedAdapterMetadata } from '../sessions/session.js';
@@ -51,14 +51,46 @@ export function startProcessAdapter(options: StartProcessAdapterOptions): Starte
       stderrTail,
       startedByDapCli: true,
     },
-    close(): Promise<void> {
+    async close(): Promise<void> {
       child.stdin.end();
-      child.kill('SIGTERM');
-      return new Promise(resolve => {
+      await terminateChild(child);
+      await new Promise<void>(resolve => {
         logStream.end(() => resolve());
       });
     },
   };
+}
+
+async function terminateChild(child: ChildProcessWithoutNullStreams): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+
+  child.kill('SIGTERM');
+  if (await waitForExit(child, 100)) {
+    return;
+  }
+
+  child.kill('SIGKILL');
+  await waitForExit(child, 100);
+}
+
+function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      child.off('exit', onExit);
+      resolve(false);
+    }, timeoutMs);
+    const onExit = (): void => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    child.once('exit', onExit);
+  });
 }
 
 function appendStderrTail(stderrTail: string[], text: string): void {

@@ -21,6 +21,7 @@
   "dependencies": {
     "@vscode/debugprotocol": "^1.68.0",
     "commander": "^14.0.1",
+    "jsonc-parser": "^3.3.1",
     "zod": "^4.1.12"
   },
   "devDependencies": {

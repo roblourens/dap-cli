@@ -19,18 +19,12 @@ Agents can reliably control a DAP debug session from repeatable CLI commands and
 - ✓ Polling-based status and bounded recent event inspection — Phase 1
 - ✓ Structured JSON output, stable exit codes, and bounded diagnostics — Phase 1
 - ✓ Modular CLI/controller/session/protocol/adapter boundaries with deterministic fake-adapter tests — Phase 1
+- ✓ Complete typed DAP command surface, raw passthrough, capability checks, and ergonomic debugging operations — Phase 2
+- ✓ Built-in JavaScript/Python adapter descriptors, source-map smoke coverage, custom adapter config, and adapter override flows — Phase 3
 
 ### Active
 
-- [ ] Provide a stateful CLI session model similar to Playwright CLI, with launch/attach/open-style commands and explicit stop/close cleanup.
-- [ ] Speak vanilla Debug Adapter Protocol without coupling core behavior to any specific runtime or language.
-- [ ] Expose all DAP requests through typed CLI commands.
-- [ ] Support polling-based status inspection in v1 so agents can detect whether a program is paused.
-- [ ] Let agents set breakpoints, continue/step execution, and inspect stack frames, scopes, and variables from individual CLI calls.
-- [ ] Bundle JavaScript and Python debug adapter support out of the box.
-- [ ] Allow users to configure additional debug adapters through persistent config and/or command-line arguments.
 - [ ] Keep the CLI ergonomic for agent workflows that interleave dap-cli calls with Playwright CLI calls.
-- [ ] Preserve a clean, modular, professional architecture with debug adapters plugged in as external services through explicit descriptors, config, process, and transport boundaries.
 - [ ] Provide README, user documentation, agent workflow docs, and project polish expected of a real professional CLI project.
 
 ### Out of Scope
@@ -65,10 +59,10 @@ Agents can reliably control a DAP debug session from repeatable CLI commands and
 |----------|-----------|---------|
 | Use a Playwright-style stateful CLI controller | Agents need to make separate shell calls while targeting the same debug session. | Validated in Phase 1 controller/session foundation |
 | Start with polling for pause detection | Simple v1 behavior is enough, and richer event handling can be added later. | Validated in Phase 1 event cache and status commands |
-| Bundle JavaScript and Python adapters initially | These cover common agent debugging use cases and make the CLI useful immediately. | - Pending |
-| Expose typed commands for all DAP requests | The user wants DAP methods available as CLI arguments, with a command surface agents can discover and use. | - Pending |
+| Bundle JavaScript and Python adapters initially | These cover common agent debugging use cases and make the CLI useful immediately. | Validated in Phase 3 built-in js-debug/debugpy descriptors and smoke coverage |
+| Expose typed commands for all DAP requests | The user wants DAP methods available as CLI arguments, with a command surface agents can discover and use. | Validated in Phase 2 generated command surface and coverage tests |
 | Keep core DAP-first and language-neutral | Adapter-specific behavior should not leak into the core architecture. | Validated in Phase 1 protocol and architecture gates |
-| Treat debug adapters as external services | Adapter-specific launch, attach, process, and transport behavior should live behind descriptors/config instead of inside protocol core. | Validated in Phase 1 generic descriptor and fake-adapter harness |
+| Treat debug adapters as external services | Adapter-specific launch, attach, process, and transport behavior should live behind descriptors/config instead of inside protocol core. | Validated in Phase 3 built-in/custom adapter boundaries |
 | Make docs and project polish part of v1 | The CLI should be usable by agents and humans as a professional project, not just as raw implementation code. | - Pending |
 
 ## Evolution
@@ -89,4 +83,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-02 after Phase 1 transition*
+*Last updated: 2026-05-03 after Phase 3 verification*

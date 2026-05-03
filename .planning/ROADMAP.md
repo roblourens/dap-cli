@@ -98,10 +98,15 @@ Cross-cutting constraints:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 03-01: Implement adapter descriptor registry, persistent config, validation, and CLI overrides
-- [ ] 03-02: Add built-in JavaScript adapter support with source-map smoke coverage
-- [ ] 03-03: Add built-in Python adapter support with debugpy-compatible smoke coverage
-- [ ] 03-04: Harden launch/attach/open flows, process/transport cleanup, adapter diagnostics, and E2E smoke tests
+**Wave 1**
+- [x] 03-01: Implement adapter registry, persistent config, launch config resolution, and CLI overrides
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 03-02: Add built-in JavaScript adapter support with Node, Chrome, Electron, and source-map smoke coverage
+- [x] 03-03: Add built-in Python adapter support with debugpy launch and attach coverage
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 03-04: Harden launch/attach flows, process cleanup, diagnostics, custom adapter overrides, and final E2E verification
 
 ### Phase 4: Agent Workflow, Documentation, and Self-Hosting Verification
 **Goal**: Agents and users can confidently use, verify, and extend dap-cli through polished docs, examples, self-hosting workflows, and exploratory dynamic validation.
@@ -130,5 +135,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 |-------|----------------|--------|-----------|
 | 1. Project Foundation, Controller, and DAP Core | 8/8 | Complete | 2026-05-02 |
 | 2. Complete Typed DAP Command Surface | 4/4 | Complete | 2026-05-03 |
-| 3. Built-in and Custom Adapter Support | 0/4 | Not started | - |
+| 3. Built-in and Custom Adapter Support | 4/4 | Complete | 2026-05-03 |
 | 4. Agent Workflow, Documentation, and Self-Hosting Verification | 0/4 | Not started | - |

@@ -784,7 +784,7 @@ Phase 1 does not implement remote adapter presets or expression evaluation comma
 
 1. **Where should dap-cli store controller state by default?**
    - What we know: Phase 1 needs persistent controller discovery and active-session state across CLI invocations. [VERIFIED: .planning/REQUIREMENTS.md]
-  - Resolution: Implement a configurable path helper that honors `DAP_CLI_HOME` first. If unset, use a platform-appropriate user data directory (`~/Library/Application Support/dap-cli` on macOS, `$XDG_STATE_HOME/dap-cli` or `~/.local/state/dap-cli` on Linux, and `%LOCALAPPDATA%\\dap-cli` on Windows). Tests should always set `DAP_CLI_HOME` to an isolated temp directory. [ASSUMED]
+  - Resolution: Implement a configurable path helper that honors `DAP_CLI_HOME` first. If unset, use `~/.dap-cli` for controller state, logs, adapter cache, and config across platforms. Tests should always set `DAP_CLI_HOME` to an isolated temp directory. [ASSUMED]
 
 2. **Should handled error JSON go to stdout or stderr?**
    - What we know: Agent consumers need structured JSON and stable nonzero exits. [VERIFIED: .planning/REQUIREMENTS.md]

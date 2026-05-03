@@ -1,3 +1,5 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import type { AdapterDescriptor } from '../../src/adapters/descriptor.js';
 import { createControllerClient } from '../../src/controller/client.js';
@@ -112,6 +114,116 @@ describe('fake adapter controller integration', () => {
 
     const detach = await runCli(['detach'], { env: testEnv.env });
     expect(parseEnvelope<{ name: string; status: string }>(detach.stdout).data.status).toBe('terminated');
+  });
+
+  test('launches with explicit fake adapter through registry-aware command path', async () => {
+    const launch = await runCli(['launch', '--adapter', 'fake', '--json', '{"program":"json.js"}', '--program', 'flag.js', '--name', 'registry-fake'], { env: testEnv.env });
+
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+    const launchEnvelope = parseEnvelope<{ sessionId: string; name: string; lifecycle: string }>(launch.stdout);
+    expect(launchEnvelope.data.sessionId).toMatch(/^sess_/);
+    expect(launchEnvelope.data.name).toBe('registry-fake');
+    expect(launchEnvelope.data.lifecycle).toBe('stopped');
+  });
+
+  test('CLI flags override JSON config and reach launch arguments', async () => {
+    const launch = await runCli([
+      'launch',
+      '--adapter', 'fake',
+      '--script', 'expect-launch-overrides',
+      '--json', '{"program":"json.js","cwd":"json-cwd"}',
+      '--program', 'flag.js',
+      '--cwd', 'flag-cwd',
+      '--name', 'precedence-test',
+    ], { env: testEnv.env });
+
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+  });
+
+  test('attach passes adapter-native config to the DAP attach request', async () => {
+    const attach = await runCli([
+      'attach',
+      '--adapter', 'fake',
+      '--script', 'expect-attach-overrides',
+      '--json', '{"port":1234}',
+      '--port', '4711',
+      '--name', 'attach-precedence-test',
+    ], { env: testEnv.env });
+
+    expect(attach.exitCode, JSON.stringify(attach)).toBe(0);
+  });
+
+  test('rejects malformed numeric CLI override values', async () => {
+    const attach = await runCli(['attach', '--adapter', 'fake', '--port', '4711abc'], { env: testEnv.env });
+    const failure = attach.envelope as unknown as JsonFailureEnvelope;
+
+    expect(attach.exitCode).toBe(2);
+    expect(attach.stderr).toBe('');
+    expect(failure.ok).toBe(false);
+    expect(failure.error.code).toBe('invalid_number');
+  });
+
+  test('custom adapters resolve from persistent config with launch defaults', async () => {
+    await writeAdapterConfig(testEnv.dapCliHome, {
+      adapters: {
+        'custom-fake': createCustomFakeDescriptor('custom-fake', 'expect-launch-overrides', { launchDefaults: { program: 'default.js', cwd: 'default-cwd' } }),
+      },
+    });
+
+    const launch = await runCli([
+      'launch',
+      '--adapter', 'custom-fake',
+      '--json', '{"program":"json.js","cwd":"json-cwd"}',
+      '--program', 'flag.js',
+      '--cwd', 'flag-cwd',
+      '--name', 'custom-adapter-test',
+    ], { env: testEnv.env });
+
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+  });
+
+  test('named .vscode launch config maps through custom type map and merges flags', async () => {
+    await writeAdapterConfig(testEnv.dapCliHome, {
+      adapters: {
+        'named-fake': createCustomFakeDescriptor('named-fake', 'expect-launch-overrides'),
+      },
+      launchConfigTypeMap: { fakeType: 'named-fake' },
+    });
+    const launchJsonPath = path.join(process.cwd(), '.vscode', 'launch.json');
+    const previousLaunchJson = await readOptionalFile(launchJsonPath);
+    await fs.mkdir(path.dirname(launchJsonPath), { recursive: true });
+    await fs.writeFile(launchJsonPath, JSON.stringify({
+      configurations: [{ type: 'fakeType', name: 'Named Fake', program: 'json.js', cwd: 'json-cwd' }],
+    }), 'utf8');
+
+    try {
+      const launch = await runCli([
+        'launch',
+        '--config', 'Named Fake',
+        '--program', 'flag.js',
+        '--cwd', 'flag-cwd',
+        '--name', 'named-config-test',
+      ], { env: testEnv.env });
+
+      expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+    } finally {
+      if (previousLaunchJson === undefined) {
+        await fs.rm(launchJsonPath, { force: true });
+      } else {
+        await fs.writeFile(launchJsonPath, previousLaunchJson, 'utf8');
+      }
+    }
+  });
+
+  test('reports unknown adapter ids before controller start request', async () => {
+    const launch = await runCli(['launch', '--adapter', 'missing-adapter'], { env: testEnv.env });
+    const failure = launch.envelope as unknown as JsonFailureEnvelope;
+
+    expect(launch.exitCode).toBe(2);
+    expect(launch.stderr).toBe('');
+    expect(failure.ok).toBe(false);
+    expect(failure.error.code).toBe('adapter_not_found');
+    expect(failure.error.category).toBe('usage');
   });
 
   test('stops the controller when no active session exists', async () => {
@@ -270,4 +382,34 @@ describe('fake adapter controller integration', () => {
 
 function parseEnvelope<T>(text: string): JsonEnvelope<T> {
   return JSON.parse(text) as JsonEnvelope<T>;
+}
+
+function createCustomFakeDescriptor(id: string, script: string, defaults: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id,
+    label: id,
+    transport: {
+      kind: 'stdio',
+      command: process.execPath,
+      args: ['--experimental-strip-types', path.join(process.cwd(), 'tests', 'fixtures', 'fake-adapter-entry.ts'), '--script', script],
+    },
+    ...defaults,
+  };
+}
+
+async function writeAdapterConfig(dapCliHome: string, config: Record<string, unknown>): Promise<void> {
+  const configDir = path.join(dapCliHome, 'config');
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(path.join(configDir, 'adapters.json'), `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+}
+
+async function readOptionalFile(filePath: string): Promise<string | undefined> {
+  try {
+    return await fs.readFile(filePath, 'utf8');
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return undefined;
+    }
+    throw error;
+  }
 }

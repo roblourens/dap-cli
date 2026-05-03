@@ -312,7 +312,9 @@ export class ControllerServer {
     this.runtimes.set(session.id, runtime);
     let startResult: Awaited<ReturnType<DapLifecycleController['start']>>;
     try {
-      startResult = await lifecycle.start({ mode: startParams.mode });
+      startResult = await lifecycle.start(startParams.mode === 'launch'
+        ? { mode: 'launch', launchArgs: startParams.config }
+        : { mode: 'attach', attachArgs: startParams.config });
     } catch (error) {
       await manager.updateLifecycle(session.id, 'failed').catch(() => undefined);
       await client.close().catch(() => undefined);
@@ -481,19 +483,24 @@ interface DapCapabilitiesResult {
   capabilities: unknown;
 }
 
-function parseDapStartParams(params: unknown): { mode: 'launch' | 'attach'; name: string; use: boolean; descriptor: unknown } {
+function parseDapStartParams(params: unknown): { mode: 'launch' | 'attach'; name: string; use: boolean; descriptor: unknown; config?: unknown } {
   if (!isRecord(params)) {
     throw usageError('Missing DAP start parameters.', { code: 'missing_parameter' });
   }
 
   const mode = params.mode;
   const name = params.name;
-  return {
+  const parsed: { mode: 'launch' | 'attach'; name: string; use: boolean; descriptor: unknown; config?: unknown } = {
     mode: mode === 'attach' ? 'attach' : 'launch',
     name: typeof name === 'string' && name.length > 0 ? name : 'default',
     use: params.use !== false,
     descriptor: params.descriptor,
   };
+  if ('config' in params) {
+    parsed.config = params.config;
+  }
+
+  return parsed;
 }
 
 function parseDapRequestParams(params: unknown): { name?: string; command: string; args?: unknown } {

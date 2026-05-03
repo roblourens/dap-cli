@@ -101,4 +101,10 @@ describe('JSON output contract', () => {
     expect(getDapCliStateDir()).toBe('/tmp/dap-cli-test-home/state');
     expect(getDapCliLogDir()).toBe('/tmp/dap-cli-test-home/logs');
   });
+
+  test('default state and log directories live under ~/.dap-cli', () => {
+    expect(getDapCliHome({})).toMatch(/[/\\]\.dap-cli$/);
+    expect(getDapCliStateDir({})).toMatch(/[/\\]\.dap-cli[/\\]state$/);
+    expect(getDapCliLogDir({})).toMatch(/[/\\]\.dap-cli[/\\]logs$/);
+  });
 });

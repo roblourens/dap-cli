@@ -154,11 +154,11 @@ function createControllerEndpoint(stateDir: string, platform: NodeJS.Platform): 
 }
 
 function resolveStateDir(options: ControllerPathOptions): string {
-  return getDapCliStateDir(createEnv(options), options.platform ?? process.platform);
+  return getDapCliStateDir(createEnv(options));
 }
 
 function resolveLogDir(options: ControllerPathOptions): string {
-  return getDapCliLogDir(createEnv(options), options.platform ?? process.platform);
+  return getDapCliLogDir(createEnv(options));
 }
 
 function createEnv(options: ControllerPathOptions): NodeJS.ProcessEnv {

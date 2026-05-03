@@ -7,10 +7,12 @@ interface DapRequestMessage {
 	seq: number;
 	type: 'request';
 	command: string;
+	arguments?: unknown;
 }
 
 interface FakeStep {
 	command?: string;
+	expectedArguments?: Record<string, unknown>;
 	success?: boolean;
 	message?: string;
 	event?: string;
@@ -25,6 +27,8 @@ const scripts: Record<string, FakeStep[]> = {
 	'alias-inspection': createAliasInspectionScript(),
 	'execution-control': createExecutionControlScript(),
 	'failed-threads': createFailedThreadsScript(),
+	'expect-launch-overrides': createLifecycleScript('launch', { request: 'launch', program: 'flag.js', cwd: 'flag-cwd' }),
+	'expect-attach-overrides': createLifecycleScript('attach', { request: 'attach', port: 4711 }),
 	'stderr-close': [
 		{ stderr: 'fake adapter startup failure' },
 		{ close: true },
@@ -56,6 +60,11 @@ process.stdin.on('data', (chunk: Buffer) => {
 			process.exit(1);
 		}
 
+		if (step.expectedArguments !== undefined && !matchesExpectedArguments(message.arguments, step.expectedArguments)) {
+			writeResponse(message, false, `Unexpected arguments for ${message.command}: ${JSON.stringify(message.arguments)}`);
+			process.exit(1);
+		}
+
 		writeResponse(message, step.success ?? true, step.message, step.body);
 		flushEvents();
 	}
@@ -63,10 +72,14 @@ process.stdin.on('data', (chunk: Buffer) => {
 
 flushEvents();
 
-function createLifecycleScript(startCommand: 'launch' | 'attach'): FakeStep[] {
+function createLifecycleScript(startCommand: 'launch' | 'attach', expectedStartArguments?: Record<string, unknown>): FakeStep[] {
+	const startStep: FakeStep = expectedStartArguments === undefined
+		? { command: startCommand }
+		: { command: startCommand, expectedArguments: expectedStartArguments };
+
 	return [
 		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
-		{ command: startCommand },
+		startStep,
 		{ event: 'initialized' },
 		{ command: 'configurationDone' },
 		{ event: 'stopped', body: { reason: 'entry', threadId: 1, allThreadsStopped: true } },
@@ -75,6 +88,15 @@ function createLifecycleScript(startCommand: 'launch' | 'attach'): FakeStep[] {
 		{ event: 'terminated' },
 		{ close: true },
 	];
+}
+
+function matchesExpectedArguments(actual: unknown, expected: Record<string, unknown>): boolean {
+	if (typeof actual !== 'object' || actual === null) {
+		return false;
+	}
+
+	const actualRecord = actual as Record<string, unknown>;
+	return Object.entries(expected).every(([key, value]) => JSON.stringify(actualRecord[key]) === JSON.stringify(value));
 }
 
 function createFailedThreadsScript(): FakeStep[] {

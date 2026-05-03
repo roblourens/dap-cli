@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+const adapterIdSchema = z.string().min(1).regex(/^[A-Za-z0-9._-]+$/, 'Adapter id may only contain letters, numbers, dots, underscores, and dashes.');
+
 export interface AdapterDescriptor {
   id: string;
   label: string;
@@ -9,7 +11,7 @@ export interface AdapterDescriptor {
 }
 
 export const adapterDescriptorSchema: z.ZodType<AdapterDescriptor> = z.object({
-  id: z.string().min(1),
+  id: adapterIdSchema,
   label: z.string().min(1),
   transport: z.discriminatedUnion('kind', [
     z.object({

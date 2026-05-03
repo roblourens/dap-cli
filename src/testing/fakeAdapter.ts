@@ -40,6 +40,14 @@ export function createFakeAdapterScript(name: string): FakeAdapterScript {
     };
   }
 
+  if (name === 'expect-launch-overrides') {
+    return createLifecycleScript(name, 'launch', { request: 'launch', program: 'flag.js', cwd: 'flag-cwd' });
+  }
+
+  if (name === 'expect-attach-overrides') {
+    return createLifecycleScript(name, 'attach', { request: 'attach', port: 4711 });
+  }
+
   return createLifecycleScript(name, 'launch');
 }
 
@@ -104,17 +112,26 @@ export function runFakeAdapterScript(script: FakeAdapterScript, input: NodeJS.Re
         continue;
       }
 
+      if (step.expectedArguments !== undefined && !matchesExpectedArguments(message.arguments, step.expectedArguments)) {
+        writeMessage(output, createResponse(message, false, `Unexpected arguments for ${message.command}: ${JSON.stringify(message.arguments)}`));
+        continue;
+      }
+
       writeResponseAndImmediateSteps(output, stderr, { ...step.respond, request_seq: message.seq }, consumeLeadingNonRequestSteps(remainingSteps));
     }
   });
 }
 
-function createLifecycleScript(name: string, mode: 'launch' | 'attach'): FakeAdapterScript {
+function createLifecycleScript(name: string, mode: 'launch' | 'attach', expectedStartArguments?: Record<string, unknown>): FakeAdapterScript {
+  const startStep: FakeAdapterScriptStep = expectedStartArguments === undefined
+    ? { kind: 'expectRequest', command: mode, respond: { seq: 2, type: 'response', request_seq: 0, success: true, command: mode } }
+    : { kind: 'expectRequest', command: mode, expectedArguments: expectedStartArguments, respond: { seq: 2, type: 'response', request_seq: 0, success: true, command: mode } };
+
   return {
     name,
     steps: [
       { kind: 'expectRequest', command: 'initialize', respond: { seq: 1, type: 'response', request_seq: 0, success: true, command: 'initialize', body: { supportsConfigurationDoneRequest: true } } },
-      { kind: 'expectRequest', command: mode, respond: { seq: 2, type: 'response', request_seq: 0, success: true, command: mode } },
+      startStep,
       { kind: 'sendEvent', event: { seq: 3, type: 'event', event: 'initialized' } },
       { kind: 'expectRequest', command: 'configurationDone', respond: { seq: 4, type: 'response', request_seq: 0, success: true, command: 'configurationDone' } },
       { kind: 'sendEvent', event: { seq: 5, type: 'event', event: 'stopped', body: { reason: 'breakpoint', threadId: 1 } } },
@@ -123,6 +140,15 @@ function createLifecycleScript(name: string, mode: 'launch' | 'attach'): FakeAda
       { kind: 'sendEvent', event: { seq: 8, type: 'event', event: 'terminated' } },
     ],
   };
+}
+
+function matchesExpectedArguments(actual: unknown, expected: Record<string, unknown>): boolean {
+  if (typeof actual !== 'object' || actual === null) {
+    return false;
+  }
+
+  const actualRecord = actual as Record<string, unknown>;
+  return Object.entries(expected).every(([key, value]) => JSON.stringify(actualRecord[key]) === JSON.stringify(value));
 }
 
 function consumeLeadingNonRequestSteps(steps: FakeAdapterScriptStep[]): FakeAdapterScriptStep[] {
