@@ -17,6 +17,7 @@ export const controllerRequestMethods = [
   'sessions.cleanup',
   'dap.start',
   'dap.request',
+  'dap.capabilities',
   'dap.continue',
   'dap.stackTrace',
   'dap.scopes',

@@ -13,7 +13,7 @@ v1 builds dap-cli from a clean TypeScript/Node foundation into a professional ag
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Project Foundation, Controller, and DAP Core** - Establish the modular CLI architecture, persistent controller, language-neutral DAP client, polling state, diagnostics, and deterministic fake-adapter tests.
-- [ ] **Phase 2: Complete Typed DAP Command Surface** - Generate and verify typed CLI commands for every DAP request, with ergonomic debugging operations and scripted command coverage.
+- [x] **Phase 2: Complete Typed DAP Command Surface** - Generate and verify typed CLI commands for every DAP request, with ergonomic debugging operations and scripted command coverage.
 - [ ] **Phase 3: Built-in and Custom Adapter Support** - Add JavaScript, Python, and user-defined adapter flows through descriptor/config/process/transport boundaries, including JS source maps and E2E smoke tests.
 - [ ] **Phase 4: Agent Workflow, Documentation, and Self-Hosting Verification** - Polish the agent experience with README/user docs, Playwright interop examples, self-hosting, smoke verification, and agentic exploratory tests.
 
@@ -68,10 +68,22 @@ Cross-cutting constraints:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 02-01: Build protocol metadata generator and typed command registry
-- [ ] 02-02: Implement raw request passthrough, capability reporting, and unsupported-request diagnostics
-- [ ] 02-03: Add ergonomic breakpoint, inspection, evaluation, and execution-control commands
-- [ ] 02-04: Add generated command coverage tests and deterministic scripted feature coverage
+**Wave 1**
+- [x] 02-01: Build protocol metadata generator and typed command registry
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 02-02: Implement raw request passthrough, capability reporting, and unsupported-request diagnostics
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 02-03: Add ergonomic breakpoint, inspection, evaluation, and execution-control commands
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [x] 02-04: Add generated command coverage tests and deterministic scripted feature coverage
+
+Cross-cutting constraints:
+- Generated commands and ergonomic aliases must converge on generated registry metadata and the existing controller `dap.request` route.
+- Raw `request <command> --json '{}'` passthrough must remain available beside typed commands.
+- Capability reporting and unsupported-request failures must preserve the existing JSON envelope, handled `CliError`, session targeting, and controller IPC contracts.
 
 ### Phase 3: Built-in and Custom Adapter Support
 **Goal**: Agents can launch, attach, and debug JavaScript, Python, and configured custom adapters through external-service descriptors and transport boundaries.
@@ -117,6 +129,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Project Foundation, Controller, and DAP Core | 8/8 | Complete | 2026-05-02 |
-| 2. Complete Typed DAP Command Surface | 0/4 | Not started | - |
+| 2. Complete Typed DAP Command Surface | 4/4 | Complete | 2026-05-03 |
 | 3. Built-in and Custom Adapter Support | 0/4 | Not started | - |
 | 4. Agent Workflow, Documentation, and Self-Hosting Verification | 0/4 | Not started | - |

@@ -6,6 +6,7 @@ import { adapterError, CliError, dapError, timeoutError, usageError, type CliErr
 import { DapClient, DapResponseError, DapTransportClosedError } from '../protocol/dapClient.js';
 import { DapEventCache } from '../protocol/eventCache.js';
 import { DapLifecycleController } from '../protocol/lifecycle.js';
+import { getDapGeneratedCommand } from '../generated/dapCommandRegistry.js';
 import type { DapTransport } from '../protocol/transport.js';
 import { SessionManager } from '../sessions/sessionManager.js';
 import type { OwnedAdapterMetadata, SessionStatus } from '../sessions/session.js';
@@ -166,12 +167,12 @@ export class ControllerServer {
     }
 
     try {
-      const dapResult = await this.handleDapRequest(request);
-      if (dapResult !== undefined) {
+      if (isImplementedDapRequestMethod(request.method)) {
+        const dapResult = await this.handleDapRequest(request);
         return {
           id: request.id,
           ok: true,
-          result: dapResult,
+          result: dapResult ?? null,
         };
       }
 
@@ -269,6 +270,9 @@ export class ControllerServer {
     if (request.method === 'dap.request') {
       return this.routeDapRequest(request.params);
     }
+    if (request.method === 'dap.capabilities') {
+      return this.reportDapCapabilities(request.params);
+    }
     if (request.method === 'events.recent' || request.method === 'events.list') {
       return this.recentEvents(request.params);
     }
@@ -304,7 +308,8 @@ export class ControllerServer {
       }
     });
 
-    this.runtimes.set(session.id, { sessionId: session.id, name: session.name, adapterId: descriptor.id, client, lifecycle, eventCache, adapter });
+    const runtime: DapSessionRuntime = { sessionId: session.id, name: session.name, adapterId: descriptor.id, client, lifecycle, eventCache, adapter, capabilities: {} };
+    this.runtimes.set(session.id, runtime);
     let startResult: Awaited<ReturnType<DapLifecycleController['start']>>;
     try {
       startResult = await lifecycle.start({ mode: startParams.mode });
@@ -319,6 +324,7 @@ export class ControllerServer {
         request: client.lastRequest,
       }));
     }
+    runtime.capabilities = startResult.capabilities;
     await manager.updateLifecycle(session.id, lifecycle.state.lifecycle === 'stopped' ? 'stopped' : 'running');
     const snapshot = eventCache.recent();
 
@@ -334,6 +340,7 @@ export class ControllerServer {
   private async routeDapRequest(params: unknown): Promise<unknown> {
     const requestParams = parseDapRequestParams(params);
     const runtime = this.resolveRuntime(requestParams.name);
+    this.assertSupportedDapRequest(runtime, requestParams.command);
     try {
       return await runtime.client.request(requestParams.command, requestParams.args);
     } catch (error) {
@@ -343,6 +350,31 @@ export class ControllerServer {
         request: runtime.client.lastRequest ?? { command: requestParams.command },
       });
     }
+  }
+
+  private reportDapCapabilities(params: unknown): DapCapabilitiesResult {
+    const runtime = this.resolveRuntime(getOptionalStringParam(params, 'name'));
+    return {
+      sessionId: runtime.sessionId,
+      name: runtime.name,
+      adapterId: runtime.adapterId,
+      capabilities: runtime.capabilities,
+    };
+  }
+
+  private assertSupportedDapRequest(runtime: DapSessionRuntime, command: string): void {
+    const metadata = getDapGeneratedCommand(command);
+    if (metadata?.capability === undefined || hasTruthyCapability(runtime.capabilities, metadata.capability)) {
+      return;
+    }
+
+    throw dapError(`DAP request '${command}' requires unsupported adapter capability '${metadata.capability}'.`, {
+      code: 'dap_request_unsupported',
+      diagnostics: [`Adapter '${runtime.adapterId}' did not report capability '${metadata.capability}' required by request '${command}'.`],
+      sessionId: runtime.sessionId,
+      request: { command },
+      adapter: getAdapterContext(runtime.adapterId, runtime.adapter),
+    });
   }
 
   private recentEvents(params: unknown): EventsRecentResult {
@@ -423,6 +455,7 @@ interface DapSessionRuntime {
   lifecycle: DapLifecycleController;
   eventCache: DapEventCache;
   adapter: AdapterRuntime;
+  capabilities: unknown;
 }
 
 interface DapStartResult {
@@ -439,6 +472,13 @@ interface EventsRecentResult {
   events: unknown;
   cursor: number;
   dropped: number;
+}
+
+interface DapCapabilitiesResult {
+  sessionId: string;
+  name: string;
+  adapterId: string;
+  capabilities: unknown;
 }
 
 function parseDapStartParams(params: unknown): { mode: 'launch' | 'attach'; name: string; use: boolean; descriptor: unknown } {
@@ -618,6 +658,14 @@ function getRequiredStringParam(params: unknown, key: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function hasTruthyCapability(capabilities: unknown, capability: string): boolean {
+  return isRecord(capabilities) && Boolean(capabilities[capability]);
+}
+
+function isImplementedDapRequestMethod(method: string): boolean {
+  return method === 'dap.start' || method === 'dap.request' || method === 'dap.capabilities' || method === 'events.recent' || method === 'events.list';
 }
 
 export async function startControllerServer(options: StartControllerServerOptions = {}): Promise<ControllerServer> {

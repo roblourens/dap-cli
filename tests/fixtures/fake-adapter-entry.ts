@@ -22,6 +22,8 @@ interface FakeStep {
 const scripts: Record<string, FakeStep[]> = {
 	'stopped-on-entry': createLifecycleScript('launch'),
 	'attach-stopped': createLifecycleScript('attach'),
+	'alias-inspection': createAliasInspectionScript(),
+	'execution-control': createExecutionControlScript(),
 	'failed-threads': createFailedThreadsScript(),
 	'stderr-close': [
 		{ stderr: 'fake adapter startup failure' },
@@ -63,7 +65,7 @@ flushEvents();
 
 function createLifecycleScript(startCommand: 'launch' | 'attach'): FakeStep[] {
 	return [
-		{ command: 'initialize', body: { capabilities: { supportsConfigurationDoneRequest: true } } },
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
 		{ command: startCommand },
 		{ event: 'initialized' },
 		{ command: 'configurationDone' },
@@ -79,6 +81,42 @@ function createFailedThreadsScript(): FakeStep[] {
 	return createLifecycleScript('launch').map(step => step.command === 'threads'
 		? { command: 'threads', success: false, message: 'threads failed' }
 		: step);
+}
+
+function createAliasInspectionScript(): FakeStep[] {
+	return [
+		...createLifecycleScript('launch').slice(0, 5),
+		{ command: 'threads', body: { threads: [{ id: 1, name: 'main' }] } },
+		{ command: 'setBreakpoints', body: { breakpoints: [{ id: 1, verified: true, line: 5 }] } },
+		{ command: 'threads', body: { threads: [{ id: 1, name: 'main' }] } },
+		{ command: 'stackTrace', body: { stackFrames: [{ id: 10, name: 'main', line: 5, column: 1, source: { path: 'app.ts' } }], totalFrames: 1 } },
+		{ command: 'scopes', body: { scopes: [{ name: 'Local', variablesReference: 100, expensive: false }] } },
+		{ command: 'variables', body: { variables: [{ name: 'value', value: '1', variablesReference: 0 }] } },
+		{ command: 'source', body: { content: 'const value = 1;\n', mimeType: 'text/typescript' } },
+		{ command: 'evaluate', body: { result: '2', variablesReference: 0 } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	];
+}
+
+function createExecutionControlScript(): FakeStep[] {
+	return [
+		...createLifecycleScript('launch').slice(0, 5),
+		{ command: 'continue', body: { allThreadsContinued: true } },
+		{ event: 'continued', body: { threadId: 1, allThreadsContinued: true } },
+		{ command: 'pause' },
+		{ event: 'stopped', body: { reason: 'pause', threadId: 1, allThreadsStopped: true } },
+		{ command: 'next' },
+		{ event: 'stopped', body: { reason: 'step', threadId: 1, allThreadsStopped: true } },
+		{ command: 'stepIn' },
+		{ event: 'stopped', body: { reason: 'step', threadId: 1, allThreadsStopped: true } },
+		{ command: 'stepOut' },
+		{ event: 'stopped', body: { reason: 'step', threadId: 1, allThreadsStopped: true } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	];
 }
 
 function flushEvents(): void {

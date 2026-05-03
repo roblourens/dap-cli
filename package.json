@@ -12,6 +12,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "generate:dap-commands": "node --experimental-strip-types src/generator/dapCommandRegistryGenerator.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "eslint src tests *.config.ts",

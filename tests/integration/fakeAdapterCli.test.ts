@@ -54,6 +54,13 @@ describe('fake adapter controller integration', () => {
     expect(launchEnvelope.data.name).toBe('demo');
     expect(launchEnvelope.data.lifecycle).toBe('stopped');
 
+    const capabilities = await runCli(['capabilities', '--name', 'demo'], { env: testEnv.env });
+    const capabilitiesEnvelope = parseEnvelope<{ sessionId: string; name: string; adapterId: string; capabilities: { supportsConfigurationDoneRequest?: boolean } }>(capabilities.stdout);
+    expect(capabilitiesEnvelope.data.sessionId).toBe(launchEnvelope.data.sessionId);
+    expect(capabilitiesEnvelope.data.name).toBe('demo');
+    expect(capabilitiesEnvelope.data.adapterId).toBe('fake');
+    expect(capabilitiesEnvelope.data.capabilities.supportsConfigurationDoneRequest).toBe(true);
+
     const controllerStatus = await runCli(['status'], { env: testEnv.env });
     const controllerStatusEnvelope = controllerStatus.envelope as JsonEnvelope<{ id: string; name: string; status: string }>;
     expect(controllerStatusEnvelope.data.id).toBe(launchEnvelope.data.sessionId);
@@ -131,6 +138,88 @@ describe('fake adapter controller integration', () => {
     expect(failure.error.sessionId).toBe(sessionId);
     expect(failure.error.request?.command).toBe('threads');
     expect(failure.error.diagnostics.length).toBeGreaterThan(0);
+  });
+
+  test('preflights unsupported adapter capabilities as handled JSON failures', async () => {
+    const launch = await runCli(['launch', '--adapter', 'fake', '--script', 'stopped-on-entry', '--name', 'unsupported'], { env: testEnv.env });
+    expect(launch.exitCode).toBe(0);
+    const sessionId = (launch.envelope as JsonEnvelope<{ sessionId: string }>).data.sessionId;
+
+    const request = await runCli(['request', 'setVariable', '--name', 'unsupported', '--json', '{"variablesReference":1,"name":"value","value":"2"}'], { env: testEnv.env });
+    const failure = request.envelope as unknown as JsonFailureEnvelope;
+
+    expect(request.exitCode).toBe(5);
+    expect(request.stderr).toBe('');
+    expect(request.stdout.split('\n').filter(line => line.length > 0)).toHaveLength(1);
+    expect(failure.ok).toBe(false);
+    expect(failure.error.code).toBe('dap_request_unsupported');
+    expect(failure.error.category).toBe('dap');
+    expect(failure.error.sessionId).toBe(sessionId);
+    expect(failure.error.request?.command).toBe('setVariable');
+    expect(failure.error.adapter?.descriptorId).toBe('fake');
+    expect(failure.error.diagnostics).toContain("Adapter 'fake' did not report capability 'supportsSetVariable' required by request 'setVariable'.");
+  });
+
+  test('reports invalid raw request JSON as one handled stdout envelope', async () => {
+    const request = await runCli(['request', 'threads', '--json', '{'], { env: testEnv.env });
+    const failure = request.envelope as unknown as JsonFailureEnvelope;
+
+    expect(request.exitCode).toBe(2);
+    expect(request.stderr).toBe('');
+    expect(request.stdout.split('\n').filter(line => line.length > 0)).toHaveLength(1);
+    expect(failure.ok).toBe(false);
+    expect(failure.error.code).toBe('invalid_json');
+    expect(failure.error.category).toBe('usage');
+    expect(failure.error.diagnostics).toContain('Invalid JSON argument.');
+  });
+
+  test('runs generated DAP commands and inspection aliases through the fake adapter', async () => {
+    const launch = await runCli(['launch', '--adapter', 'fake', '--script', 'alias-inspection', '--name', 'inspect'], { env: testEnv.env });
+    expect(launch.exitCode).toBe(0);
+
+    const generatedThreads = await runCli(['dap', 'threads', '--name', 'inspect', '--json', '{}'], { env: testEnv.env });
+    expect(parseEnvelope<{ threads: Array<{ id: number; name: string }> }>(generatedThreads.stdout).data.threads).toEqual([{ id: 1, name: 'main' }]);
+
+    const breakpoints = await runCli(['breakpoints', 'set', '--source', 'app.ts', '--line', '5', '--name', 'inspect'], { env: testEnv.env });
+    expect(parseEnvelope<{ breakpoints: Array<{ verified: boolean; line: number }> }>(breakpoints.stdout).data.breakpoints).toEqual([{ id: 1, verified: true, line: 5 }]);
+
+    const threads = await runCli(['threads', '--name', 'inspect'], { env: testEnv.env });
+    expect(parseEnvelope<{ threads: Array<{ id: number; name: string }> }>(threads.stdout).data.threads).toEqual([{ id: 1, name: 'main' }]);
+
+    const stack = await runCli(['stack', '--thread-id', '1', '--name', 'inspect'], { env: testEnv.env });
+    expect(parseEnvelope<{ stackFrames: Array<{ id: number; name: string }> }>(stack.stdout).data.stackFrames).toEqual([expect.objectContaining({ id: 10, name: 'main' })]);
+
+    const scopes = await runCli(['scopes', '--frame-id', '10', '--name', 'inspect'], { env: testEnv.env });
+    expect(parseEnvelope<{ scopes: Array<{ name: string; variablesReference: number }> }>(scopes.stdout).data.scopes).toEqual([{ name: 'Local', variablesReference: 100, expensive: false }]);
+
+    const variables = await runCli(['variables', '--variables-reference', '100', '--name', 'inspect'], { env: testEnv.env });
+    expect(parseEnvelope<{ variables: Array<{ name: string; value: string }> }>(variables.stdout).data.variables).toEqual([{ name: 'value', value: '1', variablesReference: 0 }]);
+
+    const source = await runCli(['source', '--source-reference', '1', '--path', 'app.ts', '--name', 'inspect'], { env: testEnv.env });
+    expect(parseEnvelope<{ content: string }>(source.stdout).data.content).toContain('const value = 1;');
+
+    const evaluate = await runCli(['evaluate', '--expression', 'value + 1', '--frame-id', '10', '--context', 'repl', '--name', 'inspect'], { env: testEnv.env });
+    expect(parseEnvelope<{ result: string; variablesReference: number }>(evaluate.stdout).data).toEqual({ result: '2', variablesReference: 0 });
+  });
+
+  test('runs execution-control aliases through dap.request', async () => {
+    const launch = await runCli(['launch', '--adapter', 'fake', '--script', 'execution-control', '--name', 'control'], { env: testEnv.env });
+    expect(launch.exitCode).toBe(0);
+
+    const continued = await runCli(['continue', '--thread-id', '1', '--single-thread', '--name', 'control'], { env: testEnv.env });
+    expect(parseEnvelope<{ allThreadsContinued: boolean }>(continued.stdout).data.allThreadsContinued).toBe(true);
+
+    const paused = await runCli(['pause', '--thread-id', '1', '--name', 'control'], { env: testEnv.env });
+    expect(paused.exitCode).toBe(0);
+
+    const next = await runCli(['next', '--thread-id', '1', '--name', 'control'], { env: testEnv.env });
+    expect(next.exitCode).toBe(0);
+
+    const stepIn = await runCli(['step-in', '--thread-id', '1', '--target-id', '2', '--name', 'control'], { env: testEnv.env });
+    expect(stepIn.exitCode).toBe(0);
+
+    const stepOut = await runCli(['step-out', '--thread-id', '1', '--name', 'control'], { env: testEnv.env });
+    expect(stepOut.exitCode).toBe(0);
   });
 
   test('reports adapter startup failures with stderr tail and log path diagnostics', async () => {

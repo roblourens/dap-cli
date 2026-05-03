@@ -76,4 +76,43 @@ describe('module boundaries', () => {
     expect(examples).toContain('scopes');
     expect(examples).toContain('variables');
   });
+
+  test('generated DAP registry remains metadata-only', async () => {
+    const generatedSource = await fs.readFile(path.join(process.cwd(), 'src', 'generated', 'dapCommandRegistry.ts'), 'utf8');
+    const forbiddenGeneratedImports = [
+      '../cli',
+      '../controller',
+      '../protocol',
+      '../adapters',
+      '../sessions',
+      '../../cli',
+      '../../controller',
+      '../../protocol',
+      '../../adapters',
+      '../../sessions',
+    ] as const;
+    const matchingImport = forbiddenGeneratedImports.find(pattern => generatedSource.includes(pattern));
+
+    expect(generatedSource).toContain('dapGeneratedCommands');
+    expect(generatedSource).toContain('DapGeneratedArgumentValidation');
+    expect(generatedSource).not.toContain('createControllerClient');
+    expect(generatedSource).not.toContain('validateGeneratedDapArguments');
+    expect(generatedSource).not.toContain('usageError');
+    expect(matchingImport, `generated registry imports runtime boundary ${matchingImport}`).toBeUndefined();
+  });
+
+  test('generated DAP command behavior lives in CLI command modules', async () => {
+    const generatedCommandSource = await fs.readFile(path.join(process.cwd(), 'src', 'cli', 'commands', 'dapGenerated.ts'), 'utf8');
+
+    expect(generatedCommandSource).toContain('registerGeneratedDapCommands');
+    expect(generatedCommandSource).toContain('validateGeneratedDapArguments');
+    expect(generatedCommandSource).toContain("client.request('dap.request'");
+  });
+
+  test('DAP command generator uses official protocol schema metadata', async () => {
+    const generatorSource = await fs.readFile(path.join(process.cwd(), 'src', 'generator', 'dapCommandRegistryGenerator.ts'), 'utf8');
+
+    expect(generatorSource).toContain('https://microsoft.github.io/debug-adapter-protocol/debugAdapterProtocol.json');
+    expect(generatorSource).toContain('extractCommands');
+  });
 });

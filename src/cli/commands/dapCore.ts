@@ -17,6 +17,10 @@ interface DapRequestCommandOptions {
   name?: string;
 }
 
+interface DapCapabilitiesCommandOptions {
+  name?: string;
+}
+
 interface DapEventsCommandOptions {
   name?: string;
   afterCursor?: string;
@@ -61,6 +65,14 @@ export function registerDapCoreCommands(program: Command, stdout: JsonWritable):
     });
 
   program
+    .command('capabilities')
+    .option('--name <name>', 'session name or id')
+    .description('Return adapter capabilities for a fake/custom session')
+    .action(async (options: DapCapabilitiesCommandOptions) => {
+      await withController(stdout, 'capabilities', async client => client.request('dap.capabilities', createNameParams(options.name)));
+    });
+
+  program
     .command('events')
     .option('--name <name>', 'session name or id')
     .option('--after-cursor <cursor>', 'return events after cursor')
@@ -73,6 +85,10 @@ export function registerDapCoreCommands(program: Command, stdout: JsonWritable):
         limit: parseOptionalInteger(options.limit, 'limit'),
       }));
     });
+}
+
+function createNameParams(name: string | undefined): { name?: string } {
+  return name === undefined ? {} : { name };
 }
 
 async function startDap(stdout: JsonWritable, mode: 'launch' | 'attach', options: DapStartCommandOptions): Promise<void> {
