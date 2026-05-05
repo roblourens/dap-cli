@@ -6,6 +6,9 @@ dist/
 build/
 coverage/
 *.tsbuildinfo
+# Test fixtures ship their compiled output so demos run zero-friction.
+!tests/fixtures/**/dist/
+!tests/fixtures/**/dist/**
 
 # Runtime logs and diagnostics
 logs/
@@ -30,3 +33,8 @@ temp/
 .dap-cli/
 *.pid
 *.sock
+
+# Hand-driven Playwright + dap-cli demo artifacts
+.playwright-cli/
+test-results/
+.demo-chrome-profile/

@@ -56,6 +56,9 @@ class JsonControllerClient implements ControllerClient {
           if (response.error.adapter !== undefined) {
             options.adapter = toAdapterContext(response.error.adapter);
           }
+          if (response.error.data !== undefined) {
+            options.data = response.error.data;
+          }
 
           throw new CliError(response.error.message, toCliErrorCategory(response.error.category), response.error.exitCode, options);
         }
@@ -147,5 +150,5 @@ function toAdapterContext(value: { descriptorId?: string | undefined; pid?: numb
 }
 
 function isSessionErrorCode(code: string): boolean {
-  return code === 'no_sessions' || code === 'no_active_session' || code === 'session_not_found' || code === 'session_unavailable';
+  return code === 'no_sessions' || code === 'no_active_session' || code === 'session_not_found' || code === 'session_ambiguous' || code === 'session_unavailable' || code === 'session_name_in_use';
 }

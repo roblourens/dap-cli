@@ -2,19 +2,40 @@ import type net from 'node:net';
 import { parseAdapterDescriptor, type AdapterDescriptor } from '../adapters/descriptor.js';
 import { startProcessAdapter, type StartedProcessAdapter } from '../adapters/processAdapter.js';
 import { connectSocketAdapter, startServerSocketAdapter, type ConnectedSocketAdapter, type StartedServerSocketAdapter } from '../adapters/socketAdapter.js';
-import { adapterError, CliError, dapError, timeoutError, usageError, type CliErrorAdapterContext, type CliErrorOptions, type CliErrorRequestContext } from '../cli/errors.js';
+import { applyJsDebugTraceDefaults } from '../adapters/builtins/jsDebug.js';
+import { adapterError, CliError, dapError, sessionError, timeoutError, usageError, type CliErrorAdapterContext, type CliErrorOptions, type CliErrorRequestContext } from '../cli/errors.js';
 import { DapClient, DapResponseError, DapTransportClosedError } from '../protocol/dapClient.js';
 import { DapEventCache } from '../protocol/eventCache.js';
-import { DapLifecycleController } from '../protocol/lifecycle.js';
+import { DapLifecycleController, DapLifecycleHandshakeTimeoutError } from '../protocol/lifecycle.js';
 import { getDapGeneratedCommand } from '../generated/dapCommandRegistry.js';
 import type { DapTransport } from '../protocol/transport.js';
 import { SessionManager } from '../sessions/sessionManager.js';
 import type { OwnedAdapterMetadata, SessionStatus } from '../sessions/session.js';
+import { ChildSessionCoordinator } from './childSessions.js';
+import { derivePausedStateFromStopped } from './pausedState.js';
 import { controllerRequestSchema, type ControllerFailureResponse, type ControllerRequest, type ControllerResponse } from './requests.js';
 import { createControllerServerSocket, removeControllerDiscovery, writeControllerDiscovery, type ControllerDiscovery, type ControllerEndpoint } from './ipc.js';
+import { computeBuildId } from './buildId.js';
+import { threadNotPaused } from './diagnostics.js';
 
 export interface StartControllerServerOptions {
   dapCliHome?: string | undefined;
+  /**
+   * Plan 05-23 (gap H-8): swappable signal helper used by
+   * `terminateRuntime` so tests can mock SIGTERM/SIGKILL semantics. The
+   * `target` may be negative — by Node/POSIX convention `process.kill(-pgid,
+   * signal)` signals every process whose process group id is |target|. This
+   * lets us cascade SIGKILL through Chromium subprocesses spawned by
+   * js-debug under the adapter's own process group (Task 1.5).
+   */
+  signalProcess?: (target: number, signal: NodeJS.Signals) => void;
+  /**
+   * Plan 05-23 (gap H-8): liveness probe used by `terminateRuntime` to
+   * decide whether to escalate SIGTERM → SIGKILL and whether to surface a
+   * PID under `orphanPids`. Default: `process.kill(pid, 0)` returns true if
+   * the OS still owns the pid.
+   */
+  isProcessAlive?: (pid: number) => boolean;
 }
 
 export interface ControllerStatus {
@@ -24,6 +45,12 @@ export interface ControllerStatus {
   logDir: string;
   uptimeMs: number;
   sessionCount: number;
+  buildId: string;
+}
+
+export interface ControllerHelloResult {
+  buildId: string;
+  pid: number;
 }
 
 export class ControllerServer {
@@ -35,8 +62,13 @@ export class ControllerServer {
   private sessionManager: SessionManager | undefined;
   private readonly runtimes = new Map<string, DapSessionRuntime>();
   private stopped = false;
+  private buildId: string = '';
+  private readonly signalProcess: (target: number, signal: NodeJS.Signals) => void;
+  private readonly isProcessAlive: (pid: number) => boolean;
 
   public constructor(private readonly options: StartControllerServerOptions = {}) {
+    this.signalProcess = options.signalProcess ?? ((target, signal) => process.kill(target, signal));
+    this.isProcessAlive = options.isProcessAlive ?? defaultIsProcessAlive;
     this.closedPromise = new Promise(resolve => {
       this.resolveClosed = resolve;
     });
@@ -50,6 +82,7 @@ export class ControllerServer {
     const socket = await createControllerServerSocket(clientSocket => this.handleConnection(clientSocket), this.options);
     this.server = socket.server;
     this.sessionManager = await SessionManager.create({ dapCliHome: this.options.dapCliHome });
+    this.buildId = await computeBuildId();
     const now = new Date().toISOString();
     this.discovery = {
       version: 1,
@@ -73,9 +106,11 @@ export class ControllerServer {
     await removeControllerDiscovery(this.options);
 
     for (const runtime of this.runtimes.values()) {
-      await runtime.lifecycle.disconnect().catch(() => undefined);
-      await runtime.client.close().catch(() => undefined);
-      await runtime.adapter.close().catch(() => undefined);
+      // Plan 05-23 (gap H-8): controller shutdown converges on the same
+      // teardown path as `sessions.close` and `cleanup --purge` so behavior
+      // is consistent. Ignore orphan results here — they are not surfaced
+      // through any controller response since shutdown has no caller.
+      await this.terminateRuntime(runtime, { terminateDebuggee: true }).catch(() => undefined);
     }
     this.runtimes.clear();
 
@@ -158,6 +193,18 @@ export class ControllerServer {
       };
     }
 
+    if (request.method === 'controller.hello') {
+      const helloResult: ControllerHelloResult = {
+        buildId: this.buildId,
+        pid: process.pid,
+      };
+      return {
+        id: request.id,
+        ok: true,
+        result: helloResult,
+      };
+    }
+
     if (request.method === 'controller.shutdown') {
       return {
         id: request.id,
@@ -225,6 +272,7 @@ export class ControllerServer {
       logDir: this.discovery.logDir,
       uptimeMs: Date.now() - this.startedAtMs,
       sessionCount: this.sessionManager?.list().length ?? 0,
+      buildId: this.buildId,
     };
   }
 
@@ -235,13 +283,21 @@ export class ControllerServer {
     }
 
     if (request.method === 'sessions.list') {
-      return manager.list();
+      const includeChildren = isRecord(request.params) && request.params.includeChildren === true;
+      return manager.list({ includeChildren });
     }
     if (request.method === 'sessions.status') {
-      return manager.status(getOptionalStringParam(request.params, 'name'));
+      const target = getOptionalStringParam(request.params, 'name');
+      const status = manager.status(target);
+      this.assertNotChildSession(status, target);
+      return status;
     }
     if (request.method === 'sessions.target' || request.method === 'sessions.use') {
-      return manager.targetSession(getRequiredStringParam(request.params, 'name'));
+      const target = getRequiredStringParam(request.params, 'name');
+      // Resolve first so we can reject children before mutating active focus.
+      const status = manager.status(target);
+      this.assertNotChildSession(status, target);
+      return manager.targetSession(target);
     }
     if (request.method === 'sessions.stop') {
       const target = getOptionalStringParam(request.params, 'name');
@@ -254,10 +310,44 @@ export class ControllerServer {
       return manager.detachSession(target);
     }
     if (request.method === 'sessions.close') {
-      return manager.closeSession(getOptionalStringParam(request.params, 'name'));
+      const target = getOptionalStringParam(request.params, 'name');
+      // Resolve the session BEFORE removing it so we can locate the runtime
+      // map entry. closeSession also accepts target so a second resolve is
+      // fine; child sessions go through the same SessionManager cascade as
+      // before.
+      let teardown: { orphanPids: number[]; warnings: string[] } = { orphanPids: [], warnings: [] };
+      try {
+        const status = manager.status(target);
+        const runtime = this.runtimes.get(status.id);
+        if (runtime !== undefined) {
+          teardown = await this.terminateRuntime(runtime, { terminateDebuggee: true });
+          this.runtimes.delete(status.id);
+        }
+      } catch {
+        // Resolution failures (e.g. session_not_found) fall through to
+        // closeSession which produces the canonical error.
+      }
+      const sessionStatus = await manager.closeSession(target);
+      return { ...sessionStatus, orphanPids: teardown.orphanPids, warnings: teardown.warnings };
     }
     if (request.method === 'sessions.cleanup') {
-      return manager.cleanupSessions();
+      const purge = isRecord(request.params) && request.params.purge === true;
+      // Plan 05-23 (gap H-8): on `--purge`, run terminateRuntime against
+      // every active runtime BEFORE the manager removes records. This
+      // converges teardown semantics with `sessions.close` so users don't
+      // get silent orphans regardless of which command they use.
+      const orphanPids: number[] = [];
+      const warnings: string[] = [];
+      if (purge) {
+        for (const [sessionId, runtime] of [...this.runtimes.entries()]) {
+          const teardown = await this.terminateRuntime(runtime, { terminateDebuggee: true }).catch(() => ({ orphanPids: [] as number[], warnings: [] as string[] }));
+          orphanPids.push(...teardown.orphanPids);
+          warnings.push(...teardown.warnings);
+          this.runtimes.delete(sessionId);
+        }
+      }
+      const cleanupResult = await manager.cleanupSessions({ purge });
+      return { ...cleanupResult, orphanPids, warnings };
     }
 
     return undefined;
@@ -286,6 +376,15 @@ export class ControllerServer {
     const startParams = parseDapStartParams(params);
     const descriptor = parseAdapterDescriptor(startParams.descriptor);
     const adapter = await this.startAdapter(descriptor, discovery.logDir);
+    const { config, initialBreakpoints } = extractDapCliStartConfig(startParams.config);
+    // Plan 05-21 (gap H-5): for js-debug, inject `trace.logFile` into the
+    // launch/attach config so its DAP/CDP wire trace lands in a discoverable
+    // sibling file under the controller's log directory. The descriptor lives
+    // upstream of launch args, so the merge happens here at the point where
+    // both descriptor identity and the resolved logDir are known.
+    const preparedConfig = descriptor.id === 'js-debug'
+      ? applyJsDebugTraceDefaults(config, discovery.logDir)
+      : config;
     const session = await manager.create({
       name: startParams.name,
       adapter: descriptor.id,
@@ -295,28 +394,64 @@ export class ControllerServer {
     });
     const client = new DapClient(adapter.transport, { requestTimeoutMs: 5_000 });
     const lifecycle = new DapLifecycleController(client);
-    const eventCache = new DapEventCache();
+    // Plan 05-18 (gap H-2): two-ring cache so js-debug `loadedSource` spam
+    // (93/100 in a single hello-world, see 05-UAT.md) cannot evict critical
+    // events like `stopped`. 200 high-priority + 50 low-priority = 250 total.
+    const eventCache = new DapEventCache({ highPriorityCapacity: 200, lowPriorityCapacity: 50 });
 
     client.onEvent(event => {
       eventCache.append(session.id, event);
       if (event.event === 'stopped') {
-        void manager.updateLifecycle(session.id, 'stopped');
+        void manager.updateLifecycle(session.id, 'stopped').catch(() => undefined);
+        void manager.updatePausedState(session.id, derivePausedStateFromStopped(event.body)).catch(() => undefined);
       } else if (event.event === 'continued') {
-        void manager.updateLifecycle(session.id, 'running');
+        void manager.updateLifecycle(session.id, 'running').catch(() => undefined);
+        void manager.updatePausedState(session.id, { paused: false }).catch(() => undefined);
       } else if (event.event === 'terminated') {
-        void manager.updateLifecycle(session.id, 'terminated');
+        void manager.updateLifecycle(session.id, 'terminated').catch(() => undefined);
+        void manager.updatePausedState(session.id, { paused: false }).catch(() => undefined);
       }
     });
 
-    const runtime: DapSessionRuntime = { sessionId: session.id, name: session.name, adapterId: descriptor.id, client, lifecycle, eventCache, adapter, capabilities: {} };
+    let children: ChildSessionCoordinator | undefined;
+    const adapterOpenChildTransport = 'openChildTransport' in adapter && typeof adapter.openChildTransport === 'function'
+      ? adapter.openChildTransport.bind(adapter)
+      : undefined;
+    if (adapterOpenChildTransport !== undefined) {
+      children = new ChildSessionCoordinator({
+        parentSessionId: session.id,
+        parentName: session.name,
+        parentClient: client,
+        adapterId: descriptor.id,
+        ownedAdapter: getOwnedAdapter(adapter) as OwnedAdapterMetadata,
+        sessionManager: manager,
+        parentEventCache: eventCache,
+        openChildTransport: adapterOpenChildTransport,
+      });
+      children.attach();
+    }
+
+    const runtime: DapSessionRuntime = children === undefined
+      ? { sessionId: session.id, name: session.name, adapterId: descriptor.id, client, lifecycle, eventCache, adapter, capabilities: {} }
+      : { sessionId: session.id, name: session.name, adapterId: descriptor.id, client, lifecycle, eventCache, adapter, capabilities: {}, children };
     this.runtimes.set(session.id, runtime);
     let startResult: Awaited<ReturnType<DapLifecycleController['start']>>;
     try {
-      startResult = await lifecycle.start(startParams.mode === 'launch'
-        ? { mode: 'launch', initializeArgs: createInitializeArgs(descriptor.id), launchArgs: startParams.config }
-        : { mode: 'attach', initializeArgs: createInitializeArgs(descriptor.id), attachArgs: startParams.config });
+      const beforeConfigurationDone = createBeforeConfigurationDoneHook(client, initialBreakpoints, children);
+      if (startParams.mode === 'launch') {
+        startResult = await lifecycle.start(beforeConfigurationDone === undefined
+          ? { mode: 'launch', initializeArgs: createInitializeArgs(descriptor.id), launchArgs: preparedConfig }
+          : { mode: 'launch', initializeArgs: createInitializeArgs(descriptor.id), launchArgs: preparedConfig, beforeConfigurationDone });
+      } else {
+        startResult = await lifecycle.start(beforeConfigurationDone === undefined
+          ? { mode: 'attach', initializeArgs: createInitializeArgs(descriptor.id), attachArgs: preparedConfig }
+          : { mode: 'attach', initializeArgs: createInitializeArgs(descriptor.id), attachArgs: preparedConfig, beforeConfigurationDone });
+      }
     } catch (error) {
       await manager.updateLifecycle(session.id, 'failed').catch(() => undefined);
+      if (children !== undefined) {
+        await children.dispose().catch(() => undefined);
+      }
       await client.close().catch(() => undefined);
       await adapter.close().catch(() => undefined);
       this.runtimes.delete(session.id);
@@ -343,13 +478,27 @@ export class ControllerServer {
     const requestParams = parseDapRequestParams(params);
     const runtime = this.resolveRuntime(requestParams.name);
     this.assertSupportedDapRequest(runtime, requestParams.command);
+    this.assertThreadPausedIfRequired(runtime, requestParams.command);
+    if (runtime.children !== undefined) {
+      const intercepted = await runtime.children.maybeIntercept(requestParams.command, requestParams.args);
+      if (intercepted !== undefined) {
+        return intercepted.value;
+      }
+    }
     try {
       return await runtime.client.request(requestParams.command, requestParams.args);
     } catch (error) {
+      let staleStatus: string | undefined;
+      try {
+        staleStatus = this.requireSessionManager().status(requestParams.name).status;
+      } catch {
+        staleStatus = undefined;
+      }
       throw toDapCliError(error, {
         sessionId: runtime.sessionId,
         adapter: getAdapterContext(runtime.adapterId, runtime.adapter),
         request: runtime.client.lastRequest ?? { command: requestParams.command },
+        staleSession: { sessionRef: runtime.sessionId, ...(staleStatus !== undefined ? { status: staleStatus } : {}) },
       });
     }
   }
@@ -379,17 +528,56 @@ export class ControllerServer {
     });
   }
 
+  /**
+   * Plan 05-20 (gap H-7): paused-state-required DAP requests (stackTrace,
+   * scopes, variables) must NOT be forwarded to the adapter when we know
+   * the thread isn't paused. Without this gate, the adapter typically
+   * returns a generic failure that surfaces as `controller_unavailable:
+   * Run dap-cli start` — the wrong recovery hint.
+   *
+   * The gate consults the H-1 paused projection (`session.paused`):
+   *   - `paused === false`: known not paused → throw `thread_not_paused`.
+   *   - `paused === true`:  known paused → forward to adapter.
+   *   - `paused === undefined`: unknown (no stopped/continued event observed
+   *     yet) → forward to adapter (do not regress legitimate paused
+   *     requests on a stale projection — see threat T-05-20-02).
+   */
+  private assertThreadPausedIfRequired(runtime: DapSessionRuntime, command: string): void {
+    if (!PAUSED_REQUIRED_DAP_COMMANDS.has(command)) {
+      return;
+    }
+    let paused: boolean | undefined;
+    try {
+      paused = this.requireSessionManager().status(runtime.sessionId).paused;
+    } catch {
+      // If status lookup fails for any reason, fall through to the adapter
+      // — do not synthesize a paused-state error from a missing projection.
+      return;
+    }
+    if (paused === false) {
+      throw threadNotPaused({ sessionId: runtime.sessionId, sessionName: runtime.name, command });
+    }
+  }
+
   private recentEvents(params: unknown): EventsRecentResult {
     const eventParams = parseEventsRecentParams(params);
     const runtime = this.resolveRuntime(eventParams.name);
     const snapshot = runtime.eventCache.recent(eventParams.options);
-    return {
+    const result: EventsRecentResult = {
       sessionId: runtime.sessionId,
       name: runtime.name,
       events: snapshot.events,
       cursor: snapshot.cursor,
       dropped: snapshot.droppedBeforeCursor ?? 0,
+      // Plan 05-18 (gap H-2): expose capacity to the CLI so it can produce
+      // honest `limit_exceeded_capacity` warnings client-side.
+      capacity: snapshot.capacity,
+      capacityByPriority: snapshot.capacityByPriority,
     };
+    if (snapshot.truncatedToCapacity !== undefined) {
+      result.truncatedToCapacity = snapshot.truncatedToCapacity;
+    }
+    return result;
   }
 
   private async startAdapter(descriptor: AdapterDescriptor, logDir: string): Promise<AdapterRuntime> {
@@ -405,12 +593,50 @@ export class ControllerServer {
 
   private resolveRuntime(target: string | undefined): DapSessionRuntime {
     const status = this.requireSessionManager().status(target);
+    this.assertNotChildSession(status, target);
     const runtime = this.runtimes.get(status.id);
     if (runtime === undefined) {
-      throw usageError(`No DAP runtime is attached to session ${status.id}.`, { code: 'session_unavailable' });
+      throw sessionError(`No DAP runtime is attached to session ${status.id}.`, {
+        code: 'session_unavailable',
+        sessionId: status.id,
+        diagnostics: createMissingRuntimeDiagnostics(status),
+      });
     }
 
     return runtime;
+  }
+
+  /**
+   * Plan 05-19 (gap H-3): reject any public-CLI targeting of a child session
+   * BEFORE attempting runtime lookup. The parent owns the bp registry,
+   * threads, and event stream in js-debug pwa-chrome (verified by direct DAP
+   * trace; see /memories/repo/dap-cli.md). Returning the misleading
+   * `session_unavailable: No DAP runtime is attached` was the original H-3
+   * symptom — this gate replaces it with an actionable error code and a
+   * machine-readable `data` payload pointing at the parent.
+   */
+  private assertNotChildSession(status: SessionStatus, providedTarget: string | undefined): void {
+    if (status.parent_session_id === undefined) {
+      return;
+    }
+    const parent = this.requireSessionManager()
+      .list({ includeChildren: true })
+      .find(record => record.id === status.parent_session_id);
+    const parentName = parent?.name;
+    const parentRef = parentName ?? status.parent_session_id;
+    const targetLabel = providedTarget ?? status.id;
+    throw sessionError(`Child session ${targetLabel} cannot be targeted directly.`, {
+      code: 'child_session_not_targetable',
+      sessionId: status.id,
+      diagnostics: [
+        `Child sessions are owned by their parent. Re-run the command with \`--name ${parentRef}\` — the parent owns threads, breakpoints, and the event stream for js-debug pwa-chrome (see docs/HAND-DRIVEN-SMOKE.md).`,
+      ],
+      data: {
+        childSessionId: status.id,
+        parentSessionId: status.parent_session_id,
+        ...(parentName !== undefined ? { parentName } : {}),
+      },
+    });
   }
 
   private async disconnectRuntimeForTarget(target: string | undefined): Promise<void> {
@@ -426,6 +652,9 @@ export class ControllerServer {
       return;
     }
 
+    if (runtime.children !== undefined) {
+      await runtime.children.dispose().catch(() => undefined);
+    }
     await runtime.lifecycle.disconnect().catch(() => undefined);
     await runtime.client.close().catch(() => undefined);
     await runtime.adapter.close().catch(() => undefined);
@@ -448,10 +677,141 @@ export class ControllerServer {
 
     return this.discovery;
   }
+
+  /**
+   * Plan 05-23 (gap H-8): single teardown path shared by `sessions.close`,
+   * `sessions.cleanup --purge`, and `ControllerServer.stop`. Steps:
+   *
+   *   1. Dispose any child-session coordinator.
+   *   2. Send DAP `disconnect` (with `terminateDebuggee` per opts).
+   *   3. Wait up to 5s for the owned-adapter pid to exit naturally.
+   *   4. If still alive, signal the adapter's process group (POSIX) or pid
+   *      (Windows) with SIGTERM, wait 200ms, escalate to SIGKILL, wait 200ms.
+   *   5. Close the DAP client + adapter wrappers.
+   *   6. Probe liveness one final time. PIDs that survive are returned in
+   *      `orphanPids` with a parallel `warnings` entry so callers can surface
+   *      them honestly to the user.
+   *
+   * The signal helper and liveness probe are injected via constructor options
+   * so tests can simulate "signal failed; pid stays alive" without spawning
+   * unkillable processes.
+   */
+  private async terminateRuntime(runtime: DapSessionRuntime, opts: { terminateDebuggee: boolean }): Promise<{ orphanPids: number[]; warnings: string[] }> {
+    if (runtime.children !== undefined) {
+      await runtime.children.dispose().catch(() => undefined);
+    }
+
+    // Plan 05-23 race note: the user's hand-driven trace caught a
+    // `TypeError: Cannot read properties of undefined (reading 'terminateDebuggee')`
+    // inside js-debug's bundled `dapDebugServer.js` when disconnect raced
+    // with the adapter's session wiring. We always forward the disconnect
+    // (the adapter logs the error and exits, which is exactly what we want
+    // on close) and follow up with explicit signaling so a crashed disconnect
+    // never leaves the debuggee alive.
+    await runtime.lifecycle.disconnect({ terminateDebuggee: opts.terminateDebuggee }).catch(() => undefined);
+
+    const adapterPid = getAdapterPid(runtime.adapter);
+    const groupTarget = getGroupSignalTarget(runtime.adapter, adapterPid);
+
+    if (adapterPid !== undefined) {
+      // Plan 05-23 deviation note: plan called for "up to 5s" wait for
+      // natural exit, but the CLI controller client has a 5s default
+      // timeout (src/controller/client.ts:25). We use 1s here so a stuck
+      // teardown still surfaces orphanPids before the IPC client gives up.
+      // Real adapters exit in milliseconds after disconnect; 1s is a safe
+      // ceiling.
+      await this.waitForPidExit(adapterPid, 1_000);
+
+      if (groupTarget !== undefined && this.isProcessAlive(adapterPid)) {
+        try {
+          this.signalProcess(groupTarget, 'SIGTERM');
+        } catch {
+          // Best-effort: ignore ESRCH and similar; we re-check liveness next.
+        }
+        await this.waitForPidExit(adapterPid, 200);
+      }
+      if (groupTarget !== undefined && this.isProcessAlive(adapterPid)) {
+        try {
+          this.signalProcess(groupTarget, 'SIGKILL');
+        } catch {
+          // Best-effort: ignore.
+        }
+        await this.waitForPidExit(adapterPid, 200);
+      }
+    }
+
+    await runtime.client.close().catch(() => undefined);
+    await runtime.adapter.close().catch(() => undefined);
+
+    if (adapterPid !== undefined && this.isProcessAlive(adapterPid)) {
+      return {
+        orphanPids: [adapterPid],
+        warnings: [`orphan_processes_remain: ${adapterPid}`],
+      };
+    }
+    return { orphanPids: [], warnings: [] };
+  }
+
+  private async waitForPidExit(pid: number, timeoutMs: number): Promise<void> {
+    const intervalMs = 50;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!this.isProcessAlive(pid)) {
+        return;
+      }
+      await new Promise<void>(resolve => setTimeout(resolve, intervalMs));
+    }
+  }
 }
 
-function createInitializeArgs(adapterId: string): Record<string, unknown> {
-  return {
+function defaultIsProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // ESRCH: no such process. Any other error (EPERM) means the pid exists
+    // but we can't signal it \u2014 still report alive so the caller surfaces it
+    // as orphan rather than silently dropping it.
+    if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ESRCH') {
+      return false;
+    }
+    return true;
+  }
+}
+
+function getAdapterPid(adapter: AdapterRuntime): number | undefined {
+  if ('ownedAdapter' in adapter && typeof adapter.ownedAdapter.pid === 'number') {
+    return adapter.ownedAdapter.pid;
+  }
+  return undefined;
+}
+
+function getGroupSignalTarget(adapter: AdapterRuntime, adapterPid: number | undefined): number | undefined {
+  if (adapterPid === undefined) {
+    return undefined;
+  }
+  if ('processGroupId' in adapter && typeof adapter.processGroupId === 'number') {
+    // Negative target signals the process group whose pgid is |target|
+    // (Node/POSIX `process.kill(-pgid, signal)` convention). Cascades to
+    // adapter children (e.g. Chromium spawned by js-debug pwa-chrome).
+    return -adapter.processGroupId;
+  }
+  return adapterPid;
+}
+
+/**
+ * Plan 05-20 (gap H-7): DAP requests that semantically require a paused
+ * thread. When the controller can prove the thread is running (via the H-1
+ * paused projection), these get a structured `thread_not_paused` error
+ * instead of a generic adapter failure.
+ */
+const PAUSED_REQUIRED_DAP_COMMANDS: ReadonlySet<string> = new Set([
+  'stackTrace',
+  'scopes',
+  'variables',
+]);
+
+function createInitializeArgs(adapterId: string): Record<string, unknown> {  return {
     adapterID: adapterId,
     clientID: 'dap-cli',
     clientName: 'dap-cli',
@@ -472,6 +832,7 @@ interface DapSessionRuntime {
   eventCache: DapEventCache;
   adapter: AdapterRuntime;
   capabilities: unknown;
+  children?: ChildSessionCoordinator;
 }
 
 interface DapStartResult {
@@ -488,6 +849,9 @@ interface EventsRecentResult {
   events: unknown;
   cursor: number;
   dropped: number;
+  capacity: number;
+  capacityByPriority: { high: number; low: number };
+  truncatedToCapacity?: number;
 }
 
 interface DapCapabilitiesResult {
@@ -515,6 +879,46 @@ function parseDapStartParams(params: unknown): { mode: 'launch' | 'attach'; name
   }
 
   return parsed;
+}
+
+interface DapCliStartConfig {
+  config: unknown;
+  initialBreakpoints: readonly unknown[];
+}
+
+function extractDapCliStartConfig(config: unknown): DapCliStartConfig {
+  if (!isRecord(config)) {
+    return { config, initialBreakpoints: [] };
+  }
+
+  const initialBreakpoints = Array.isArray(config.__dapCliInitialBreakpoints) ? config.__dapCliInitialBreakpoints : [];
+  const sanitizedConfig: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (key !== '__dapCliInitialBreakpoints') {
+      sanitizedConfig[key] = value;
+    }
+  }
+
+  return { config: sanitizedConfig, initialBreakpoints };
+}
+
+function createBeforeConfigurationDoneHook(client: DapClient, initialBreakpoints: readonly unknown[], children?: ChildSessionCoordinator): (() => Promise<void>) | undefined {
+  if (initialBreakpoints.length === 0) {
+    return undefined;
+  }
+
+  return async () => {
+    for (const breakpointArgs of initialBreakpoints) {
+      await client.request('setBreakpoints', breakpointArgs);
+    }
+    // Children may not exist yet at hook time (the parent has not yet sent
+    // configurationDone), but if they do — or once they do — they need the
+    // same initial breakpoints. Hand them to the coordinator which replays
+    // them to existing children and remembers them for future ones.
+    if (children !== undefined) {
+      children.registerInitialBreakpoints(initialBreakpoints);
+    }
+  };
 }
 
 function parseDapRequestParams(params: unknown): { name?: string; command: string; args?: unknown } {
@@ -575,7 +979,18 @@ function getAdapterContext(descriptorId: string, adapter: AdapterRuntime): CliEr
   return context;
 }
 
-function toDapCliError(error: unknown, context: { sessionId: string; adapter: CliErrorAdapterContext; request?: CliErrorRequestContext }): CliError {
+function toDapCliError(error: unknown, context: { sessionId: string; adapter: CliErrorAdapterContext; request?: CliErrorRequestContext; staleSession?: { sessionRef: string; status?: string } }): CliError {
+  if (error instanceof DapLifecycleHandshakeTimeoutError) {
+    return adapterError(error.message, withDapContext({
+      code: 'lifecycle_handshake_timeout',
+      diagnostics: [
+        `Adapter did not respond to ${error.stage} within ${error.timeoutMs}ms.`,
+        'The session was abandoned and the controller remains running.',
+        'Inspect adapter stderr or log path for clues.',
+      ],
+    }, context));
+  }
+
   if (error instanceof DapResponseError) {
     if (error.message.includes('timed out')) {
       return timeoutError(error.message, {
@@ -584,6 +999,22 @@ function toDapCliError(error: unknown, context: { sessionId: string; adapter: Cl
         sessionId: context.sessionId,
         request: { command: error.command, seq: error.requestSeq },
         adapter: context.adapter,
+      });
+    }
+
+    // Round 3 follow-up (gap H-7b): the controller's own paused-state gate
+    // (`assertThreadPausedIfRequired`) only fires when we have proof the
+    // thread is running (`paused === false`). When the projection is
+    // `undefined` (no stopped event observed yet) the request is forwarded
+    // and the adapter typically rejects it with a "Thread … not paused"
+    // string. Surface that as the structured `thread_not_paused` error so
+    // the recovery hint points users at `events --include stopped` instead
+    // of the generic `dap_request_failed` envelope.
+    if (PAUSED_REQUIRED_DAP_COMMANDS.has(error.command) && /not paused/i.test(error.message)) {
+      return threadNotPaused({
+        sessionId: context.sessionId,
+        ...(context.staleSession?.sessionRef !== undefined ? { sessionName: context.staleSession.sessionRef } : {}),
+        command: error.command,
       });
     }
 
@@ -597,9 +1028,21 @@ function toDapCliError(error: unknown, context: { sessionId: string; adapter: Cl
   }
 
   if (error instanceof DapTransportClosedError) {
+    const stale = context.staleSession;
+    const diagnostics: string[] = [
+      'The adapter transport closed before dap-cli received the expected DAP response.',
+      `Session ${context.sessionId} may be stale or the debuggee may have exited.`,
+    ];
+    if (stale?.status !== undefined) {
+      diagnostics.push(`Last-known session status: ${stale.status}.`);
+    }
+    if (context.adapter.logPath !== undefined) {
+      diagnostics.push(`Adapter log: ${context.adapter.logPath}.`);
+    }
+    diagnostics.push(`Run \`dap-cli close ${stale?.sessionRef ?? context.sessionId}\` and relaunch the session.`);
     return adapterError(error.message, withDapContext({
       code: 'adapter_transport_closed',
-      diagnostics: ['The adapter transport closed before dap-cli received the expected DAP response. Check adapter stderr and log path.'],
+      diagnostics,
     }, context));
   }
 
@@ -630,8 +1073,26 @@ function toControllerErrorPayload(error: CliError): ControllerFailureResponse['e
   if (error.adapter !== undefined) {
     payload.adapter = error.adapter;
   }
+  if (error.data !== undefined) {
+    payload.data = error.data;
+  }
 
   return payload;
+}
+
+function createMissingRuntimeDiagnostics(status: SessionStatus): readonly string[] {
+  const diagnostics = [
+    `Session ${status.id} (${status.name}) is recorded as ${status.status}, but this controller has no attached DAP runtime for it.`,
+    'Run `dap-cli cleanup --purge` to remove stale session state, or relaunch the debug session and retry with the new session ID.',
+  ];
+  if (status.logPath !== undefined) {
+    diagnostics.push(`Adapter log: ${status.logPath}`);
+  }
+  if (status.stderrTail.length > 0) {
+    diagnostics.push(`Adapter stderr tail: ${status.stderrTail.join('\n')}`);
+  }
+
+  return diagnostics;
 }
 
 function createDapErrorContext(context: { sessionId: string; adapter: CliErrorAdapterContext; request?: CliErrorRequestContext | undefined }): { sessionId: string; adapter: CliErrorAdapterContext; request?: CliErrorRequestContext } {

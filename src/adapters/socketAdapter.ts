@@ -10,6 +10,15 @@ import type { AdapterDescriptor } from './descriptor.js';
 export interface ConnectedSocketAdapter {
   transport: DapTransport;
   close(): Promise<void>;
+  /**
+   * Open an additional DAP transport to the same adapter endpoint.
+   *
+   * pwa-chrome / pwa-node js-debug adapters serve their dapDebugServer over a
+   * TCP socket that accepts multiple concurrent DAP connections — one per child
+   * session in the parent/child multiplexing model. Plan 05-04 uses this to
+   * bring up child sessions without spawning a second adapter process.
+   */
+  openChildTransport?(name: string): Promise<DapTransport>;
 }
 
 export interface StartedServerSocketAdapter extends ConnectedSocketAdapter {
@@ -21,6 +30,7 @@ export async function connectSocketAdapter(adapterId: string, descriptor: Extrac
   return {
     transport,
     close: () => transport.close(),
+    openChildTransport: name => connectSocketTransport({ name, host: descriptor.host, port: descriptor.port }),
   };
 }
 
@@ -37,6 +47,14 @@ export async function startServerSocketAdapter(adapterId: string, descriptor: Ex
   const logPath = path.join(logDir, `${adapterId}-${child.pid ?? process.pid}.log`);
   const logStream = createWriteStream(logPath, { flags: 'a' });
 
+  // Plan 05-21 (gap H-5): write a header line so a 0-byte log file
+  // unambiguously means "we never started the adapter". js-debug in
+  // particular emits its DAP traffic over its socket transport — not
+  // stderr — so without this header the log file is genuinely empty
+  // for healthy sessions. js-debug's own DAP/CDP trace is wired
+  // separately via `applyJsDebugTraceDefaults` in `builtins/jsDebug.ts`.
+  logStream.write(`[dap-cli] adapter ${adapterId} started pid=${child.pid ?? 'unknown'} at ${new Date().toISOString()}\n`);
+
   child.stderr.on('data', (chunk: Buffer) => {
     const text = chunk.toString('utf8');
     logStream.write(text);
@@ -45,7 +63,7 @@ export async function startServerSocketAdapter(adapterId: string, descriptor: Ex
 
   child.on('error', error => {
     const text = error.message;
-    logStream.write(`${text}\n`);
+    logStream.write(`[dap-cli] adapter ${adapterId} spawn error: ${text}\n`);
     appendStderrTail(stderrTail, text);
   });
 
@@ -59,6 +77,7 @@ export async function startServerSocketAdapter(adapterId: string, descriptor: Ex
         stderrTail,
         startedByDapCli: true,
       },
+      openChildTransport: name => connectSocketTransport({ name, host: descriptor.host, port }),
       async close(): Promise<void> {
         await transport.close();
         await terminateChild(child);

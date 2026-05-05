@@ -8,4 +8,6 @@ function run() {
   return calculate(2, 3);
 }
 
-run();
+if (!new URLSearchParams(location.search).has('manual')) {
+  run();
+}

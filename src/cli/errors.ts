@@ -8,6 +8,11 @@ export interface CliErrorOptions {
   sessionId?: string;
   request?: CliErrorRequestContext;
   adapter?: CliErrorAdapterContext;
+  // Plan 05-19 (gap H-3): structured machine-readable recovery data so JSON
+  // consumers can act on errors like child_session_not_targetable without
+  // string-parsing diagnostics. Kept generic; specific shapes live with
+  // their error sites.
+  data?: Readonly<Record<string, unknown>>;
 }
 
 export interface CliErrorRequestContext {
@@ -30,6 +35,7 @@ export class CliError extends Error {
   public readonly sessionId: string | undefined;
   public readonly request: CliErrorRequestContext | undefined;
   public readonly adapter: CliErrorAdapterContext | undefined;
+  public readonly data: Readonly<Record<string, unknown>> | undefined;
 
   public constructor(message: string, category: CliErrorCategory, exitCode: ExitCode, options: CliErrorOptions = {}) {
     super(message);
@@ -41,6 +47,7 @@ export class CliError extends Error {
     this.sessionId = options.sessionId;
     this.request = options.request;
     this.adapter = options.adapter;
+    this.data = options.data;
   }
 }
 

@@ -16,6 +16,9 @@
     "setup-adapters": "node --experimental-strip-types scripts/setup-adapters.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:smoke:chrome": "DAP_CLI_RUN_BROWSER_SMOKES=1 vitest run tests/integration/jsDebugAdapter.test.ts",
+    "test:smoke:handoff": "DAP_CLI_RUN_CHROME_PLAYWRIGHT_HANDOFF=1 vitest run tests/integration/playwrightInterop.test.ts",
+    "test:smoke": "DAP_CLI_RUN_BROWSER_SMOKES=1 DAP_CLI_RUN_CHROME_PLAYWRIGHT_HANDOFF=1 vitest run tests/integration/jsDebugAdapter.test.ts tests/integration/playwrightInterop.test.ts",
     "lint": "eslint src tests scripts *.config.ts",
     "check": "npm run typecheck && npm run lint && npm test && npm run build"
   },

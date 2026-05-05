@@ -48,8 +48,50 @@ export function createFakeAdapterScript(name: string): FakeAdapterScript {
     return createLifecycleScript(name, 'launch', { request: 'launch', program: 'flag.js', cwd: 'flag-cwd' });
   }
 
+  if (name === 'expect-stop-on-entry') {
+    return createLifecycleScript(name, 'launch', { stopOnEntry: true });
+  }
+
   if (name === 'expect-attach-overrides') {
     return createLifecycleScript(name, 'attach', { request: 'attach', port: 4711 });
+  }
+
+  if (name === 'stop-then-transport-close') {
+    // Stop-on-entry, answer one threads request, then close the transport.
+    // Used to exercise the adapter_transport_closed stale-session diagnostic.
+    return {
+      name,
+      steps: [
+        { kind: 'expectRequest', command: 'initialize', respond: { seq: 1, type: 'response', request_seq: 0, success: true, command: 'initialize', body: { supportsConfigurationDoneRequest: true } } },
+        { kind: 'expectRequest', command: 'launch', respond: { seq: 2, type: 'response', request_seq: 0, success: true, command: 'launch' } },
+        { kind: 'sendEvent', event: { seq: 3, type: 'event', event: 'initialized' } },
+        { kind: 'expectRequest', command: 'configurationDone', respond: { seq: 4, type: 'response', request_seq: 0, success: true, command: 'configurationDone' } },
+        { kind: 'sendEvent', event: { seq: 5, type: 'event', event: 'stopped', body: { reason: 'breakpoint', threadId: 1 } } },
+        { kind: 'expectRequest', command: 'threads', respond: { seq: 6, type: 'response', request_seq: 0, success: true, command: 'threads', body: { threads: [{ id: 1, name: 'main' }] } } },
+        { kind: 'closeTransport' },
+      ],
+    };
+  }
+
+  if (name === 'paused-then-continued') {
+    // Stops with reason 'entry', waits for a `continue` request, then emits a
+    // `continued` event. Used by the H-1 paused-projection JSON output test
+    // (plan 05-17) to drive the controller through both halves of the
+    // stopped/continued cycle.
+    return {
+      name,
+      steps: [
+        { kind: 'expectRequest', command: 'initialize', respond: { seq: 1, type: 'response', request_seq: 0, success: true, command: 'initialize', body: { supportsConfigurationDoneRequest: true } } },
+        { kind: 'expectRequest', command: 'launch', respond: { seq: 2, type: 'response', request_seq: 0, success: true, command: 'launch' } },
+        { kind: 'sendEvent', event: { seq: 3, type: 'event', event: 'initialized' } },
+        { kind: 'expectRequest', command: 'configurationDone', respond: { seq: 4, type: 'response', request_seq: 0, success: true, command: 'configurationDone' } },
+        { kind: 'sendEvent', event: { seq: 5, type: 'event', event: 'stopped', body: { reason: 'entry', threadId: 1 } } },
+        { kind: 'expectRequest', command: 'continue', respond: { seq: 6, type: 'response', request_seq: 0, success: true, command: 'continue', body: { allThreadsContinued: true } } },
+        { kind: 'sendEvent', event: { seq: 7, type: 'event', event: 'continued', body: { threadId: 1, allThreadsContinued: true } } },
+        { kind: 'expectRequest', command: 'disconnect', respond: { seq: 8, type: 'response', request_seq: 0, success: true, command: 'disconnect' } },
+        { kind: 'sendEvent', event: { seq: 9, type: 'event', event: 'terminated' } },
+      ],
+    };
   }
 
   return createLifecycleScript(name, 'launch');
@@ -75,7 +117,10 @@ function createPlaywrightInspectionScript(name: string): FakeAdapterScript {
   };
 }
 
-export function createFakeAdapterTransport(script: FakeAdapterScript): DapTransport {
+export function createFakeAdapterTransport(script: FakeAdapterScript, mode?: 'launch' | 'attach'): DapTransport {
+  if (mode !== undefined) {
+    validateScriptForMode(script, mode);
+  }
   const clientToAdapter = new PassThrough();
   const adapterToClient = new PassThrough();
   runFakeAdapterScript(script, clientToAdapter, adapterToClient, process.stderr);
@@ -91,7 +136,10 @@ export function createFakeAdapterTransport(script: FakeAdapterScript): DapTransp
   };
 }
 
-export async function startFakeSocketAdapter(script: FakeAdapterScript): Promise<{ port: number; close(): Promise<void> }> {
+export async function startFakeSocketAdapter(script: FakeAdapterScript, mode?: 'launch' | 'attach'): Promise<{ port: number; close(): Promise<void> }> {
+  if (mode !== undefined) {
+    validateScriptForMode(script, mode);
+  }
   const server = net.createServer(socket => {
     socket.on('error', () => undefined);
     runFakeAdapterScript(script, socket, socket, process.stderr);
@@ -144,6 +192,26 @@ export function runFakeAdapterScript(script: FakeAdapterScript, input: NodeJS.Re
       writeResponseAndImmediateSteps(output, stderr, { ...step.respond, request_seq: message.seq }, consumeLeadingNonRequestSteps(remainingSteps));
     }
   });
+}
+
+/**
+ * Walk a script and assert that the first launch/attach `expectRequest` matches the
+ * requested lifecycle mode. Throws synchronously on mismatch so callers can fail fast
+ * before opening any DAP transport.
+ */
+export function validateScriptForMode(script: FakeAdapterScript, mode: 'launch' | 'attach'): void {
+  for (const step of script.steps) {
+    if (step.kind !== 'expectRequest') {
+      continue;
+    }
+    if (step.command === 'launch' || step.command === 'attach') {
+      if (step.command !== mode) {
+        throw new Error(`Fake adapter script "${script.name}" expects command "${step.command}" but the request was "${mode}".`);
+      }
+      return;
+    }
+  }
+  throw new Error(`Fake adapter script "${script.name}" has no launch or attach step.`);
 }
 
 function createLifecycleScript(name: string, mode: 'launch' | 'attach', expectedStartArguments?: Record<string, unknown>): FakeAdapterScript {

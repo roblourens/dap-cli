@@ -11,6 +11,16 @@ const stderrTailLimit = 100;
 export interface StartedProcessAdapter {
   transport: DapTransport;
   ownedAdapter: OwnedAdapterMetadata;
+  /**
+   * Plan 05-23 Task 1.5 (gap H-8 cascade): on POSIX, stdio adapters are
+   * spawned with `detached: true` so the child becomes the leader of a new
+   * process group whose pgid equals its pid. `terminateRuntime` signals the
+   * negative pgid so SIGTERM/SIGKILL cascade to subprocesses (e.g. the
+   * Chromium tree js-debug pwa-chrome spawns under itself). On Windows or
+   * when `detached:true` is unsupported by the platform, this is undefined
+   * and terminate falls back to per-PID signaling.
+   */
+  processGroupId?: number;
   close(): Promise<void>;
 }
 
@@ -21,15 +31,27 @@ export interface StartProcessAdapterOptions {
 }
 
 export function startProcessAdapter(options: StartProcessAdapterOptions): StartedProcessAdapter {
+  // Plan 05-23 Task 1.5 (gap H-8): detached:true makes the child the leader
+  // of its own process group on POSIX. We deliberately do NOT call
+  // child.unref() — we still want the child's exit to be observable to the
+  // parent controller for cleanup accounting.
+  const detached = process.platform !== 'win32';
   const child = spawn(options.descriptor.command, options.descriptor.args, {
     cwd: options.descriptor.cwd,
     env: options.descriptor.env === undefined ? process.env : { ...process.env, ...options.descriptor.env },
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: false,
+    detached,
   });
+  const processGroupId = detached && typeof child.pid === 'number' ? child.pid : undefined;
   const stderrTail: string[] = [];
   const logPath = path.join(options.logDir, `${options.adapterId}-${child.pid ?? process.pid}.log`);
   const logStream = createWriteStream(logPath, { flags: 'a' });
+
+  // Plan 05-21 (gap H-5): write a header line so a 0-byte log file
+  // unambiguously means "we never started the adapter" rather than
+  // "the adapter ran fine but said nothing on stderr".
+  logStream.write(`[dap-cli] adapter ${options.adapterId} started pid=${child.pid ?? 'unknown'} at ${new Date().toISOString()}\n`);
 
   child.stderr.on('data', (chunk: Buffer) => {
     const text = chunk.toString('utf8');
@@ -39,11 +61,11 @@ export function startProcessAdapter(options: StartProcessAdapterOptions): Starte
 
   child.on('error', error => {
     const text = error.message;
-    logStream.write(`${text}\n`);
+    logStream.write(`[dap-cli] adapter ${options.adapterId} spawn error: ${text}\n`);
     appendStderrTail(stderrTail, text);
   });
 
-  return {
+  const adapter: StartedProcessAdapter = {
     transport: createStdioTransport({ name: options.adapterId, child }),
     ownedAdapter: {
       pid: child.pid,
@@ -59,6 +81,10 @@ export function startProcessAdapter(options: StartProcessAdapterOptions): Starte
       });
     },
   };
+  if (processGroupId !== undefined) {
+    adapter.processGroupId = processGroupId;
+  }
+  return adapter;
 }
 
 async function terminateChild(child: ChildProcessWithoutNullStreams): Promise<void> {

@@ -73,6 +73,105 @@ describe('self-hosting integration', () => {
       expectedSourcePathSuffix: path.join('dist', 'index.js'),
     });
   });
+
+  test('reports actionable diagnostics for persisted js-debug sessions without an attached runtime', async () => {
+    const fixture = path.join(process.cwd(), 'tests', 'fixtures', 'simple-node-app', 'index.js');
+    const name = 'stale-js-debug';
+    const launch = await runCli(['launch', '--adapter', 'js-debug', '--name', name, '--json', JSON.stringify({
+      type: 'pwa-node',
+      request: 'launch',
+      name,
+      program: fixture,
+      args: ['run'],
+      console: 'internalConsole',
+      stopOnEntry: true,
+    })], { env: testEnv.env });
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+    const sessionId = readStringField(launch.envelope, 'sessionId');
+
+    await server?.stop();
+    server = await startControllerServer({ dapCliHome: testEnv.dapCliHome });
+
+    const threads = await runCli(['threads', '--name', name], { env: testEnv.env });
+    expect(threads.exitCode, JSON.stringify(threads)).toBe(4);
+    const failure = readFailureEnvelope(threads.envelope);
+    expect(failure.error.code).toBe('session_unavailable');
+    expect(failure.error.category).toBe('session');
+    expect(failure.error.sessionId).toBe(sessionId);
+    expect(failure.error.diagnostics.join('\n')).toContain(sessionId);
+    expect(failure.error.diagnostics.join('\n')).toMatch(/recorded as (running|stopped|terminated|unavailable|failed)/);
+    expect(failure.error.diagnostics.join('\n')).toContain('cleanup');
+    expect(failure.error.diagnostics.join('\n')).toContain('relaunch');
+  });
+
+  test('surfaces adapter_transport_closed with a stale-session diagnostic when the adapter transport closes mid-session', async () => {
+    const launchName = 'fake-stale';
+    const launch = await runCli(['launch', '--adapter', 'fake', '--script', 'stop-then-transport-close', '--name', launchName], { env: testEnv.env });
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+    const sessionId = readStringField(launch.envelope, 'sessionId');
+
+    // First threads call succeeds and triggers the script's closeTransport step.
+    const firstThreads = await runCli(['threads', '--name', launchName], { env: testEnv.env });
+    expect(firstThreads.exitCode, JSON.stringify(firstThreads)).toBe(0);
+
+    // Second call hits the closed transport — must surface the new diagnostic.
+    for (const args of [
+      ['threads', '--name', launchName],
+      ['events', '--name', launchName],
+      ['stack', '--thread-id', '1', '--name', launchName],
+      ['dap', 'stack-trace', '--name', launchName, '--json', '{"threadId":1}'],
+    ]) {
+      const result = await runCli(args, { env: testEnv.env });
+      // `events` reads from cache and may still succeed even after transport close;
+      // accept either the stale diagnostic OR a 0 exit on cached reads.
+      if (result.exitCode === 0) {
+        expect(args[0], `${args.join(' ')} unexpectedly succeeded`).toBe('events');
+        continue;
+      }
+      const failure = readFailureEnvelope(result.envelope);
+      expect(failure.error.code, args.join(' ')).toBe('adapter_transport_closed');
+      const diagnosticsText = failure.error.diagnostics.join('\n');
+      expect(diagnosticsText, args.join(' ')).toContain(sessionId);
+      expect(diagnosticsText, args.join(' ')).toMatch(/Last-known session status:/);
+      expect(diagnosticsText, args.join(' ')).toContain(`dap-cli close ${sessionId}`);
+    }
+
+    await runCli(['close', '--name', launchName], { env: testEnv.env }).catch(() => undefined);
+  });
+
+  test('recovery hint from adapter_transport_closed is a runnable CLI command', async () => {
+    // Plan 05-10 / UAT gap 6 — the diagnostic must say `dap-cli close <id>`
+    // AND copy-pasting that command must succeed (positional id support).
+    const launchName = 'fake-recovery';
+    const launch = await runCli(['launch', '--adapter', 'fake', '--script', 'stop-then-transport-close', '--name', launchName], { env: testEnv.env });
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+    const sessionId = readStringField(launch.envelope, 'sessionId');
+
+    // Trigger the closed transport.
+    const firstThreads = await runCli(['threads', '--name', launchName], { env: testEnv.env });
+    expect(firstThreads.exitCode).toBe(0);
+    const failedThreads = await runCli(['threads', '--name', launchName], { env: testEnv.env });
+    expect(failedThreads.exitCode, JSON.stringify(failedThreads)).not.toBe(0);
+    const failure = readFailureEnvelope(failedThreads.envelope);
+    expect(failure.error.code).toBe('adapter_transport_closed');
+    const diagnosticsText = failure.error.diagnostics.join('\n');
+    const match = /`dap-cli close ([^`]+)`/.exec(diagnosticsText);
+    expect(match, `expected backtick-wrapped recovery hint in: ${diagnosticsText}`).not.toBeNull();
+    const hintId = match?.[1] ?? '';
+    expect(hintId).toBe(sessionId);
+
+    // Run the recovery hint as a positional close — this is the gap-6 fix.
+    const recovery = await runCli(['close', hintId], { env: testEnv.env });
+    expect(recovery.exitCode, JSON.stringify(recovery)).toBe(0);
+
+    // Session must now be gone.
+    const sessions = await runCli(['sessions'], { env: testEnv.env });
+    const sessionsEnvelope = sessions.envelope as JsonEnvelope<Array<{ id: string }>>;
+    expect(sessionsEnvelope.ok).toBe(true);
+    if (sessionsEnvelope.ok) {
+      expect(sessionsEnvelope.data.find(s => s.id === sessionId)).toBeUndefined();
+    }
+  });
 });
 
 async function runNodeSelfHostingWorkflow(options: { name: string; program: string; programArgs: readonly string[]; expectedSourcePathSuffix: string }): Promise<void> {
@@ -159,6 +258,14 @@ function readEnvelopeData(envelope: unknown): unknown {
   }
 
   return envelope.data;
+}
+
+function readFailureEnvelope(envelope: unknown): { ok: false; error: { code: string; category: string; diagnostics: string[]; sessionId?: string } } {
+  if (isRecord(envelope) && envelope.ok === false && isRecord(envelope.error)) {
+    return envelope as { ok: false; error: { code: string; category: string; diagnostics: string[]; sessionId?: string } };
+  }
+
+  throw new Error(`Expected failure envelope: ${JSON.stringify(envelope)}`);
 }
 
 function readStringField(envelope: unknown, field: string): string {

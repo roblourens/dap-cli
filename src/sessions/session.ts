@@ -20,6 +20,18 @@ export type SessionLifecycle =
 
 export type SessionStatusState = 'running' | 'stopped' | 'terminated' | 'unavailable' | 'failed';
 
+/**
+ * Lifecycles that represent a session that has finished or failed and whose
+ * record is eligible for cleanup. Quick task 260504-rp5 also uses this set
+ * to decide when a session name is considered "in use" vs. available for
+ * reuse, and which records to deprioritize when resolving a target by name.
+ */
+export const REMOVABLE_LIFECYCLES: ReadonlySet<SessionLifecycle> = new Set([
+  'terminated',
+  'disconnected',
+  'failed',
+]);
+
 export interface OwnedAdapterMetadata {
   pid?: number | undefined;
   logPath?: string | undefined;
@@ -35,6 +47,14 @@ export interface SessionRecord {
   createdAt: string;
   updatedAt: string;
   ownedAdapter: OwnedAdapterMetadata;
+  parent_session_id?: SessionId;
+  // Hand-driven gap H-1 (plan 05-17): mirror DAP `stopped`/`continued` event
+  // state so `dap-cli status` can report paused-vs-running without polling
+  // events. Absence (undefined) means "unknown"; explicit `false` means
+  // "we observed continued/terminated and know this is not paused".
+  paused?: boolean;
+  stoppedReason?: string;
+  stoppedThreadIds?: readonly number[];
 }
 
 export interface SessionSummary {
@@ -44,12 +64,32 @@ export interface SessionSummary {
   lifecycle: SessionLifecycle;
   status: SessionStatusState;
   updatedAt: string;
+  parent_session_id?: SessionId;
+  // Plan 05-19 (gap H-3): explicit `targetable: false` is set on child
+  // sessions because the parent owns the bp registry, threads, and event
+  // stream in js-debug pwa-chrome. Absence === targetable. Children stay
+  // visible (with --show-children) for diagnostics; targeting them via
+  // --name returns child_session_not_targetable, not session_unavailable.
+  targetable?: boolean;
+  // Hand-driven gap H-1c (round 3): mirror the paused projection on the
+  // list view too so `sessions` can show paused state per session at a
+  // glance, not just `status` for a single session. Same semantics as
+  // SessionRecord.paused (absent === unknown, false === observed running).
+  paused?: boolean;
+  stoppedReason?: string;
+  stoppedThreadIds?: readonly number[];
 }
 
 export interface SessionStatus extends SessionSummary {
   logPath?: string;
   stderrTail: readonly string[];
   cleanupActions: readonly string[];
+  // SessionSummary already declares `targetable?: boolean` (plan 05-19);
+  // it surfaces here too because projectSessionStatus spreads the summary.
+  // Mirrored from SessionRecord — see SessionRecord for semantics (gap H-1).
+  paused?: boolean;
+  stoppedReason?: string;
+  stoppedThreadIds?: readonly number[];
 }
 
 export function createSessionId(): SessionId {
@@ -57,7 +97,7 @@ export function createSessionId(): SessionId {
 }
 
 export function projectSessionSummary(session: SessionRecord): SessionSummary {
-  return {
+  const summary: SessionSummary = {
     id: session.id,
     name: session.name,
     adapter: session.adapter,
@@ -65,18 +105,35 @@ export function projectSessionSummary(session: SessionRecord): SessionSummary {
     status: projectStatusState(session.lifecycle),
     updatedAt: session.updatedAt,
   };
+  let result = session.parent_session_id !== undefined
+    ? { ...summary, parent_session_id: session.parent_session_id, targetable: false }
+    : summary;
+  // Hand-driven gap H-1c (round 3): mirror paused projection into the
+  // list view too. Conditional spread so absent === unknown.
+  if (session.paused !== undefined) {
+    result = { ...result, paused: session.paused };
+  }
+  if (session.stoppedReason !== undefined) {
+    result = { ...result, stoppedReason: session.stoppedReason };
+  }
+  if (session.stoppedThreadIds !== undefined) {
+    result = { ...result, stoppedThreadIds: session.stoppedThreadIds };
+  }
+  return result;
 }
 
 export function projectSessionStatus(session: SessionRecord): SessionStatus {
+  // Hand-driven gap H-1c (round 3): paused fields are projected by
+  // projectSessionSummary now, so they flow through here automatically.
   const summary = projectSessionSummary(session);
-  const status: SessionStatus = {
+  let status: SessionStatus = {
     ...summary,
     stderrTail: session.ownedAdapter.stderrTail,
     cleanupActions: createCleanupActions(session),
   };
 
   if (session.ownedAdapter.logPath !== undefined) {
-    return { ...status, logPath: session.ownedAdapter.logPath };
+    status = { ...status, logPath: session.ownedAdapter.logPath };
   }
 
   return status;

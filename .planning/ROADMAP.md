@@ -14,8 +14,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Project Foundation, Controller, and DAP Core** - Establish the modular CLI architecture, persistent controller, language-neutral DAP client, polling state, diagnostics, and deterministic fake-adapter tests.
 - [x] **Phase 2: Complete Typed DAP Command Surface** - Generate and verify typed CLI commands for every DAP request, with ergonomic debugging operations and scripted command coverage.
-- [ ] **Phase 3: Built-in and Custom Adapter Support** - Add JavaScript, Python, and user-defined adapter flows through descriptor/config/process/transport boundaries, including JS source maps and E2E smoke tests.
-- [ ] **Phase 4: Agent Workflow, Documentation, and Self-Hosting Verification** - Polish the agent experience with README/user docs, Playwright interop examples, self-hosting, smoke verification, and agentic exploratory tests.
+- [x] **Phase 3: Built-in and Custom Adapter Support** - Add JavaScript, Python, and user-defined adapter flows through descriptor/config/process/transport boundaries, including JS source maps and E2E smoke tests.
+- [x] **Phase 4: Agent Workflow, Documentation, and Self-Hosting Verification** - Polish the agent experience with README/user docs, Playwright interop examples, self-hosting, smoke verification, and agentic exploratory tests.
+- [x] **Phase 5: Stabilize real Chrome/js-debug Playwright same-browser handoff** - Prove or explicitly gate a same-browser Playwright plus real Chrome/js-debug handoff where dap-cli inspects the browser target Playwright controls.
+- [ ] **Phase 5.1: Execute VS Code launch.json configurations and compounds** *(INSERTED)* - Faithfully resolve a `.vscode/launch.json` configuration (variable substitution, platform overrides, full field passthrough) and execute compound configurations as a single coordinated multi-session debug run; preLaunchTask explicitly out of scope.
+- [ ] **Phase 6: Add conditional breakpoint Playwright interop coverage**
 
 ## Phase Details
 
@@ -142,20 +145,78 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 2. Complete Typed DAP Command Surface | 4/4 | Complete | 2026-05-03 |
 | 3. Built-in and Custom Adapter Support | 4/4 | Complete | 2026-05-03 |
 | 4. Agent Workflow, Documentation, and Self-Hosting Verification | 4/4 | Complete | 2026-05-03 |
-| 5. Stabilize real Chrome/js-debug Playwright same-browser handoff | 0/0 | Not started | - |
+| 5. Stabilize real Chrome/js-debug Playwright same-browser handoff | 26/26 | Complete | 2026-05-04 |
+| 5.1. Execute VS Code launch.json configurations and compounds *(INSERTED)* | 0/0 | Not started | - |
 | 6. Add conditional breakpoint Playwright interop coverage | 0/0 | Not started | - |
 | 7. Add evaluate-and-mutate browser state coverage | 0/0 | Not started | - |
 | 8. Expand multi-breakpoint UI flow fixture | 0/0 | Not started | - |
 
 ### Phase 5: Stabilize real Chrome/js-debug Playwright same-browser handoff
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Prove or explicitly gate a same-browser Playwright plus real Chrome/js-debug handoff where dap-cli inspects the browser target Playwright controls.
+**Requirements**: TEST-07
 **Depends on:** Phase 4
-**Plans:** 0 plans
+**Plans:** 16 shipped + 8 hand-driven gap-closure plans (05-17..05-24)
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 5 to break down)
+- [x] 05-01-PLAN.md — Same-browser Playwright/js-debug handoff spike, smoke, docs, and verification notes
+- [x] 05-02-PLAN.md — Initial gap-closure round (strict gate, duplicate-name diagnostics, before-configurationDone hook)
+- [x] 05-03-PLAN.md — DapClient reverse-request dispatch + parent/child session model plumbing
+- [x] 05-04-PLAN.md — Controller wires js-debug startDebugging child sessions + threads/breakpoints routing
+- [x] 05-05-PLAN.md — Strict same-browser handoff test re-enablement (closes UAT gaps 1 + 2)
+- [x] 05-06-PLAN.md — session_ambiguous coverage + stale js-debug diagnostics (closes UAT gaps 3 + 4)
+- [x] 05-07-PLAN.md — Lifecycle handshake timeout + fake-script ↔ mode validation (closes UAT-GAP gap 14)
+- [x] 05-08-PLAN.md — Tempenv adapter provisioning + chrome-children-smoke green (closes UAT-GAP gap 10)
+- [x] 05-09-PLAN.md — fanOutSetBreakpoints error surfacing + child readiness + handoff smoke green (partial; closes UAT-GAP gap 11 error-surface + readiness halves)
+- [x] 05-10-PLAN.md — cleanup record removal + close positional + recovery-hint meta-test (closes UAT-GAP gaps 6 + 9)
+- [x] 05-11-PLAN.md — `--stop-on-entry` flag + long-running fixture + README quick-start (closes UAT-GAP gap 2)
+- [x] 05-12-PLAN.md — events --limit truncation surfacing + controller build-id handshake + stop-controller (closes UAT-GAP gap 13)
+- [x] 05-13-PLAN.md — Add `webRoot` to chrome-smoke launch config (partial; webRoot edit shipped, but hypothesis falsified — chrome-smoke also blocked on 05-14's recursive coordinator; see 05-13-SUMMARY)
+- [x] 05-14-PLAN.md — Recursive child coordinator for nested pwa-chrome startDebugging (partial; recursive coordinator + unit test shipped, but handoff-smoke remains red — pwa-chrome doesn't emit nested startDebugging in the `__pendingTargetId`+automatic flow; see 05-14-SUMMARY)
+- [x] 05-15-PLAN.md — Route setBreakpoints to parent for js-debug; remove per-child replay (handoff-smoke half of gap #11)
+- [x] 05-16-PLAN.md — Install startDebugging handler in runJsDebugBreakpointSmoke (chrome-smoke half of gap #11)
+- [x] 05-17-PLAN.md — Hand-driven gap H-1: status reports paused/stoppedReason for stopped sessions
+- [x] 05-18-PLAN.md — Hand-driven gap H-2: two-ring event cache + CLI --include/--exclude filters + honest limit warning
+- [x] 05-19-PLAN.md — Hand-driven gap H-3: hide child sessions by default + child_session_not_targetable error
+- [x] 05-20-PLAN.md — Hand-driven gaps H-4 + H-7: honest cleanup response + thread_not_paused error + cleanup-vs-cleanup-purge audit
+- [x] 05-21-PLAN.md — Hand-driven gap H-5: adapter log header line + js-debug trace.logFile injection
+- [x] 05-22-PLAN.md — Hand-driven gap H-6 (BLOCKER): production controller fix for pwa-chrome breakpoint stop + controller-driven integration test
+- [x] 05-23-PLAN.md — Hand-driven gap H-8: close sends terminateDebuggee + surfaces orphan PIDs
+- [x] 05-24-PLAN.md — Hand-driven gap H-doc: correct subcommand names in docs/HAND-DRIVEN-SMOKE.md
+- [x] 05-25-PLAN.md — Round 2 follow-up: H-1a/H-1b paused-state edges (parent + thread filter)
+- [x] 05-26-PLAN.md — Round 2 follow-up: H-3a child-session targeting refinement
+
+### Phase 05.1: Execute VS Code launch.json configurations and compounds (full fidelity, no preLaunchTask) (INSERTED)
+
+**Goal:** `npx dap-cli launch --config "<name>" [--workspace <path>]` faithfully executes any `.vscode/launch.json` configuration that VS Code would run — including compounds that bring up multiple coordinated sessions in one command — against `js-debug` and `debugpy`. The motivating target is the `VS Code` compound in [/Users/roblou/code/vscode/.vscode/launch.json](../../../vscode/.vscode/launch.json), which would launch Code OSS plus four process attaches in one shot.
+
+**Why now:** While documenting [VSCODE-CHAT-SMOKE.md](../../docs/VSCODE-CHAT-SMOKE.md) we discovered that even though dap-cli already reads `.vscode/launch.json` and supports `--config <name>`, the resolver is too lossy to drive real-world configs: `mapJsDebugFlags` is a tight whitelist that drops `userDataDir`, `webRoot`, platform-key overrides (`osx`/`windows`/`linux`), `${workspaceFolder}` / `${userHome}` / `${env:FOO}` substitution, `cleanUp`, `pauseForSourceMap`, etc. Compounds are not parsed at all. Closing this gap turns dap-cli from "toy launch.json reader" into "agent-runnable F5" — the core value prop for AI workflows that target real codebases.
+
+**Scope (in):**
+- **Variable substitution:** `${workspaceFolder}`, `${workspaceFolderBasename}`, `${userHome}`, `${env:NAME}`, `${execPath}` (best-effort: error if unresolvable). Recursively expand inside strings, arrays, and nested objects.
+- **Platform key resolution:** merge `osx` / `windows` / `linux` / `mac` overlays into the base config per VS Code's spec, on the matching platform only.
+- **Field passthrough:** flip `mapJsDebugFlags` / `mapDebugpyFlags` from whitelist to denylist (or full passthrough with a small known-bad denylist). Stop dropping fields js-debug understands but dap-cli has never seen.
+- **Workspace targeting:** `--workspace <path>` flag (default: `process.cwd()`). Affects both launch.json discovery and `${workspaceFolder}` value.
+- **Discovery:** `--list-configs` to enumerate available `configurations[]` and `compounds[]` names without launching anything.
+- **Compound execution:** parse `compounds[]`. `--config "<compound name>"` brings up every member configuration as a peer session under a shared compound group label. `stopAll: true` (default per VS Code) means closing one member terminates the rest. `cascadeTerminateToConfigurations` from individual configs is honored.
+- **Naming:** compound members get derived names like `<compound>/<member>` so they remain individually targetable by existing `--name` flows.
+- **Diagnostics:** clear errors for missing config name, unresolved variable, unsupported field (e.g. `${input:...}`), missing `runtimeExecutable` after platform merge, broken compound member reference.
+
+**Scope (explicitly out):**
+- `preLaunchTask` and `postDebugTask` — surface a structured diagnostic (`unsupported_pre_launch_task`) and bail. Task running pulls in the entire `tasks.json` model and is its own phase.
+- `${input:...}` interactive variables — same: structured diagnostic, no prompt.
+- `${command:...}` extension-host commands — not applicable outside VS Code.
+- New adapters — stay on `js-debug` and `debugpy`.
+- VS Code's launch UI semantics like `presentation.hidden`, `internalConsoleOptions`, `serverReadyAction` — ignore silently.
+
+**Verification target:** `cd /Users/roblou/code/vscode && npx dap-cli launch --config "VS Code"` brings up renderer + main process + extension host + shared process + agent host as 5 coordinated dap-cli sessions; `dap-cli sessions` shows the compound group; setting a breakpoint in `chatWidget.ts` and submitting a chat in the running window pauses the renderer member; closing one terminates all per `stopAll`. End-to-end smoke captured into a UAT doc by hand-driving (per repo Hard Rule).
+
+**Depends on:** Phase 5
+**Requirements:** TBD (will be expressed during /gsd-discuss-phase 05.1)
+**Plans:** 0 plans (run /gsd-discuss-phase 05.1 → /gsd-plan-phase 05.1)
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 05.1 to break down)
 
 ### Phase 6: Add conditional breakpoint Playwright interop coverage
 

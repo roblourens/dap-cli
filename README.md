@@ -15,12 +15,13 @@ For package consumers, the CLI binary is `dap-cli` after installation.
 
 ## Quick Start
 
-Start the controller, launch a Node.js target, set a breakpoint, poll state, inspect the stop, then clean up.
+Start the controller, launch a Node.js target with `--stop-on-entry` (so the program halts before any user code runs), set a breakpoint, continue, inspect the stop, then clean up.
 
 ```bash
 dap-cli start
-dap-cli launch --adapter js-debug --type node --program tests/fixtures/simple-node-app/index.js --args run --name demo
-dap-cli breakpoints set --source tests/fixtures/simple-node-app/index.js --line 7 --name demo
+dap-cli launch --adapter js-debug --type node --program tests/fixtures/simple-node-app/index.js --args run --stop-on-entry --name demo
+dap-cli breakpoints set --source tests/fixtures/simple-node-app/index.js --line 9 --name demo
+dap-cli continue --thread-id 1 --name demo
 dap-cli status --name demo
 dap-cli events --name demo --limit 10
 dap-cli threads --name demo
@@ -28,6 +29,8 @@ dap-cli stack --thread-id 1 --name demo
 dap-cli continue --thread-id 1 --name demo
 dap-cli cleanup
 ```
+
+`--stop-on-entry` is the agent-friendly pattern: it eliminates the race where short-lived programs exit before `breakpoints set` lands. If you'd rather explore against a long-running program, use `tests/fixtures/simple-node-app/long-running.js` (loops on `setInterval`).
 
 Python follows the same loop with the `debugpy` adapter:
 
@@ -92,4 +95,4 @@ Custom adapters are configured under dap-cli adapter config and remain external 
 
 ## Playwright Interop
 
-Playwright can drive browser UI actions while dap-cli polls and inspects debugger state. See [docs/PLAYWRIGHT-INTEROP.md](docs/PLAYWRIGHT-INTEROP.md) for setup order and command sequences.
+Playwright can drive browser UI actions while dap-cli polls and inspects debugger state. The recommended driver is [`@playwright/cli`](https://www.npmjs.com/package/@playwright/cli) (the imperative `playwright-cli` binary), attached to the same Chromium instance js-debug controls; [`@playwright/test`](https://www.npmjs.com/package/@playwright/test) (`npx playwright test`) also works. See [docs/PLAYWRIGHT-INTEROP.md](docs/PLAYWRIGHT-INTEROP.md) for setup order, the disambiguation note, and command sequences.

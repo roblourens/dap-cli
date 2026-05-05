@@ -4,7 +4,10 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { createControllerClient } from '../../src/controller/client.js';
 import { connectControllerEndpoint, createControllerServerSocket, isControllerAlive, readControllerDiscovery, resolveControllerDiscoveryPath, writeControllerDiscovery, type ControllerDiscovery } from '../../src/controller/ipc.js';
-import { startControllerServer, type ControllerStatus } from '../../src/controller/server.js';
+import { startControllerServer, type ControllerHelloResult, type ControllerStatus } from '../../src/controller/server.js';
+import { resetCachedBuildIdForTesting } from '../../src/controller/buildId.js';
+import { runCli } from '../helpers/runCli.js';
+import type { JsonFailure } from '../../src/cli/output.js';
 
 let dapCliHome: string;
 
@@ -82,6 +85,76 @@ describe('controller discovery and IPC', () => {
     await server.closed;
 
     await expect(readControllerDiscovery({ dapCliHome })).resolves.toBeUndefined();
+  });
+
+  test('controller.hello returns a non-empty buildId and the controller pid', async () => {
+    const server = await startControllerServer({ dapCliHome });
+    const client = await createControllerClient({ dapCliHome });
+
+    const hello = await client.request<ControllerHelloResult>('controller.hello');
+    expect(hello.pid).toBe(process.pid);
+    expect(typeof hello.buildId).toBe('string');
+    expect(hello.buildId.length).toBeGreaterThan(0);
+
+    const status = await client.request<ControllerStatus>('controller.status');
+    expect(status.buildId).toBe(hello.buildId);
+
+    await client.request<{ stopped: boolean }>('controller.shutdown');
+    await server.closed;
+  });
+
+  test('controller.shutdown leaves subsequent connect attempts unable to handshake', async () => {
+    const server = await startControllerServer({ dapCliHome });
+    const discovery = await readControllerDiscovery({ dapCliHome });
+    expect(discovery).toBeDefined();
+    const client = await createControllerClient({ dapCliHome });
+    await client.request<{ stopped: boolean }>('controller.shutdown');
+    await server.closed;
+
+    // Discovery file is removed by stop().
+    await expect(readControllerDiscovery({ dapCliHome })).resolves.toBeUndefined();
+
+    // A fresh discovery pointing at the now-dead endpoint should fail isControllerAlive.
+    if (discovery !== undefined) {
+      await expect(isControllerAlive(discovery)).resolves.toBe(false);
+    }
+  });
+
+  test('dap-cli stop-controller shuts down a running controller', async () => {
+    process.env.DAP_CLI_HOME = dapCliHome;
+    try {
+      const server = await startControllerServer({ dapCliHome });
+      const result = await runCli(['stop-controller'], { env: { ...process.env, DAP_CLI_HOME: dapCliHome } });
+      expect(result.exitCode).toBe(0);
+      expect(result.envelope.ok).toBe(true);
+      await server.closed;
+      await expect(readControllerDiscovery({ dapCliHome })).resolves.toBeUndefined();
+    } finally {
+      delete process.env.DAP_CLI_HOME;
+    }
+  });
+
+  test('dap-cli start refuses reuse when controller build id mismatches', async () => {
+    process.env.DAP_CLI_HOME = dapCliHome;
+    process.env.DAP_CLI_BUILD_ID = 'test-build-controller';
+    resetCachedBuildIdForTesting();
+    const server = await startControllerServer({ dapCliHome });
+    try {
+      process.env.DAP_CLI_BUILD_ID = 'test-build-cli';
+      resetCachedBuildIdForTesting();
+      const result = await runCli(['start'], { env: { ...process.env, DAP_CLI_HOME: dapCliHome } });
+      expect(result.envelope.ok).toBe(false);
+      const failure = result.envelope as JsonFailure;
+      expect(failure.error.code).toBe('controller_build_mismatch');
+      expect(failure.error.diagnostics.some(d => d.includes('test-build-controller'))).toBe(true);
+      expect(failure.error.diagnostics.some(d => d.includes('test-build-cli'))).toBe(true);
+      expect(failure.error.diagnostics.some(d => d.includes('`dap-cli stop-controller`'))).toBe(true);
+    } finally {
+      delete process.env.DAP_CLI_BUILD_ID;
+      delete process.env.DAP_CLI_HOME;
+      resetCachedBuildIdForTesting();
+      await server.stop().catch(() => undefined);
+    }
   });
 });
 

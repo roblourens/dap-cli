@@ -100,7 +100,10 @@ describe('fake adapter controller integration', () => {
     expect(parseEnvelope<{ name: string; status: string }>(stop.stdout).data.status).toBe('terminated');
 
     const cleanup = await runCli(['cleanup'], { env: testEnv.env });
-    expect(parseEnvelope<{ cleaned: string[]; failed: unknown[] }>(cleanup.stdout).data.failed).toEqual([]);
+    // Plan 05-20 (gap H-4): cleanup envelope is now
+    // { signaledAdapter, removedRecords, keptRunning, failed } — the old
+    // misleading `cleaned` field is gone.
+    expect(parseEnvelope<{ signaledAdapter: string[]; removedRecords: string[]; keptRunning: unknown[]; failed: unknown[] }>(cleanup.stdout).data.failed).toEqual([]);
     expect(startEnvelope.data.pid).toBeGreaterThan(0);
   });
 
@@ -151,6 +154,21 @@ describe('fake adapter controller integration', () => {
     ], { env: testEnv.env });
 
     expect(attach.exitCode, JSON.stringify(attach)).toBe(0);
+  });
+
+  test('--stop-on-entry forwards stopOnEntry: true into the launch arguments', async () => {
+    const launch = await runCli([
+      'launch',
+      '--adapter', 'fake',
+      '--script', 'expect-stop-on-entry',
+      '--stop-on-entry',
+      '--name', 'soe-test',
+    ], { env: testEnv.env });
+
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+    const launchEnvelope = parseEnvelope<{ sessionId: string; lifecycle: string }>(launch.stdout);
+    expect(launchEnvelope.data.sessionId).toMatch(/^sess_/);
+    expect(launchEnvelope.data.lifecycle).toBe('stopped');
   });
 
   test('rejects malformed numeric CLI override values', async () => {
@@ -377,6 +395,24 @@ describe('fake adapter controller integration', () => {
       await client.close();
       await fakeSocket.close();
     }
+  });
+
+  test('launch with attach-only script returns structured error within 5s and leaves the controller alive', async () => {
+    // Plan 05-07 / UAT gap 14 — a bad fake-adapter script must not hang or kill the controller.
+    const startedAt = Date.now();
+    const launch = await runCli(['launch', '--adapter', 'fake', '--script', 'attach-stopped', '--name', 'badscript', '--no-use'], { env: testEnv.env });
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(elapsedMs, `launch took ${elapsedMs}ms — exceeded 5s budget`).toBeLessThan(5_000);
+    const failure = launch.envelope as unknown as JsonFailureEnvelope;
+    expect(failure.ok).toBe(false);
+    expect(['lifecycle_handshake_timeout', 'adapter_transport_closed', 'fake_script_mode_mismatch']).toContain(failure.error.code);
+
+    // Controller must still answer subsequent requests.
+    const sessions = await runCli(['sessions'], { env: testEnv.env });
+    expect(sessions.exitCode).toBe(0);
+    const sessionsEnvelope = sessions.envelope as JsonEnvelope<unknown>;
+    expect(sessionsEnvelope.ok).toBe(true);
   });
 });
 

@@ -3,9 +3,11 @@
 
 **dap-cli**
 
-dap-cli is a TypeScript Node.js command-line tool that lets agents debug applications through the Debug Adapter Protocol. It provides a Playwright CLI-inspired, stateful command surface for launching or attaching to debug sessions, setting breakpoints, inspecting paused programs, and calling DAP requests from shell commands.
+dap-cli is a TypeScript Node.js command-line tool that lets agents debug applications through the Debug Adapter Protocol. It provides a `playwright-cli`-inspired (see [@playwright/cli](https://www.npmjs.com/package/@playwright/cli)), stateful command surface for launching or attaching to debug sessions, setting breakpoints, inspecting paused programs, and calling DAP requests from shell commands.
 
-The target user is an AI agent working alongside tools like the Playwright CLI: Playwright drives the app through the UI, while dap-cli controls and inspects the debugger state.
+The target user is an AI agent working alongside tools like `playwright-cli`: Playwright drives the app through the UI, while dap-cli controls and inspects the debugger state.
+
+> Note on naming: "Playwright CLI" throughout this project means [`@playwright/cli`](https://www.npmjs.com/package/@playwright/cli) (the imperative `playwright-cli` binary). It is not the same package as [`@playwright/test`](https://www.npmjs.com/package/@playwright/test) (`npx playwright test`), the spec runner. Both can drive the browser side of an interop scenario; the imperative CLI is the one that inspired dap-cli's command shape. Phase artifacts written before this clarification (notably 02–05) use "Playwright CLI" loosely — read it as the imperative binary.
 
 **Core Value:** Agents can reliably control a DAP debug session from repeatable CLI commands and inspect paused application state without needing language-specific debugger knowledge.
 

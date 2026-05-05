@@ -5,6 +5,7 @@ export const controllerRequestMethods = [
   'controller.status',
   'controller.shutdown',
   'controller.cleanup',
+  'controller.hello',
   'sessions.launch',
   'sessions.attach',
   'sessions.list',
@@ -61,6 +62,8 @@ export interface ControllerFailureResponse {
     sessionId?: string;
     request?: { command: string; seq?: number };
     adapter?: { descriptorId?: string; pid?: number; stderrTail?: readonly string[]; logPath?: string };
+    // Plan 05-19 (gap H-3): structured machine-readable recovery payload.
+    data?: Readonly<Record<string, unknown>>;
   };
 }
 
@@ -90,6 +93,7 @@ export const controllerFailureResponseSchema = z.object({
       stderrTail: z.array(z.string()).optional(),
       logPath: z.string().min(1).optional(),
     }).optional(),
+    data: z.record(z.string(), z.unknown()).optional(),
   }),
 });
 

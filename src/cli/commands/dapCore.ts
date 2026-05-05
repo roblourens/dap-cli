@@ -26,6 +26,7 @@ interface DapStartCommandOptions {
   args?: string[];
   sourceMaps?: string;
   outFiles?: string[];
+  stopOnEntry?: boolean;
 }
 
 interface DapRequestCommandOptions {
@@ -41,6 +42,8 @@ interface DapEventsCommandOptions {
   name?: string;
   afterCursor?: string;
   limit?: string;
+  include?: string;
+  exclude?: string;
 }
 
 export function registerDapCoreCommands(program: Command, stdout: JsonWritable): void {
@@ -63,6 +66,7 @@ export function registerDapCoreCommands(program: Command, stdout: JsonWritable):
     .option('--args <arg...>', 'program argument overrides')
     .option('--source-maps <boolean>', 'source map enablement override')
     .option('--out-files <pattern...>', 'source map output file patterns')
+    .option('--stop-on-entry', 'halt at the first program statement (adapter must support stopOnEntry)')
     .option('--no-use', 'do not make the new session active')
     .action(async (options: DapStartCommandOptions) => {
       await startDap(stdout, 'launch', options);
@@ -87,6 +91,7 @@ export function registerDapCoreCommands(program: Command, stdout: JsonWritable):
     .option('--args <arg...>', 'program argument overrides')
     .option('--source-maps <boolean>', 'source map enablement override')
     .option('--out-files <pattern...>', 'source map output file patterns')
+    .option('--stop-on-entry', 'halt at the first program statement (adapter must support stopOnEntry)')
     .option('--no-use', 'do not make the new session active')
     .action(async (options: DapStartCommandOptions) => {
       await startDap(stdout, 'attach', options);
@@ -125,19 +130,19 @@ Examples:
     .option('--name <name>', 'session name or id')
     .option('--after-cursor <cursor>', 'return events after cursor')
     .option('--limit <count>', 'maximum events to return')
+    .option('--include <names>', 'comma-separated event names to include (applied before --limit)')
+    .option('--exclude <names>', 'comma-separated event names to exclude (applied before --limit)')
     .description('Poll recent DAP events with cursor-based pagination')
     .addHelpText('after', `
 
 Examples:
   $ dap-cli events
   $ dap-cli events --after-cursor 12 --limit 25
+  $ dap-cli events --limit 50 --exclude loadedSource
+  $ dap-cli events --include stopped,thread,output
 `)
     .action(async (options: DapEventsCommandOptions) => {
-      await withController(stdout, 'events', async client => client.request('events.recent', {
-        name: options.name,
-        afterCursor: parseOptionalInteger(options.afterCursor, 'after-cursor'),
-        limit: parseOptionalInteger(options.limit, 'limit'),
-      }));
+      await runEventsCommand(stdout, options);
     });
 }
 
@@ -157,7 +162,7 @@ async function startDap(stdout: JsonWritable, mode: 'launch' | 'attach', options
     request: mode,
   };
   const descriptor = adapterId === 'fake'
-    ? createFakeDescriptor(options.script ?? (mode === 'attach' ? 'attach-stopped' : 'stopped-on-entry'))
+    ? createFakeDescriptor(options.script ?? (mode === 'attach' ? 'attach-stopped' : 'stopped-on-entry'), mode)
     : new AdapterRegistry({ config: adapterConfig }).resolve(adapterId);
 
   await withController(stdout, mode, async client => client.request('dap.start', {
@@ -220,6 +225,7 @@ function collectFlagOverrides(options: DapStartCommandOptions): Record<string, u
   setIfDefined(flags, 'type', options.type);
   setIfDefined(flags, 'args', options.args);
   setIfDefined(flags, 'outFiles', options.outFiles);
+  setIfDefined(flags, 'stopOnEntry', options.stopOnEntry);
   if (options.sourceMaps !== undefined) {
     flags.sourceMaps = parseBooleanOption(options.sourceMaps, 'source-maps');
   }
@@ -256,14 +262,14 @@ async function withController<T>(stdout: JsonWritable, command: string, callback
   }
 }
 
-function createFakeDescriptor(script: string): AdapterDescriptor {
+function createFakeDescriptor(script: string, mode: 'launch' | 'attach'): AdapterDescriptor {
   return {
     id: 'fake',
     label: 'Generic fake adapter',
     transport: {
       kind: 'stdio',
       command: process.execPath,
-      args: ['--experimental-strip-types', path.join(process.cwd(), 'tests', 'fixtures', 'fake-adapter-entry.ts'), '--script', script],
+      args: ['--experimental-strip-types', path.join(process.cwd(), 'tests', 'fixtures', 'fake-adapter-entry.ts'), '--script', script, '--mode', mode],
     },
   };
 }
@@ -311,4 +317,89 @@ function parseBooleanOption(value: string, optionName: string): boolean {
   }
 
   throw usageError(`Invalid --${optionName} value.`, { code: 'invalid_boolean' });
+}
+
+// Plan 05-18 (gap H-2): cap each filter list to prevent unbounded set growth
+// from a malicious or accidental command line (T-05-18-02).
+const eventFilterMaxEntries = 50;
+
+interface EventsRecentResponse {
+  sessionId: string;
+  name: string;
+  events: Array<Record<string, unknown> & { event: string }>;
+  cursor: number;
+  dropped: number;
+  capacity?: number;
+  capacityByPriority?: { high: number; low: number };
+  truncatedToCapacity?: number;
+}
+
+interface EventsCommandData extends EventsRecentResponse {
+  warnings?: string[];
+}
+
+function parseEventNameList(raw: string | undefined, optionName: string): ReadonlySet<string> | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  const names = raw.split(',').map(name => name.trim()).filter(name => name.length > 0);
+  if (names.length === 0) {
+    return undefined;
+  }
+  if (names.length > eventFilterMaxEntries) {
+    throw usageError(`Too many entries in --${optionName} (max ${eventFilterMaxEntries}).`, { code: 'invalid_filter' });
+  }
+  return new Set(names);
+}
+
+async function runEventsCommand(stdout: JsonWritable, options: DapEventsCommandOptions): Promise<void> {
+  const include = parseEventNameList(options.include, 'include');
+  const exclude = parseEventNameList(options.exclude, 'exclude');
+  const hasFilter = include !== undefined || exclude !== undefined;
+  const limit = parseOptionalInteger(options.limit, 'limit');
+  const afterCursor = parseOptionalInteger(options.afterCursor, 'after-cursor');
+
+  // Plan 05-18 (gap H-2): if a filter is active, fetch the full snapshot so
+  // the filter is applied BEFORE the limit. Otherwise pass --limit through to
+  // the cache so it can compute `truncatedToCapacity` itself.
+  const requestParams: { name?: string; afterCursor?: number; limit?: number } = {};
+  if (options.name !== undefined) {
+    requestParams.name = options.name;
+  }
+  if (afterCursor !== undefined) {
+    requestParams.afterCursor = afterCursor;
+  }
+  if (limit !== undefined && !hasFilter) {
+    requestParams.limit = limit;
+  }
+
+  await withController(stdout, 'events', async client => {
+    const response = await client.request<EventsRecentResponse>('events.recent', requestParams);
+    let events = response.events;
+    if (include !== undefined) {
+      events = events.filter(e => include.has(e.event));
+    }
+    if (exclude !== undefined) {
+      events = events.filter(e => !exclude.has(e.event));
+    }
+    if (limit !== undefined && hasFilter) {
+      events = events.slice(-limit);
+    }
+
+    const data: EventsCommandData = { ...response, events };
+
+    // Plan 05-18 (gap H-2): honest warning when the user's --limit exceeds
+    // what the cache can hold. Surfaces alongside `truncatedToCapacity`.
+    if (limit !== undefined && response.capacity !== undefined && limit > response.capacity) {
+      data.warnings = [`limit_exceeded_capacity: ${limit} requested, ${response.capacity} available`];
+      // When --include/--exclude is active we did NOT pass `limit` to the
+      // server, so the server didn't set truncatedToCapacity. Set it here so
+      // the field is consistent with the warning.
+      if (data.truncatedToCapacity === undefined) {
+        data.truncatedToCapacity = response.capacity;
+      }
+    }
+
+    return data;
+  });
 }

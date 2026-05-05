@@ -3,6 +3,13 @@
 const scriptIndex = process.argv.indexOf('--script');
 const scriptName = scriptIndex === -1 ? 'stopped-on-entry' : process.argv[scriptIndex + 1] ?? 'stopped-on-entry';
 
+const modeIndex = process.argv.indexOf('--mode');
+const requestedMode = modeIndex === -1 ? undefined : process.argv[modeIndex + 1];
+if (requestedMode !== undefined && requestedMode !== 'launch' && requestedMode !== 'attach') {
+	process.stderr.write(`Invalid --mode value: ${requestedMode}\n`);
+	process.exit(2);
+}
+
 interface DapRequestMessage {
 	seq: number;
 	type: 'request';
@@ -29,9 +36,38 @@ const scripts: Record<string, FakeStep[]> = {
 	'execution-control': createExecutionControlScript(),
 	'failed-threads': createFailedThreadsScript(),
 	'expect-launch-overrides': createLifecycleScript('launch', { request: 'launch', program: 'flag.js', cwd: 'flag-cwd' }),
+	'expect-stop-on-entry': createLifecycleScript('launch', { stopOnEntry: true }),
 	'expect-attach-overrides': createLifecycleScript('attach', { request: 'attach', port: 4711 }),
+	'stop-then-transport-close': [
+		// Stop-on-entry, answer one threads request, then close the transport.
+		// Used by the stale-session diagnostic test.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1, allThreadsStopped: true } },
+		{ command: 'threads', body: { threads: [{ id: 1, name: 'main' }] } },
+		{ close: true },
+	],
 	'stderr-close': [
 		{ stderr: 'fake adapter startup failure' },
+		{ close: true },
+	],
+	'paused-then-continued': [
+		// Stops with reason 'entry' (NO allThreadsStopped — threadId is the
+		// only stopped thread), waits for `continue`, then emits `continued`.
+		// Used by the H-1 paused-projection JSON output test (plan 05-17) to
+		// drive the controller through both halves of the stopped/continued
+		// cycle through the published CLI envelope.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
+		{ command: 'continue', body: { allThreadsContinued: true } },
+		{ event: 'continued', body: { threadId: 1, allThreadsContinued: true } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
 		{ close: true },
 	],
 };
@@ -42,6 +78,31 @@ if (script === undefined) {
 	process.exit(2);
 }
 const selectedScript = script;
+
+if (requestedMode !== undefined) {
+	const validationError = validateScriptForMode(selectedScript, scriptName, requestedMode);
+	if (validationError !== undefined) {
+		process.stderr.write(`${validationError}\n`);
+		// Emit a single output event so the lifecycle has something on the wire,
+		// then close stdout so the controller's initialize request rejects with
+		// DapTransportClosedError instead of hanging until the handshake timeout.
+		writeMessage({ seq: 1, type: 'event', event: 'output', body: { category: 'stderr', output: `${validationError}\n` } });
+		writeMessage({ seq: 2, type: 'event', event: 'terminated' });
+		process.stdout.end(() => process.exit(2));
+	}
+}
+
+function validateScriptForMode(steps: FakeStep[], name: string, mode: 'launch' | 'attach'): string | undefined {
+	for (const step of steps) {
+		if (step.command === 'launch' || step.command === 'attach') {
+			if (step.command !== mode) {
+				return `Fake adapter script "${name}" expects command "${step.command}" but the request was "${mode}".`;
+			}
+			return undefined;
+		}
+	}
+	return `Fake adapter script "${name}" has no launch or attach step.`;
+}
 
 let buffer = Buffer.alloc(0);
 let cursor = 0;

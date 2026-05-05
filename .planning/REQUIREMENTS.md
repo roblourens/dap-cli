@@ -46,7 +46,7 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [x] **AGNT-01**: dap-cli commands return machine-readable JSON output suitable for agent parsing.
 - [x] **AGNT-02**: dap-cli uses stable nonzero exit codes and structured error payloads for failed commands.
 - [x] **AGNT-03**: dap-cli surfaces adapter stderr, log paths, request names, session IDs, and actionable diagnostics when a command fails.
-- [x] **AGNT-04**: Documentation includes agent-oriented workflows that interleave dap-cli commands with Playwright CLI commands.
+- [x] **AGNT-04**: Documentation includes agent-oriented workflows that interleave dap-cli commands with `playwright-cli` ([`@playwright/cli`](https://www.npmjs.com/package/@playwright/cli)) commands. ([`@playwright/test`](https://www.npmjs.com/package/@playwright/test) is also covered as an alternative driver.)
 - [x] **AGNT-05**: Documentation includes examples for polling session status instead of relying on event streaming in v1.
 
 ### Verification
@@ -57,7 +57,7 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [x] **TEST-04**: JavaScript and Python built-in adapters have end-to-end smoke tests that agents can run without relying on manual user validation.
 - [x] **TEST-05**: The repository includes a deterministic scripted test suite that exercises every implemented feature and supported command path.
 - [ ] **TEST-06**: Once dap-cli reaches a minimally usable form, development and validation include self-hosting workflows that use dap-cli to debug dap-cli or its fixtures.
-- [ ] **TEST-07**: The verification strategy includes agentic exploratory debugging scenarios that combine dap-cli with dynamic application interaction, such as Playwright-driven UI actions.
+- [x] **TEST-07**: The verification strategy includes agentic exploratory debugging scenarios that combine dap-cli with dynamic application interaction, such as Playwright-driven UI actions.
 
 ## v2 Requirements
 
@@ -132,7 +132,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TEST-04 | Phase 3 | Complete |
 | TEST-05 | Phase 2 | Complete |
 | TEST-06 | Phase 4 | Pending |
-| TEST-07 | Phase 4 | Pending |
+| TEST-07 | Phase 4 | Complete |
 
 **Coverage:**
 - v1 requirements: 34 total

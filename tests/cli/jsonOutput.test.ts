@@ -5,6 +5,8 @@ import { main } from '../../src/cli/main.js';
 import { getDapCliHome, getDapCliLogDir, getDapCliStateDir } from '../../src/config/paths.js';
 import { toJsonString, writeJsonFailure, writeJsonSuccess } from '../../src/cli/output.js';
 import { usageError } from '../../src/cli/errors.js';
+import { startControllerServer, type ControllerServer } from '../../src/controller/server.js';
+import { createCliTestEnv, runCli, type CliTestEnv } from '../helpers/runCli.js';
 
 class MemoryStream {
   public readonly chunks: string[] = [];
@@ -109,5 +111,159 @@ describe('JSON output contract', () => {
     expect(getDapCliHome({})).toMatch(/[/\\]\.dap-cli$/);
     expect(getDapCliStateDir({})).toMatch(/[/\\]\.dap-cli[/\\]state$/);
     expect(getDapCliLogDir({})).toMatch(/[/\\]\.dap-cli[/\\]logs$/);
+  });
+});
+
+describe('status JSON envelope reports paused state (gap H-1)', () => {
+  let testEnv: CliTestEnv;
+  let server: ControllerServer | undefined;
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.stop();
+      server = undefined;
+    }
+    if (testEnv !== undefined) {
+      await testEnv.cleanup();
+    }
+  });
+
+  test('status data includes paused/stoppedReason/stoppedThreadIds across stopped→continued cycle', async () => {
+    testEnv = await createCliTestEnv('dap-cli-paused-projection-');
+    server = await startControllerServer({ dapCliHome: testEnv.dapCliHome });
+
+    const launch = await runCli(
+      ['launch', '--adapter', 'fake', '--script', 'paused-then-continued', '--name', 'paused-demo'],
+      { env: testEnv.env },
+    );
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+
+    const stoppedStatus = await runCli(['status', '--name', 'paused-demo'], { env: testEnv.env });
+    expect(stoppedStatus.exitCode, JSON.stringify(stoppedStatus)).toBe(0);
+    const stoppedEnvelope = stoppedStatus.envelope as {
+      ok: true;
+      data: { name: string; paused?: boolean; stoppedReason?: string; stoppedThreadIds?: number[] };
+    };
+    expect(stoppedEnvelope.ok).toBe(true);
+    expect(stoppedEnvelope.data.name).toBe('paused-demo');
+    expect(stoppedEnvelope.data.paused).toBe(true);
+    expect(stoppedEnvelope.data.stoppedReason).toBe('entry');
+    expect(stoppedEnvelope.data.stoppedThreadIds).toEqual([1]);
+
+    const cont = await runCli(
+      ['request', 'continue', '--name', 'paused-demo', '--json', '{"threadId":1}'],
+      { env: testEnv.env },
+    );
+    expect(cont.exitCode, JSON.stringify(cont)).toBe(0);
+
+    // Allow the asynchronous `continued` event handler to settle before re-reading status.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    const runningStatus = await runCli(['status', '--name', 'paused-demo'], { env: testEnv.env });
+    expect(runningStatus.exitCode, JSON.stringify(runningStatus)).toBe(0);
+    const runningEnvelope = runningStatus.envelope as {
+      ok: true;
+      data: { paused?: boolean; stoppedReason?: string; stoppedThreadIds?: number[] };
+    };
+    expect(runningEnvelope.ok).toBe(true);
+    expect(runningEnvelope.data.paused).toBe(false);
+    expect(runningEnvelope.data.stoppedReason).toBeUndefined();
+    expect(runningEnvelope.data.stoppedThreadIds).toBeUndefined();
+  });
+});
+
+// Plan 05-18 (gap H-2): --include / --exclude event-name filters and an
+// honest `warnings: ['limit_exceeded_capacity: ...']` when --limit > capacity.
+describe('events JSON envelope filters and warnings (gap H-2)', () => {
+  let testEnv: CliTestEnv;
+  let server: ControllerServer | undefined;
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.stop();
+      server = undefined;
+    }
+    if (testEnv !== undefined) {
+      await testEnv.cleanup();
+    }
+  });
+
+  interface EventsEnvelopeData {
+    sessionId: string;
+    name: string;
+    events: Array<{ event: string; cursor: number }>;
+    cursor: number;
+    dropped: number;
+    truncatedToCapacity?: number;
+    warnings?: string[];
+    capacityByPriority?: { high: number; low: number };
+  }
+
+  async function setupSession(): Promise<void> {
+    testEnv = await createCliTestEnv('dap-cli-events-filter-');
+    server = await startControllerServer({ dapCliHome: testEnv.dapCliHome });
+
+    const launch = await runCli(
+      ['launch', '--adapter', 'fake', '--script', 'paused-then-continued', '--name', 'evt-demo'],
+      { env: testEnv.env },
+    );
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+  }
+
+  test('--include returns only the named event types', async () => {
+    await setupSession();
+
+    const result = await runCli(['events', '--name', 'evt-demo', '--include', 'stopped'], { env: testEnv.env });
+    expect(result.exitCode, JSON.stringify(result)).toBe(0);
+    const envelope = result.envelope as { ok: true; data: EventsEnvelopeData };
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data.events.every(e => e.event === 'stopped')).toBe(true);
+    expect(envelope.data.events.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('--exclude strips the named event types', async () => {
+    await setupSession();
+
+    const result = await runCli(['events', '--name', 'evt-demo', '--exclude', 'stopped'], { env: testEnv.env });
+    expect(result.exitCode, JSON.stringify(result)).toBe(0);
+    const envelope = result.envelope as { ok: true; data: EventsEnvelopeData };
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data.events.every(e => e.event !== 'stopped')).toBe(true);
+    // initialized still present
+    expect(envelope.data.events.some(e => e.event === 'initialized')).toBe(true);
+  });
+
+  test('--include and --exclude combine: include first, then exclude', async () => {
+    await setupSession();
+
+    const result = await runCli(['events', '--name', 'evt-demo', '--include', 'stopped,initialized', '--exclude', 'stopped'], { env: testEnv.env });
+    expect(result.exitCode, JSON.stringify(result)).toBe(0);
+    const envelope = result.envelope as { ok: true; data: EventsEnvelopeData };
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data.events.every(e => e.event === 'initialized')).toBe(true);
+    expect(envelope.data.events.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('--limit exceeding capacity surfaces a warnings array', async () => {
+    await setupSession();
+
+    const result = await runCli(['events', '--name', 'evt-demo', '--limit', '9999'], { env: testEnv.env });
+    expect(result.exitCode, JSON.stringify(result)).toBe(0);
+    const envelope = result.envelope as { ok: true; data: EventsEnvelopeData };
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data.warnings).toBeDefined();
+    expect(envelope.data.warnings?.some(w => w.startsWith('limit_exceeded_capacity:'))).toBe(true);
+    expect(envelope.data.truncatedToCapacity).toBeDefined();
+  });
+
+  test('--limit within capacity does NOT add warnings', async () => {
+    await setupSession();
+
+    const result = await runCli(['events', '--name', 'evt-demo', '--limit', '10'], { env: testEnv.env });
+    expect(result.exitCode, JSON.stringify(result)).toBe(0);
+    const envelope = result.envelope as { ok: true; data: EventsEnvelopeData };
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data.warnings).toBeUndefined();
   });
 });

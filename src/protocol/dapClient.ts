@@ -44,6 +44,22 @@ interface PendingRequest {
   timeout: NodeJS.Timeout | undefined;
 }
 
+export interface ReverseRequestPayload {
+  command: string;
+  arguments: unknown;
+  seq: number;
+}
+
+export interface ReverseRequestResult {
+  success: boolean;
+  body?: unknown;
+  message?: string;
+}
+
+export type ReverseRequestHandler = (
+  request: ReverseRequestPayload,
+) => Promise<ReverseRequestResult | undefined> | ReverseRequestResult | undefined;
+
 export class DapClient {
   private readonly parser = new DapMessageParser();
   private readonly pending = new Map<number, PendingRequest>();
@@ -51,6 +67,7 @@ export class DapClient {
   private readonly childProcesses = new Set<ChildProcess>();
   private nextSeq = 1;
   private closed = false;
+  private reverseRequestHandler: ReverseRequestHandler | undefined;
   public lastRequest: LastDapRequest | undefined;
 
   public constructor(private readonly transport: DapTransport, private readonly options: DapClientOptions = {}) {
@@ -94,6 +111,28 @@ export class DapClient {
     this.eventListeners.add(listener);
     return () => {
       this.eventListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Register a handler for adapter-originated reverse requests.
+   *
+   * The handler is consulted for every reverse request (including `runInTerminal`).
+   * If it resolves to `undefined`, DapClient falls back to the built-in handlers
+   * (currently only `runInTerminal`); otherwise the resolved value is written
+   * back to the adapter as a DAP response. Handler errors are translated to
+   * `{ success: false, message: <error.message> }` and never crash the client.
+   *
+   * Only one handler may be registered at a time — a later subscription replaces
+   * any earlier one. The returned disposer clears the handler if it is still the
+   * one currently registered.
+   */
+  public onReverseRequest(handler: ReverseRequestHandler): () => void {
+    this.reverseRequestHandler = handler;
+    return () => {
+      if (this.reverseRequestHandler === handler) {
+        this.reverseRequestHandler = undefined;
+      }
     };
   }
 
@@ -168,6 +207,39 @@ export class DapClient {
   }
 
   private handleAdapterRequest(request: DapRequestMessage): void {
+    const handler = this.reverseRequestHandler;
+    if (handler !== undefined) {
+      this.dispatchReverseRequestToHandler(request, handler);
+      return;
+    }
+
+    this.runDefaultAdapterRequest(request);
+  }
+
+  private dispatchReverseRequestToHandler(request: DapRequestMessage, handler: ReverseRequestHandler): void {
+    let result: Promise<ReverseRequestResult | undefined> | ReverseRequestResult | undefined;
+    try {
+      result = handler({ command: request.command, arguments: request.arguments, seq: request.seq });
+    } catch (error) {
+      this.writeAdapterResponse(request, false, undefined, error instanceof Error ? error.message : `Reverse request handler failed: ${request.command}`);
+      return;
+    }
+
+    Promise.resolve(result).then(
+      resolved => {
+        if (resolved === undefined) {
+          this.runDefaultAdapterRequest(request);
+          return;
+        }
+        this.writeAdapterResponse(request, resolved.success, resolved.body, resolved.message);
+      },
+      error => {
+        this.writeAdapterResponse(request, false, undefined, error instanceof Error ? error.message : `Reverse request handler failed: ${request.command}`);
+      },
+    );
+  }
+
+  private runDefaultAdapterRequest(request: DapRequestMessage): void {
     if (request.command !== 'runInTerminal') {
       this.writeAdapterResponse(request, false, undefined, `Unsupported adapter request: ${request.command}`);
       return;
@@ -268,4 +340,3 @@ function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
     child.once('exit', onExit);
   });
 }
-

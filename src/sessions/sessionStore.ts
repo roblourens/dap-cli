@@ -29,6 +29,15 @@ const sessionRecordSchema = z.object({
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
   ownedAdapter: ownedAdapterSchema,
+  // Plan 05-04 (child sessions) — js-debug pwa-chrome multi-process
+  // children carry their parent's id so the controller can route requests
+  // and so 'sessions list' can hide them by default (plan 05-19, gap H-3).
+  parent_session_id: z.string().min(1).optional(),
+  // Plan 05-17 (gap H-1) — paused projection mirrors DAP stopped/continued
+  // events onto persisted SessionRecord state. Optional; absence === unknown.
+  paused: z.boolean().optional(),
+  stoppedReason: z.string().min(1).optional(),
+  stoppedThreadIds: z.array(z.number().int()).optional(),
 });
 
 const sessionStoreSchema = z.object({
@@ -51,7 +60,15 @@ export class SessionStore {
   public async read(): Promise<SessionStoreData> {
     try {
       const raw = await fs.readFile(this.storePath, 'utf8');
-      return sessionStoreSchema.parse(JSON.parse(raw));
+      const parsed = sessionStoreSchema.parse(JSON.parse(raw));
+      // zod's `.optional()` produces `T | undefined`, but SessionRecord uses
+      // `exactOptionalPropertyTypes: true` strict optional shape (`key?: T`,
+      // never `T | undefined`). Strip undefined keys so the schema output
+      // assigns cleanly without a cast or widening the record type.
+      return {
+        ...(parsed.activeSessionId !== undefined ? { activeSessionId: parsed.activeSessionId } : {}),
+        sessions: parsed.sessions.map(stripUndefinedKeys) as readonly SessionRecord[],
+      };
     } catch (error) {
       if (isNodeError(error) && error.code === 'ENOENT') {
         return { sessions: [] };
@@ -72,4 +89,14 @@ export class SessionStore {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error;
+}
+
+function stripUndefinedKeys<T extends object>(value: T): T {
+  const result: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(value)) {
+    if (val !== undefined) {
+      result[key] = val;
+    }
+  }
+  return result as T;
 }

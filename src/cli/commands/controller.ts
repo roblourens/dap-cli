@@ -1,18 +1,21 @@
 import { spawn } from 'node:child_process';
 import type { Command } from 'commander';
-import { CliError } from '../errors.js';
+import { CliError, controllerError } from '../errors.js';
 import { createControllerClient } from '../../controller/client.js';
 import { controllerUnavailable } from '../../controller/diagnostics.js';
 import { isControllerAlive, readControllerDiscovery, removeControllerDiscovery, type ControllerDiscovery } from '../../controller/ipc.js';
-import { startControllerServer, type ControllerStatus } from '../../controller/server.js';
+import { startControllerServer, type ControllerHelloResult, type ControllerStatus } from '../../controller/server.js';
+import { computeBuildId } from '../../controller/buildId.js';
 import { type JsonWritable, writeJsonSuccess } from '../output.js';
 
 interface ControllerStartResult {
   started: boolean;
+  reused: boolean;
   pid: number;
   endpoint: ControllerDiscovery['endpoint'];
   stateDir: string;
   logDir: string;
+  buildId: string;
 }
 
 export function registerControllerCommands(program: Command, stdout: JsonWritable): void {
@@ -63,6 +66,29 @@ Examples:
       const server = await startControllerServer({ dapCliHome: process.env.DAP_CLI_HOME });
       await server.closed;
     });
+
+  program
+    .command('stop-controller')
+    .description('Shut down the persistent controller (does not affect on-disk session records)')
+    .action(async () => {
+      const result = await stopControllerProcess();
+      writeJsonSuccess(result, { command: 'stop-controller' }, stdout);
+    });
+}
+
+async function stopControllerProcess(): Promise<{ stopped: boolean }> {
+  const discovery = await readControllerDiscovery({ dapCliHome: process.env.DAP_CLI_HOME });
+  if (discovery === undefined || !(await isControllerAlive(discovery))) {
+    return { stopped: false };
+  }
+
+  const client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME });
+  try {
+    await client.request<{ stopped: boolean }>('controller.shutdown');
+  } finally {
+    await client.close();
+  }
+  return { stopped: true };
 }
 
 async function requestSessionOrControllerStatus(client: Awaited<ReturnType<typeof createControllerClient>>, name: string | undefined): Promise<unknown> {
@@ -94,10 +120,15 @@ function isMissingSessionSelection(error: unknown): boolean {
 }
 
 async function startControllerProcess(): Promise<ControllerStartResult> {
+  const currentBuildId = await computeBuildId();
   const existingDiscovery = await readControllerDiscovery({ dapCliHome: process.env.DAP_CLI_HOME });
   if (existingDiscovery !== undefined) {
     if (await isControllerAlive(existingDiscovery)) {
-      return toStartResult(false, existingDiscovery);
+      const existingBuildId = await fetchControllerBuildId(existingDiscovery);
+      if (existingBuildId !== undefined && existingBuildId !== currentBuildId) {
+        throw controllerBuildMismatch(existingBuildId, currentBuildId);
+      }
+      return toStartResult(false, true, existingDiscovery, existingBuildId ?? currentBuildId);
     }
 
     await removeControllerDiscovery({ dapCliHome: process.env.DAP_CLI_HOME });
@@ -116,7 +147,33 @@ async function startControllerProcess(): Promise<ControllerStartResult> {
   child.unref();
 
   const discovery = await waitForControllerDiscovery();
-  return toStartResult(true, discovery);
+  const buildId = (await fetchControllerBuildId(discovery)) ?? currentBuildId;
+  return toStartResult(true, false, discovery, buildId);
+}
+
+async function fetchControllerBuildId(discovery: ControllerDiscovery): Promise<string | undefined> {
+  try {
+    const client = await createControllerClient({ discovery, timeoutMs: 1_000 });
+    try {
+      const hello = await client.request<ControllerHelloResult>('controller.hello');
+      return hello.buildId;
+    } finally {
+      await client.close();
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+function controllerBuildMismatch(existingBuildId: string, currentBuildId: string): CliError {
+  return controllerError('Existing dap-cli controller was built from a different version.', {
+    code: 'controller_build_mismatch',
+    diagnostics: [
+      `Existing controller build id: ${existingBuildId}`,
+      `Current CLI build id: ${currentBuildId}`,
+      'Run `dap-cli stop-controller` and retry `dap-cli start` to launch a fresh controller.',
+    ],
+  });
 }
 
 async function waitForControllerDiscovery(): Promise<ControllerDiscovery> {
@@ -134,13 +191,15 @@ async function waitForControllerDiscovery(): Promise<ControllerDiscovery> {
   throw controllerUnavailable('Timed out waiting for dap-cli controller to start.');
 }
 
-function toStartResult(started: boolean, discovery: ControllerDiscovery): ControllerStartResult {
+function toStartResult(started: boolean, reused: boolean, discovery: ControllerDiscovery, buildId: string): ControllerStartResult {
   return {
     started,
+    reused,
     pid: discovery.pid,
     endpoint: discovery.endpoint,
     stateDir: discovery.stateDir,
     logDir: discovery.logDir,
+    buildId,
   };
 }
 

@@ -105,6 +105,7 @@ export function mapJsDebugFlags(flags: Record<string, unknown>): Record<string, 
   copyDefined(mapped, flags, 'env');
   copyDefined(mapped, flags, 'sourceMaps');
   copyDefined(mapped, flags, 'outFiles');
+  copyDefined(mapped, flags, 'stopOnEntry');
 
   if (flags.type === 'node') {
     mapped.type = 'pwa-node';
@@ -127,6 +128,7 @@ export function mapDebugpyFlags(flags: Record<string, unknown>): Record<string, 
   copyDefined(mapped, flags, 'args');
   copyDefined(mapped, flags, 'env');
   copyDefined(mapped, flags, 'python');
+  copyDefined(mapped, flags, 'stopOnEntry');
   if (typeof flags.port === 'number') {
     mapped.connect = { host: '127.0.0.1', port: flags.port };
   }

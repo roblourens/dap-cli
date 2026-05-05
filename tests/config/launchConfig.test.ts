@@ -95,6 +95,14 @@ describe('launch config resolution', () => {
   test('maps electron runtime flag to node type for js-debug', () => {
     expect(mapJsDebugFlags({ runtimeExecutable: 'electron' })).toEqual({ runtimeExecutable: 'electron', type: 'pwa-node' });
   });
+
+  test('passes stopOnEntry through to js-debug native config', () => {
+    expect(mapJsDebugFlags({ program: 'app.js', stopOnEntry: true })).toEqual({ program: 'app.js', stopOnEntry: true });
+  });
+
+  test('passes stopOnEntry through to debugpy native config', () => {
+    expect(mapDebugpyFlags({ program: 'main.py', stopOnEntry: true })).toEqual({ program: 'main.py', stopOnEntry: true });
+  });
 });
 
 function catchErrorCode(callback: () => unknown): string | undefined {

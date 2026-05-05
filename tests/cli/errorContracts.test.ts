@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import { Command } from 'commander';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { ExitCode } from '../../src/cli/exitCodes.js';
 import { adapterError, controllerError, dapError, internalError, sessionError, timeoutError, usageError } from '../../src/cli/errors.js';
+import { threadNotPaused } from '../../src/controller/diagnostics.js';
 import { writeJsonFailure } from '../../src/cli/output.js';
 import { main } from '../../src/cli/main.js';
 
@@ -63,6 +66,26 @@ describe('CLI error contracts', () => {
     expect(envelope.meta.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
+  test('failure JSON preserves ambiguous session diagnostics', () => {
+    const stream = new MemoryStream();
+
+    writeJsonFailure(sessionError('Session name is ambiguous: demo', {
+      code: 'session_ambiguous',
+      diagnostics: ['Multiple sessions match demo:', '- sess_one demo running', '- sess_two demo stopped', 'Use one of these session IDs with --name.'],
+    }), { command: 'status demo' }, stream);
+
+    const envelope = JSON.parse(stream.output) as {
+      ok: false;
+      error: { code: string; category: string; exitCode: number; diagnostics: string[] };
+    };
+
+    expect(envelope.error.code).toBe('session_ambiguous');
+    expect(envelope.error.category).toBe('session');
+    expect(envelope.error.exitCode).toBe(ExitCode.Session);
+    expect(envelope.error.diagnostics.join('\n')).toContain('sess_one');
+    expect(envelope.error.diagnostics.join('\n')).toContain('Use one of these session IDs');
+  });
+
   test('failure JSON includes optional session, request, and adapter diagnostics', () => {
     const stream = new MemoryStream();
 
@@ -121,5 +144,94 @@ describe('CLI error contracts', () => {
     expect(envelope.error.exitCode).toBe(ExitCode.Internal);
     expect(envelope.error.message).toBe('Unexpected internal error');
     expect(stdout.output).not.toContain('exploded with stack');
+  });
+
+  // Plan 05-20 (gap H-7): paused-state-required DAP requests against an
+  // unpaused thread MUST return a structured `thread_not_paused` error,
+  // NOT the misleading `controller_unavailable: Run dap-cli start` hint.
+  describe('thread_not_paused (gap H-7)', () => {
+    test('threadNotPaused factory returns structured dap error with the right code and diagnostic', () => {
+      const error = threadNotPaused({ sessionId: 'sess_test', sessionName: 'demo', command: 'stackTrace' });
+
+      expect(error.code).toBe('thread_not_paused');
+      expect(error.category).toBe('dap');
+      expect(error.message).toBe('Thread is not paused.');
+      expect(error.sessionId).toBe('sess_test');
+      expect(error.request).toEqual({ command: 'stackTrace' });
+
+      const joined = error.diagnostics.join('\n');
+      expect(joined).toContain('dap-cli events');
+      expect(joined).toContain('--include stopped');
+      expect(joined).toContain('--name demo');
+      expect(joined).toContain('--stop-on-entry');
+
+      // The recovery hint MUST NEVER tell the caller to run `dap-cli start` —
+      // the controller is already running; the issue is purely a stale
+      // request against a running thread.
+      expect(joined).not.toContain('dap-cli start');
+    });
+
+    test('threadNotPaused without context still produces a usable diagnostic', () => {
+      const error = threadNotPaused();
+
+      expect(error.code).toBe('thread_not_paused');
+      expect(error.message).toBe('Thread is not paused.');
+      expect(error.diagnostics.join('\n')).toContain('--name <name>');
+    });
+
+    test('failure JSON for thread_not_paused never suggests running dap-cli start', () => {
+      const stream = new MemoryStream();
+      writeJsonFailure(threadNotPaused({ sessionName: 'demo', command: 'stackTrace' }), { command: 'stack' }, stream);
+
+      const envelope = JSON.parse(stream.output) as { ok: false; error: { code: string; diagnostics: string[] } };
+      expect(envelope.error.code).toBe('thread_not_paused');
+      expect(envelope.error.diagnostics.join('\n')).not.toContain('dap-cli start');
+    });
+  });
+
+  // Plan 05-20 (gap H-4 audit): no source file under src/controller/ or
+  // src/sessions/ may tell the user to `dap-cli cleanup` without `--purge`.
+  // Plain `cleanup` only removes records for terminated/disconnected/failed
+  // sessions; sites that fire while a session is still running need to
+  // recommend `--purge` (or `stop-controller` for the discovery file). This
+  // test is intentionally narrow — CLI help text in src/cli/commands/ may
+  // legitimately reference plain `cleanup` and is excluded.
+  describe('cleanup recovery hint audit (gap H-4)', () => {
+    const repoRoot = path.resolve(process.cwd());
+    const auditedRoots = ['src/controller', 'src/sessions'];
+
+    async function collectTsFiles(dir: string): Promise<string[]> {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      const out: string[] = [];
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          out.push(...await collectTsFiles(full));
+        } else if (entry.isFile() && full.endsWith('.ts')) {
+          out.push(full);
+        }
+      }
+      return out;
+    }
+
+    test('no audited file references `dap-cli cleanup` without --purge', async () => {
+      const offenders: string[] = [];
+      for (const root of auditedRoots) {
+        const dir = path.join(repoRoot, root);
+        const files = await collectTsFiles(dir);
+        for (const file of files) {
+          const text = await fs.readFile(file, 'utf8');
+          // Match `dap-cli cleanup` NOT followed by ` --purge`.
+          // \b ensures we don't match `dap-cli cleanup-something-else`.
+          const regex = /dap-cli cleanup\b(?! --purge)/g;
+          let match: RegExpExecArray | null;
+          while ((match = regex.exec(text)) !== null) {
+            const lineNumber = text.slice(0, match.index).split('\n').length;
+            offenders.push(`${path.relative(repoRoot, file)}:${lineNumber}`);
+          }
+        }
+      }
+      expect(offenders).toEqual([]);
+    });
   });
 });

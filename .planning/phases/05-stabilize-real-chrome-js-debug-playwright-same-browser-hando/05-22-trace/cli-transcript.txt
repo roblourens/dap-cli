@@ -1,0 +1,54 @@
++/bin/zsh:250> date -u +%Y-%m-%dT%H:%M:%SZ
+2026-05-04T22:02:56Z
++/bin/zsh:251> pgrep -lf dist/index.js
++/bin/zsh:251> true
+zsh: no matches found: /Users/roblou/.dap-cli/logs/js-debug-trace-NEW-*
++/bin/zsh:252> true
++/bin/zsh:253> '#' Mark start point in logs
+zsh: command not found: #
++/bin/zsh:254> date +%s.%N
++/bin/zsh:256> CTRL_PID=4561 
++/bin/zsh:255> node dist/index.js start
++/bin/zsh:257> sleep 1.5
+{"ok":true,"data":{"started":true,"reused":false,"pid":4563,"endpoint":{"kind":"ipc","path":"/Users/roblou/.dap-cli/state/controller.sock"},"stateDir":"/Users/roblou/.dap-cli/state","logDir":"/Users/roblou/.dap-cli/logs","buildId":"0.0.0:dist:1777932115775.178:184359"},"meta":{"command":"start","timestamp":"2026-05-04T22:02:56.807Z"}}
++/bin/zsh:258> node dist/index.js launch --name smoke-chrome --adapter js-debug --type pwa-chrome --url file:///Users/roblou/code/dap-cli/tests/fixtures/simple-chrome-page/index.html --json '{"webRoot":"/Users/roblou/code/dap-cli/tests/fixtures/simple-chrome-page","runtimeArgs":["--headless=new","--disable-gpu","--no-first-run","--user-data-dir=/tmp/dap-cli-h6-chrome"]}'
+{"ok":true,"data":{"sessionId":"sess_mCPepgKz96b7DwOe","name":"smoke-chrome","lifecycle":"running","capabilities":{"supportsConfigurationDoneRequest":true,"supportsFunctionBreakpoints":false,"supportsConditionalBreakpoints":true,"supportsHitConditionalBreakpoints":true,"supportsEvaluateForHovers":true,"supportsReadMemoryRequest":true,"supportsWriteMemoryRequest":true,"exceptionBreakpointFilters":[{"filter":"all","label":"Caught Exceptions","default":false,"supportsCondition":true,"description":"Breaks on all throw errors, even if they're caught later.","conditionDescription":"error.name == \"MyError\""},{"filter":"uncaught","label":"Uncaught Exceptions","default":false,"supportsCondition":true,"description":"Breaks only on errors or promise rejections that are not handled.","conditionDescription":"error.name == \"MyError\""}],"supportsStepBack":false,"supportsSetVariable":true,"supportsRestartFrame":true,"supportsGotoTargetsRequest":false,"supportsStepInTargetsRequest":true,"supportsCompletionsRequest":true,"supportsModulesRequest":false,"additionalModuleColumns":[],"supportedChecksumAlgorithms":[],"supportsRestartRequest":true,"supportsExceptionOptions":false,"supportsValueFormattingOptions":true,"supportsExceptionInfoRequest":true,"supportTerminateDebuggee":true,"supportsDelayedStackTraceLoading":true,"supportsLoadedSourcesRequest":true,"supportsLogPoints":true,"supportsTerminateThreadsRequest":false,"supportsSetExpression":true,"supportsTerminateRequest":false,"completionTriggerCharacters":[".","[","\"","'"],"supportsBreakpointLocationsRequest":true,"supportsClipboardContext":true,"supportsExceptionFilterOptions":true,"supportsEvaluationOptions":false,"supportsDebuggerProperties":false,"supportsSetSymbolOptions":false,"supportsANSIStyling":true},"eventCursor":7},"meta":{"command":"launch","timestamp":"2026-05-04T22:02:59.812Z"}}
++/bin/zsh:261> echo '--- after launch ---'
+--- after launch ---
++/bin/zsh:262> sleep 2
++/bin/zsh:263> node dist/index.js sessions --show-children
+{"ok":true,"data":[{"id":"sess_mCPepgKz96b7DwOe","name":"smoke-chrome","adapter":"js-debug","lifecycle":"running","status":"running","updatedAt":"2026-05-04T22:02:59.810Z"},{"id":"sess_DpPzLtIMY_zAeLrZ","name":"smoke-chrome#83E9FB43A84DABB2192A80E010E2B0C7","adapter":"js-debug","lifecycle":"running","status":"running","updatedAt":"2026-05-04T22:02:59.826Z","parent_session_id":"sess_mCPepgKz96b7DwOe","targetable":false}],"meta":{"command":"sessions","timestamp":"2026-05-04T22:03:01.913Z"}}
++/bin/zsh:264> echo '--- breakpoints set ---'
+--- breakpoints set ---
++/bin/zsh:265> node dist/index.js breakpoints set --name smoke-chrome --source /Users/roblou/code/dap-cli/tests/fixtures/simple-chrome-page/app.js --line 2
+{"ok":true,"data":{"breakpoints":[{"id":0,"verified":true,"source":{"name":"app.js","path":"/Users/roblou/code/dap-cli/tests/fixtures/simple-chrome-page/app.js","sourceReference":0},"line":2,"column":18}]},"meta":{"command":"breakpoints set","timestamp":"2026-05-04T22:03:01.997Z"}}
++/bin/zsh:266> echo '--- drive page via playwright ---'
+--- drive page via playwright ---
++/bin/zsh:267> npx playwright test tests/fixtures/simple-chrome-page/interop.spec.ts '--headed=false'
++/bin/zsh:267> tail -10
+error: unknown option '--headed=false'
++/bin/zsh:268> sleep 2
++/bin/zsh:269> echo '--- events stopped ---'
+--- events stopped ---
++/bin/zsh:270> node dist/index.js events --name smoke-chrome --include stopped --limit 100
+{"ok":true,"data":{"sessionId":"sess_mCPepgKz96b7DwOe","name":"smoke-chrome","events":[],"cursor":10,"dropped":0,"capacity":250,"capacityByPriority":{"high":200,"low":50}},"meta":{"command":"events","timestamp":"2026-05-04T22:03:04.619Z"}}
++/bin/zsh:271> echo '--- events bp+thread+scriptParsed ---'
+--- events bp+thread+scriptParsed ---
++/bin/zsh:272> node dist/index.js events --name smoke-chrome --include breakpoint,scriptParsed,thread --limit 200
+{"ok":true,"data":{"sessionId":"sess_mCPepgKz96b7DwOe","name":"smoke-chrome","events":[{"cursor":6,"receivedAt":"2026-05-04T22:02:59.731Z","sessionId":"sess_mCPepgKz96b7DwOe","dapSeq":5,"event":"thread","summary":"thread event seq=5","body":{"reason":"started","threadId":0,"child_session_id":"sess_DpPzLtIMY_zAeLrZ"}},{"cursor":9,"receivedAt":"2026-05-04T22:03:01.997Z","sessionId":"sess_mCPepgKz96b7DwOe","dapSeq":9,"event":"breakpoint","summary":"breakpoint event seq=9","body":{"reason":"changed","breakpoint":{"id":0,"verified":true,"source":{"name":"app.js","path":"/Users/roblou/code/dap-cli/tests/fixtures/simple-chrome-page/app.js","sourceReference":0},"line":2,"column":18},"child_session_id":"sess_DpPzLtIMY_zAeLrZ"}}],"cursor":10,"dropped":0,"capacity":250,"capacityByPriority":{"high":200,"low":50}},"meta":{"command":"events","timestamp":"2026-05-04T22:03:04.689Z"}}
++/bin/zsh:273> echo '--- sessions list ---'
+--- sessions list ---
++/bin/zsh:274> node dist/index.js sessions --show-children
+{"ok":true,"data":[{"id":"sess_mCPepgKz96b7DwOe","name":"smoke-chrome","adapter":"js-debug","lifecycle":"running","status":"running","updatedAt":"2026-05-04T22:02:59.810Z"},{"id":"sess_DpPzLtIMY_zAeLrZ","name":"smoke-chrome#83E9FB43A84DABB2192A80E010E2B0C7","adapter":"js-debug","lifecycle":"running","status":"running","updatedAt":"2026-05-04T22:02:59.826Z","parent_session_id":"sess_mCPepgKz96b7DwOe","targetable":false}],"meta":{"command":"sessions","timestamp":"2026-05-04T22:03:04.752Z"}}
++/bin/zsh:275> echo '--- teardown ---'
+--- teardown ---
++/bin/zsh:276> node dist/index.js close smoke-chrome
+{"ok":true,"data":{"id":"sess_mCPepgKz96b7DwOe","name":"smoke-chrome","adapter":"js-debug","lifecycle":"running","status":"running","updatedAt":"2026-05-04T22:02:59.810Z","stderrTail":[],"cleanupActions":["Signal owned adapter pid 4587 if cleanup is required."],"logPath":"/Users/roblou/.dap-cli/logs/js-debug-4587.log"},"meta":{"command":"close","timestamp":"2026-05-04T22:03:04.815Z"}}
++/bin/zsh:277> node dist/index.js stop-controller
+{"ok":true,"data":{"stopped":true},"meta":{"command":"stop-controller","timestamp":"2026-05-04T22:03:04.890Z"}}
++/bin/zsh:278> wait 4561
++/bin/zsh:279> pkill -f remote-debugging-pipe
++/bin/zsh:280> sleep 1
++/bin/zsh:281> pgrep -lf remote-debugging-pipe
++/bin/zsh:281> echo 'no orphans'
+no orphans

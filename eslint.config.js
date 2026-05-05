@@ -3,7 +3,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '.github/**', '.planning/**', 'tests/fixtures/**/*.js'],
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '.github/**', '.planning/**', 'tests/fixtures/**/*.js', 'eslint.config.js'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
@@ -18,6 +18,11 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports' }],
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
     },
   },
 );

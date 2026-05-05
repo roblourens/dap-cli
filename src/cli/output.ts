@@ -34,6 +34,8 @@ export interface JsonErrorPayload {
     stderrTail?: readonly string[];
     logPath?: string;
   };
+  // Plan 05-19 (gap H-3): structured machine-readable recovery payload.
+  data?: Readonly<Record<string, unknown>>;
 }
 
 export interface JsonMetaInput {
@@ -81,6 +83,9 @@ function toJsonErrorPayload(error: CliError): JsonErrorPayload {
   }
   if (error.adapter !== undefined) {
     payload.adapter = error.adapter;
+  }
+  if (error.data !== undefined) {
+    payload.data = error.data;
   }
 
   return payload;
