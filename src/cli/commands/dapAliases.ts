@@ -10,6 +10,9 @@ interface NamedOptions {
 interface BreakpointsSetOptions extends NamedOptions {
   source: string;
   line?: string[];
+  condition?: string;
+  hitCondition?: string;
+  logMessage?: string;
 }
 
 interface StackOptions extends NamedOptions {
@@ -50,12 +53,20 @@ export function registerDapAliasCommands(program: Command, output: OutputWriter)
     .requiredOption('--source <path>', 'source path')
     .requiredOption('--line <number...>', 'breakpoint line')
     .option('--name <name>', 'session name or id')
+    .option('--condition <expr>', 'breakpoint condition')
+    .option('--hit-condition <expr>', 'breakpoint hit condition')
+    .option('--log-message <text>', 'breakpoint log message')
     .description('Set breakpoints at source file line numbers')
     .action(async (options: BreakpointsSetOptions) => {
       const lines = parseIntegerValues(options.line, 'line');
       await sendAliasRequest(output, 'setBreakpoints', {
         source: { path: options.source },
-        breakpoints: lines.map(line => ({ line })),
+        breakpoints: lines.map(line => compactObject({
+          line,
+          condition: options.condition,
+          hitCondition: options.hitCondition,
+          logMessage: options.logMessage,
+        })),
         lines,
       }, options.name, 'breakpoints set');
     });

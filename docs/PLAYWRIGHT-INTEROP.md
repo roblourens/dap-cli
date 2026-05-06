@@ -71,6 +71,30 @@ npx dap-cli breakpoints set \
   --source "$PWD/tests/fixtures/ts-button-page/src/app.ts" \
   --line 22
 
+
+Conditional breakpoint metadata uses the same command and stays DAP-shaped. The CLI passes these fields through to the adapter; inspect the `verified`, `message`, and `warnings` fields in the response instead of pre-checking adapter capabilities.
+
+```bash
+npx dap-cli breakpoints set \
+  --name web-demo \
+  --source "$PWD/tests/fixtures/ts-button-page/src/app.ts" \
+  --line 22 \
+  --condition "count === 1"
+
+npx dap-cli breakpoints set \
+  --name web-demo \
+  --source "$PWD/tests/fixtures/ts-button-page/src/app.ts" \
+  --line 22 \
+  --hit-condition 2
+
+npx dap-cli breakpoints set \
+  --name web-demo \
+  --source "$PWD/tests/fixtures/ts-button-page/src/app.ts" \
+  --line 22 \
+  --log-message "handleClick count={count}"
+```
+
+After setting a conditional breakpoint, keep the same polling sequence: trigger one Playwright action, poll `events --include stopped`, inspect `threads`, `stack`, `scopes`, and `variables`, then `continue` when done.
 # 4. Confirm the session is ready
 npx dap-cli status --name web-demo
 npx dap-cli events --name web-demo --limit 5

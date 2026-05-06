@@ -32,6 +32,7 @@ const scripts: Record<string, FakeStep[]> = {
 	'stopped-on-entry': createLifecycleScript('launch'),
 	'attach-stopped': createLifecycleScript('attach'),
 	'alias-inspection': createAliasInspectionScript(),
+	'expect-conditional-breakpoints': createConditionalBreakpointsScript(),
 	'playwright-inspection': createPlaywrightInspectionScript(),
 	'execution-control': createExecutionControlScript(),
 	'failed-threads': createFailedThreadsScript(),
@@ -285,6 +286,27 @@ function createAliasInspectionScript(): FakeStep[] {
 		{ command: 'variables', body: { variables: [{ name: 'value', value: '1', variablesReference: 0 }] } },
 		{ command: 'source', body: { content: 'const value = 1;\n', mimeType: 'text/typescript' } },
 		{ command: 'evaluate', body: { result: '2', variablesReference: 0 } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	];
+}
+
+function createConditionalBreakpointsScript(): FakeStep[] {
+	return [
+		...createLifecycleScript('launch').slice(0, 5),
+		{
+			command: 'setBreakpoints',
+			expectedArguments: {
+				source: { path: 'app.js' },
+				lines: [5, 9],
+				breakpoints: [
+					{ line: 5, condition: 'left > 3', hitCondition: '2', logMessage: 'left={left}' },
+					{ line: 9, condition: 'left > 3', hitCondition: '2', logMessage: 'left={left}' },
+				],
+			},
+			body: { breakpoints: [{ id: 1, verified: true, line: 5 }, { id: 2, verified: true, line: 9 }] },
+		},
 		{ command: 'disconnect' },
 		{ event: 'terminated' },
 		{ close: true },

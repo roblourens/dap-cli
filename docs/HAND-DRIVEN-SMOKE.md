@@ -234,8 +234,10 @@ node dist/index.js close smoke-chrome
 node dist/index.js stop-controller
 wait $CTRL_PID 2>/dev/null || true
 
-# 7. Confirm no orphan Chromium processes survived close (post-H-8 closure)
-pgrep -lf 'remote-debugging-pipe' || echo "no orphans"
+# 7. Confirm no smoke-owned Chromium processes survived close (post-H-8 closure).
+#    Scope the check to this smoke profile so unrelated Playwright/MCP browser
+#    sessions that also use `remote-debugging-pipe` do not produce false gaps.
+pgrep -lf '/tmp/dap-cli-smoke-chrome' || echo "no smoke profile orphans"
 ```
 
 Expected verbatim signals:
@@ -247,7 +249,7 @@ Expected verbatim signals:
 | 4    | after `cleanup --purge`, first `sessions` invocation shows the parent `smoke-chrome` with child sessions hidden by default; second invocation with `--show-children` adds at least one `smoke-chrome#<32-hex>` child row. If you intentionally skip purge, stale terminated records may appear, but `smoke-chrome` parent presence and child visibility remain the required signals. |
 | 5    | within ~3s of the `evaluate` trigger, `events --include stopped` shows a `stopped` event with `"reason":"breakpoint"` (post-H-2 closure: critical events not evicted by `loadedSource` spam; post-H-6 closure: page child's `setBreakpoints` response merged into the user-visible breakpoint, parent provisional bp registry propagates to existing children). `status` reports `"paused":true`, `"stoppedReason":"breakpoint"` (post-H-1 closure: child paused state mirrored to parent record). `stack --thread-id 0` returns frames with the top frame `Window.calculate` at `app.js` line 2. The backgrounded `evaluate` exits with `controller_request_timeout` (exit 7) — that is the EXPECTED signal that the page paused and the bp held the eval response open past the 5s controller IPC timeout |
 | 6    | `close` returns `ok:true` |
-| 7    | `pgrep -lf 'remote-debugging-pipe'` exits non-zero / prints `no orphans` (post-H-8 closure: `close` actually terminates the adapter's child Chromium processes) |
+| 7    | `pgrep -lf '/tmp/dap-cli-smoke-chrome'` exits non-zero / prints `no smoke profile orphans` (post-H-8 closure: `close` actually terminates the adapter's child Chromium processes that belong to this smoke run) |
 
 ## Recording the result
 

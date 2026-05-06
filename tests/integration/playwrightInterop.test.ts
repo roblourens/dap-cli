@@ -18,7 +18,7 @@ const localJsDebugPath = path.join(process.cwd(), 'node_modules', 'vscode-js-deb
 const hasJsDebug = existsSync(jsDebugPath) || existsSync(localJsDebugPath);
 const runChromePlaywrightHandoff = process.env.DAP_CLI_RUN_CHROME_PLAYWRIGHT_HANDOFF === '1';
 const envelopeSchema = z.object({ ok: z.literal(true), data: z.unknown() });
-const eventsDataSchema = z.object({ events: z.array(z.object({ event: z.string(), body: z.unknown().optional() })) });
+const eventsDataSchema = z.object({ events: z.array(z.object({ event: z.string(), body: z.unknown().optional() })), cursor: z.number() });
 const threadsDataSchema = z.object({ threads: z.array(z.object({ id: z.number(), name: z.string() })) });
 const stackDataSchema = z.object({ stackFrames: z.array(z.object({ id: z.number(), name: z.string(), source: z.object({ path: z.string().optional() }).optional() })) });
 const scopesDataSchema = z.object({ scopes: z.array(z.object({ name: z.string(), variablesReference: z.number() })) });
@@ -238,6 +238,106 @@ describe('Playwright interop', () => {
       await realContext?.close().catch(() => undefined);
     }
   }, 45_000);
+
+  test.skipIf(!runChromePlaywrightHandoff || !hasJsDebug)('coordinates Playwright with conditional breakpoints through js-debug', async (ctx) => {
+    try {
+      await provisionAdapterIntoTempEnv(testEnv, 'js-debug');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      ctx.skip(`js-debug not provisioned in user DAP_CLI_HOME — ${message}`);
+      return;
+    }
+    const debugPort = await getFreePort();
+    const profileDir = path.join(testEnv.dapCliHome, 'chrome-conditional-profile');
+    let realContext: BrowserContext | undefined;
+
+    try {
+      const fixtureRoot = path.join(process.cwd(), 'tests', 'fixtures', 'simple-chrome-page');
+      const pagePath = path.join(fixtureRoot, 'index.html');
+      const manualFixtureUrl = `file://${pagePath}?manual=1`;
+      const sourcePath = path.join(fixtureRoot, 'app.js');
+      realContext = await chromium.launchPersistentContext(profileDir, {
+        headless: true,
+        args: ['--disable-gpu', '--no-first-run', `--remote-debugging-port=${debugPort}`],
+      });
+      const realPage = realContext.pages()[0] ?? await realContext.newPage();
+      await realPage.goto(manualFixtureUrl);
+      await expect.poll(async () => realPage.locator('#result').textContent()).toBe('waiting');
+
+      const attach = await runCli([
+        'attach',
+        '--adapter', 'js-debug',
+        '--json', JSON.stringify({
+          type: 'pwa-chrome',
+          request: 'attach',
+          name: 'chrome-conditional-breakpoint',
+          address: '127.0.0.1',
+          port: debugPort,
+          urlFilter: 'file://*simple-chrome-page/index.html*',
+          targetSelection: 'automatic',
+          webRoot: fixtureRoot,
+        }),
+        '--name', 'chrome-conditional-breakpoint',
+      ], { env: testEnv.env });
+      expect(attach.exitCode, JSON.stringify(attach)).toBe(0);
+
+      await expect.poll(async () => {
+        const attachedThreads = await runCli(['threads', '--name', 'chrome-conditional-breakpoint'], { env: testEnv.env });
+        return readEnvelopeData(attachedThreads.envelope, threadsDataSchema).threads.length;
+      }, { timeout: 10_000 }).toBeGreaterThan(0);
+
+      const bpResponse = await runCli([
+        'breakpoints', 'set',
+        '--source', sourcePath,
+        '--line', '2',
+        '--condition', 'left === 7 && right === 8',
+        '--name', 'chrome-conditional-breakpoint',
+      ], { env: testEnv.env });
+      expect(bpResponse.exitCode, JSON.stringify(bpResponse)).toBe(0);
+      const bpData = readEnvelopeData(bpResponse.envelope, breakpointsSetDataSchema);
+      expect(bpData.breakpoints[0]?.verified, `conditional breakpoint not verified: ${JSON.stringify(bpData)}`).toBe(true);
+
+      const beforeFalse = await readEventsSnapshot('chrome-conditional-breakpoint');
+      await realPage.evaluate('setTimeout("calculate(1, 2)", 0)');
+      await expect.poll(async () => realPage.locator('#result').textContent()).toBe('3');
+      const falseStopped = await waitForStoppedEvent('chrome-conditional-breakpoint', 1_000, beforeFalse.cursor);
+      expect(falseStopped, 'false conditional path must not stop at the breakpoint').toBeUndefined();
+
+      const beforeTrue = await readEventsSnapshot('chrome-conditional-breakpoint');
+      await realPage.evaluate('setTimeout("calculate(7, 8)", 0)');
+      const stopped = await waitForStoppedEvent('chrome-conditional-breakpoint', 10_000, beforeTrue.cursor);
+      expect(stopped, 'true conditional path must stop at the breakpoint').toBeDefined();
+      expect(readStoppedReason(stopped?.body)).toBe('breakpoint');
+
+      const threads = await runCli(['threads', '--name', 'chrome-conditional-breakpoint'], { env: testEnv.env });
+      const threadIds = readEnvelopeData(threads.envelope, threadsDataSchema).threads;
+      expect(threadIds.length, 'expected non-empty threads while stopped').toBeGreaterThan(0);
+      const threadId = threadIds[0]?.id;
+      expect(threadId, `expected first thread to have a numeric id; threads=${JSON.stringify(threadIds)}`).toBeTypeOf('number');
+
+      const stack = await runCli(['stack', '--thread-id', String(threadId), '--name', 'chrome-conditional-breakpoint'], { env: testEnv.env });
+      const frame = readEnvelopeData(stack.envelope, stackDataSchema).stackFrames[0];
+      const frameId = frame?.id;
+      expect(frameId, `expected stack to have a frame; stack=${JSON.stringify(stack.envelope)}`).toBeTypeOf('number');
+      expect(normalizePath(frame?.source?.path ?? '')).toMatch(/simple-chrome-page\/app\.js$/);
+
+      const scopes = await runCli(['scopes', '--frame-id', String(frameId), '--name', 'chrome-conditional-breakpoint'], { env: testEnv.env });
+      const variablesReference = readEnvelopeData(scopes.envelope, scopesDataSchema).scopes[0]?.variablesReference;
+      expect(variablesReference).toBeGreaterThan(0);
+
+      const variables = await runCli(['variables', '--variables-reference', String(variablesReference), '--name', 'chrome-conditional-breakpoint'], { env: testEnv.env });
+      const localVars = readEnvelopeData(variables.envelope, variablesDataSchema).variables;
+      expect(localVars.find(v => v.name === 'left')?.value).toBe('7');
+      expect(localVars.find(v => v.name === 'right')?.value).toBe('8');
+
+      const continued = await runCli(['continue', '--thread-id', String(threadId), '--name', 'chrome-conditional-breakpoint'], { env: testEnv.env });
+      expect(continued.exitCode, JSON.stringify(continued)).toBe(0);
+      await expect.poll(async () => realPage.locator('#result').textContent()).toBe('15');
+    } finally {
+      await runCli(['close', 'chrome-conditional-breakpoint'], { env: testEnv.env }).catch(() => undefined);
+      await realContext?.close().catch(() => undefined);
+    }
+  }, 45_000);
 });
 
 async function expectResultText(expectedText: string): Promise<void> {
@@ -300,11 +400,11 @@ async function getFreePort(): Promise<number> {
   return port;
 }
 
-async function waitForStoppedEvent(name: string): Promise<{ event: string; body?: unknown } | undefined> {
+async function waitForStoppedEvent(name: string, timeoutMs = 10_000, afterCursor = 0): Promise<{ event: string; body?: unknown } | undefined> {
   const started = Date.now();
-  while (Date.now() - started < 10_000) {
-    const events = await runCli(['events', '--name', name, '--after-cursor', '0', '--limit', '50'], { env: testEnv.env });
-    const stopped = readEnvelopeData(events.envelope, eventsDataSchema).events.find(event => event.event === 'stopped');
+  while (Date.now() - started < timeoutMs) {
+    const snapshot = await readEventsSnapshot(name, afterCursor);
+    const stopped = snapshot.events.find(event => event.event === 'stopped');
     if (stopped !== undefined) {
       return stopped;
     }
@@ -312,6 +412,11 @@ async function waitForStoppedEvent(name: string): Promise<{ event: string; body?
   }
 
   return undefined;
+}
+
+async function readEventsSnapshot(name: string, afterCursor = 0): Promise<z.infer<typeof eventsDataSchema>> {
+  const events = await runCli(['events', '--name', name, '--include', 'stopped', '--after-cursor', String(afterCursor), '--limit', '50'], { env: testEnv.env });
+  return readEnvelopeData(events.envelope, eventsDataSchema);
 }
 
 function readStoppedReason(body: unknown): string | undefined {

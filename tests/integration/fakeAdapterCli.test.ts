@@ -614,6 +614,25 @@ describe('fake adapter controller integration', () => {
     expect(parseEnvelope<{ result: string; variablesReference: number }>(evaluate.stdout).data).toEqual({ result: '2', variablesReference: 0 });
   });
 
+  test('breakpoints set forwards conditional breakpoint metadata to DAP', async () => {
+    const launch = await runCli(['launch', '--adapter', 'fake', '--script', 'expect-conditional-breakpoints', '--name', 'conditional-alias'], { env: testEnv.env });
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+
+    const breakpoints = await runCli([
+      'breakpoints', 'set',
+      '--name', 'conditional-alias',
+      '--source', 'app.js',
+      '--line', '5', '9',
+      '--condition', 'left > 3',
+      '--hit-condition', '2',
+      '--log-message', 'left={left}',
+    ], { env: testEnv.env });
+    expect(breakpoints.exitCode, JSON.stringify(breakpoints)).toBe(0);
+
+    const stop = await runCli(['stop', '--name', 'conditional-alias'], { env: testEnv.env });
+    expect(stop.exitCode, JSON.stringify(stop)).toBe(0);
+  });
+
   test('runs execution-control aliases through dap.request', async () => {
     const launch = await runCli(['launch', '--adapter', 'fake', '--script', 'execution-control', '--name', 'control'], { env: testEnv.env });
     expect(launch.exitCode).toBe(0);

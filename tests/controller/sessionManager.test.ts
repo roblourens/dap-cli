@@ -905,6 +905,52 @@ describe('ChildSessionCoordinator', () => {
     await parentClient.close();
   });
 
+  test('setBreakpoints fan-out preserves conditional metadata for every child', async () => {
+    const manager = await SessionManager.create({ dapCliHome });
+    const parent = await manager.create({ name: 'pwa', adapter: 'fake-multi-process' });
+    const parentEndpoint = new FakeAdapterEndpoint();
+    const parentClient = new DapClient(parentEndpoint);
+    const childEndpoints: FakeAdapterEndpoint[] = [];
+    const coordinator = new ChildSessionCoordinator({
+      parentSessionId: parent.id,
+      parentName: parent.name,
+      parentClient,
+      adapterId: 'fake-multi-process',
+      ownedAdapter: { startedByDapCli: true, stderrTail: [] },
+      sessionManager: manager,
+      parentEventCache: new DapEventCache(),
+      openChildTransport: name => {
+        const endpoint = new FakeAdapterEndpoint(name);
+        endpoint.responses.set('setBreakpoints', { success: true, body: { breakpoints: [{ id: 1, line: 10, verified: true }] } });
+        childEndpoints.push(endpoint);
+        return Promise.resolve(endpoint);
+      },
+    });
+    coordinator.attach();
+    parentEndpoint.emitReverseRequest('startDebugging', { request: 'attach', configuration: { __pendingTargetId: 'a' } });
+    parentEndpoint.emitReverseRequest('startDebugging', { request: 'attach', configuration: { __pendingTargetId: 'b' } });
+    await coordinator.awaitPendingChildren();
+    await tick(2);
+
+    const result = (await coordinator.maybeIntercept('setBreakpoints', {
+      source: { path: 'foo.js' },
+      breakpoints: [{ line: 10, condition: 'left > 3', hitCondition: '2', logMessage: 'left={left}' }],
+    }))?.value as { breakpoints: Array<{ verified: boolean; line: number }> };
+
+    expect(result.breakpoints[0]?.verified).toBe(true);
+    expect(childEndpoints).toHaveLength(2);
+    for (const endpoint of childEndpoints) {
+      const setBreakpointRequest = endpoint.receivedRequests.find(req => req.command === 'setBreakpoints');
+      expect(setBreakpointRequest?.arguments).toMatchObject({
+        source: { path: 'foo.js' },
+        breakpoints: [{ line: 10, condition: 'left > 3', hitCondition: '2', logMessage: 'left={left}' }],
+      });
+    }
+
+    await coordinator.dispose();
+    await parentClient.close();
+  });
+
   test('child events are mirrored into the parent event cache with child_session_id annotation', async () => {
     const manager = await SessionManager.create({ dapCliHome });
     const parent = await manager.create({ name: 'pwa', adapter: 'pwa-chrome' });
@@ -1289,6 +1335,71 @@ describe('ChildSessionCoordinator', () => {
     // 05-15 regression).
     const childSetBp = childEndpoint.receivedRequests.filter(req => req.command === 'setBreakpoints');
     expect(childSetBp).toHaveLength(1);
+
+    await coordinator.dispose();
+    await parentClient.close();
+  });
+
+  test('setBreakpoints for js-debug preserves conditional metadata on parent and child routes', async () => {
+    const manager = await SessionManager.create({ dapCliHome });
+    const parent = await manager.create({ name: 'pwa', adapter: 'js-debug' });
+    const parentEndpoint = new FakeAdapterEndpoint('parent');
+    const parentClient = new DapClient(parentEndpoint);
+    const childEndpoint = new FakeAdapterEndpoint('child');
+
+    parentEndpoint.responses.set('setBreakpoints', {
+      success: true,
+      body: { breakpoints: [{ id: 1, verified: false, message: 'Unbound breakpoint' }] },
+    });
+    childEndpoint.responses.set('setBreakpoints', {
+      success: true,
+      body: {
+        breakpoints: [{
+          id: 0,
+          verified: true,
+          source: { name: 'app.js', path: '/abs/app.js', sourceReference: 0 },
+          line: 2,
+          column: 18,
+        }],
+      },
+    });
+
+    const coordinator = new ChildSessionCoordinator({
+      parentSessionId: parent.id,
+      parentName: parent.name,
+      parentClient,
+      adapterId: 'js-debug',
+      ownedAdapter: { startedByDapCli: true, stderrTail: [] },
+      sessionManager: manager,
+      parentEventCache: new DapEventCache(),
+      openChildTransport: () => Promise.resolve(childEndpoint),
+      setBreakpointsVerificationTimeoutMs: 50,
+    });
+    coordinator.attach();
+    parentEndpoint.emitReverseRequest('startDebugging', { request: 'attach', configuration: { __pendingTargetId: 'a' } });
+    await coordinator.awaitPendingChildren();
+    await tick(2);
+
+    const breakpointArguments = {
+      source: { path: '/abs/app.js' },
+      breakpoints: [{ line: 2, condition: 'left > 3', hitCondition: '2', logMessage: 'left={left}' }],
+    };
+    const result = (await coordinator.maybeIntercept('setBreakpoints', breakpointArguments))?.value as {
+      breakpoints: Array<{ verified: boolean; line?: number; column?: number; source?: { path?: string }; message?: string }>;
+      warnings?: Array<{ sessionId: string; message: string }>;
+    };
+
+    expect(result.breakpoints[0]?.verified).toBe(true);
+    expect(result.breakpoints[0]?.message).toBeUndefined();
+    expect(result.warnings).toBeUndefined();
+
+    const parentSetBp = parentEndpoint.receivedRequests.filter(req => req.command === 'setBreakpoints');
+    expect(parentSetBp).toHaveLength(1);
+    expect(parentSetBp[0]?.arguments).toMatchObject(breakpointArguments);
+
+    const childSetBp = childEndpoint.receivedRequests.filter(req => req.command === 'setBreakpoints');
+    expect(childSetBp).toHaveLength(1);
+    expect(childSetBp[0]?.arguments).toMatchObject(breakpointArguments);
 
     await coordinator.dispose();
     await parentClient.close();

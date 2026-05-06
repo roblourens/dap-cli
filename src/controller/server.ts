@@ -757,7 +757,8 @@ export class ControllerServer {
    * `sessions.cleanup --purge`, and `ControllerServer.stop`. Steps:
    *
    *   1. Dispose any child-session coordinator.
-   *   2. Send DAP `disconnect` (with `terminateDebuggee` per opts).
+  *   2. Send DAP `disconnect` (with `terminateDebuggee` per opts), but do not
+  *      let a missing adapter response consume the full DAP request timeout.
    *   3. Wait up to 5s for the owned-adapter pid to exit naturally.
    *   4. If still alive, signal the adapter's process group (POSIX) or pid
    *      (Windows) with SIGTERM, wait 200ms, escalate to SIGKILL, wait 200ms.
@@ -782,7 +783,9 @@ export class ControllerServer {
     // (the adapter logs the error and exits, which is exactly what we want
     // on close) and follow up with explicit signaling so a crashed disconnect
     // never leaves the debuggee alive.
-    await runtime.lifecycle.disconnect({ terminateDebuggee: opts.terminateDebuggee }).catch(() => undefined);
+    const disconnect = runtime.lifecycle.disconnect({ terminateDebuggee: opts.terminateDebuggee });
+    disconnect.catch(() => undefined);
+    await this.waitForDisconnect(disconnect, controllerDisconnectTimeoutMs);
 
     const adapterPid = getAdapterPid(runtime.adapter);
     const groupTarget = getGroupSignalTarget(runtime.adapter, adapterPid);
@@ -836,6 +839,22 @@ export class ControllerServer {
       await new Promise<void>(resolve => setTimeout(resolve, intervalMs));
     }
   }
+
+  private async waitForDisconnect(disconnect: Promise<void>, timeoutMs: number): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        disconnect.catch(() => undefined),
+        new Promise<void>(resolve => {
+          timer = setTimeout(resolve, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    }
+  }
 }
 
 function defaultIsProcessAlive(pid: number): boolean {
@@ -886,6 +905,7 @@ const PAUSED_REQUIRED_DAP_COMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 const controllerDapRequestTimeoutMs = 30_000;
+const controllerDisconnectTimeoutMs = 1_000;
 
 function createInitializeArgs(adapterId: string): Record<string, unknown> {  return {
     adapterID: adapterId,

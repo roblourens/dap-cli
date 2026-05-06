@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Stabilize real Chrome/js-debug Playwright same-browser handoff** - Prove or explicitly gate a same-browser Playwright plus real Chrome/js-debug handoff where dap-cli inspects the browser target Playwright controls.
 - [ ] **Phase 5.1: A mode for the CLI where it produces human-readable nicely formatted output instead of JSON.** *(INSERTED)* - Urgent work to add a non-JSON, human-readable output mode to the CLI.
 - [ ] **Phase 5.2: Execute VS Code launch.json configurations and compounds** *(INSERTED)* - Faithfully resolve a `.vscode/launch.json` configuration (variable substitution, platform overrides, full field passthrough) and execute compound configurations as a single coordinated multi-session debug run; preLaunchTask explicitly out of scope.
-- [ ] **Phase 6: Add conditional breakpoint Playwright interop coverage**
+- [x] **Phase 6: Add conditional breakpoint Playwright interop coverage** (completed 2026-05-06)
 
 ## Phase Details
 
@@ -138,7 +138,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 5.1 -> 5.2 -> 6 -> 7 -> 8
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 5.1 -> 5.2 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -149,9 +149,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 5.1 -> 5.2 -> 6 -> 7 -
 | 5. Stabilize real Chrome/js-debug Playwright same-browser handoff | 26/26 | Complete | 2026-05-04 |
 | 5.1. A mode for the CLI where it produces human-readable nicely formatted output instead of JSON. *(INSERTED)* | 6/6 | Complete | 2026-05-05 |
 | 5.2. Execute VS Code launch.json configurations and compounds *(INSERTED)* | 0/0 | Not started | - |
-| 6. Add conditional breakpoint Playwright interop coverage | 0/0 | Not started | - |
-| 7. Add evaluate-and-mutate browser state coverage | 0/0 | Not started | - |
-| 8. Expand multi-breakpoint UI flow fixture | 0/0 | Not started | - |
+| 6. Add conditional breakpoint Playwright interop coverage | 3/3 | Complete   | 2026-05-06 |
 
 ### Phase 5: Stabilize real Chrome/js-debug Playwright same-browser handoff
 
@@ -264,30 +262,17 @@ Plans:
 
 ### Phase 6: Add conditional breakpoint Playwright interop coverage
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Agents can set DAP conditional breakpoint metadata through the friendly `breakpoints set` alias, trigger browser behavior through Playwright, and verify conditional pause behavior through the existing polling workflow.
+**Requirements**: DBG-01, AGNT-04, AGNT-05, TEST-04, TEST-05, TEST-07
 **Depends on:** Phase 5
-**Plans:** 0 plans
+**Plans:** 3/3 plans complete
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 6 to break down)
+**Wave 1**
+- [x] 06-01-PLAN.md - Alias flags, DAP payload construction, and fake-adapter coverage
 
-### Phase 7: Add evaluate-and-mutate browser state coverage
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 06-02-PLAN.md - Child-session metadata preservation through breakpoint routing
 
-**Goal:** [To be planned]
-**Requirements**: TBD
-**Depends on:** Phase 6
-**Plans:** 0 plans
-
-Plans:
-- [ ] TBD (run /gsd-plan-phase 7 to break down)
-
-### Phase 8: Expand multi-breakpoint UI flow fixture
-
-**Goal:** [To be planned]
-**Requirements**: TBD
-**Depends on:** Phase 7
-**Plans:** 0 plans
-
-Plans:
-- [ ] TBD (run /gsd-plan-phase 8 to break down)
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 06-03-PLAN.md - Playwright/js-debug conditional smoke, docs, and UAT record
