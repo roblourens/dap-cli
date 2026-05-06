@@ -1,9 +1,9 @@
 import type { Command } from 'commander';
 import { createControllerClient } from '../../controller/client.js';
 import { usageError } from '../errors.js';
-import { type JsonWritable, writeJsonSuccess } from '../output.js';
+import type { OutputWriter } from '../outputWriter.js';
 
-export function registerSessionCommands(program: Command, stdout: JsonWritable): void {
+export function registerSessionCommands(program: Command, output: OutputWriter): void {
   program
     .command('sessions')
     .description('List known debug sessions (child sessions are hidden by default; use --show-children to include them)')
@@ -11,7 +11,7 @@ export function registerSessionCommands(program: Command, stdout: JsonWritable):
     .option('--all', 'alias for --show-children')
     .action(async (options: { showChildren?: boolean; all?: boolean }) => {
       const includeChildren = options.showChildren === true || options.all === true;
-      await withController(stdout, 'sessions', async client => client.request('sessions.list', { includeChildren }));
+      await withController(output, 'sessions', async client => client.request('sessions.list', { includeChildren }));
     });
 
   program
@@ -19,7 +19,7 @@ export function registerSessionCommands(program: Command, stdout: JsonWritable):
     .argument('<name>', 'session name or id')
     .description('Set the active debug session')
     .action(async (name: string) => {
-      await withController(stdout, 'use', async client => client.request('sessions.target', { name }));
+      await withController(output, 'use', async client => client.request('sessions.target', { name }));
     });
 
   program
@@ -27,7 +27,7 @@ export function registerSessionCommands(program: Command, stdout: JsonWritable):
     .option('--name <name>', 'session name or id')
     .description('Detach from a debug session')
     .action(async (options: { name?: string }) => {
-      await withController(stdout, 'detach', async client => client.request('sessions.detach', createNameParams(options.name)));
+      await withController(output, 'detach', async client => client.request('sessions.detach', createNameParams(options.name)));
     });
 
   program
@@ -48,7 +48,7 @@ export function registerSessionCommands(program: Command, stdout: JsonWritable):
       // exit 7 even though the underlying cascade finished cleanly. Give close
       // a 30s ceiling so the command surfaces the real outcome (orphanPids etc.)
       // instead of a misleading timeout. Other commands keep the 5s default.
-      await withController(stdout, 'close', async client => client.request('sessions.close', createNameParams(target)), { timeoutMs: 30_000 });
+      await withController(output, 'close', async client => client.request('sessions.close', createNameParams(target)), { timeoutMs: 30_000 });
     });
 
   program
@@ -58,14 +58,14 @@ export function registerSessionCommands(program: Command, stdout: JsonWritable):
     .description('Clean up stale session state')
     .action(async (options: { force?: boolean; purge?: boolean }) => {
       const purge = options.purge === true || options.force === true;
-      await withController(stdout, 'cleanup', async client => client.request('sessions.cleanup', { purge }));
+      await withController(output, 'cleanup', async client => client.request('sessions.cleanup', { purge }));
     });
 }
 
-async function withController<T>(stdout: JsonWritable, command: string, callback: (client: Awaited<ReturnType<typeof createControllerClient>>) => Promise<T>, options: { timeoutMs?: number } = {}): Promise<void> {
+async function withController<T>(output: OutputWriter, command: string, callback: (client: Awaited<ReturnType<typeof createControllerClient>>) => Promise<T>, options: { timeoutMs?: number } = {}): Promise<void> {
   const client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME, ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}) });
   try {
-    writeJsonSuccess(await callback(client), { command }, stdout);
+    output.success(await callback(client), { command });
   } finally {
     await client.close();
   }

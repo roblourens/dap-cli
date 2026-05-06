@@ -17,5 +17,5 @@
     "rootDir": "."
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "tsup.config.ts", "vitest.config.ts"],
-  "exclude": ["dist", "node_modules"]
+  "exclude": ["dist", "node_modules", "tests/fixtures/ts-button-page/src/**/*.ts"]
 }

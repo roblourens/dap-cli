@@ -59,14 +59,14 @@ export function toJsonString(envelope: JsonSuccess<unknown> | JsonFailure): stri
   return `${JSON.stringify(envelope)}\n`;
 }
 
-function createMeta(input: JsonMetaInput): JsonMeta {
+export function createMeta(input: JsonMetaInput): JsonMeta {
   return {
     command: input.command,
     timestamp: (input.timestamp ?? new Date()).toISOString(),
   };
 }
 
-function toJsonErrorPayload(error: CliError): JsonErrorPayload {
+export function toJsonErrorPayload(error: CliError): JsonErrorPayload {
   const payload: JsonErrorPayload = {
     code: error.code,
     category: error.category,

@@ -32,8 +32,14 @@ copy-paste fidelity.
 ```bash
 npm run build
 node --version            # must be >= 22
-ls ~/.dap-cli/adapters    # js-debug + debugpy must be installed; if missing, run scripts/setup-adapters.ts
+ls ~/.dap-cli/adapters    # js-debug must be installed; if missing, run scripts/setup-adapters.ts
+npx tsx scripts/setup-adapters.ts  # provisions missing adapters, including debugpy when needed
 ```
+
+If `debugpy` is not listed under `~/.dap-cli/adapters` but
+`scripts/setup-adapters.ts` reports provisioning to `~/.dap-cli/venv`, run the
+provisioning script per the doc: `npx tsx scripts/setup-adapters.ts` — the
+provisioned debugpy will be available to the controller via the venv path.
 
 Confirm the published CLI surface contains every subcommand this doc uses.
 If any are missing, the build is wrong — re-run `npm run build`.
@@ -84,11 +90,15 @@ node dist/index.js breakpoints set \
 
 # 5. Inspect the entry stop before continuing
 node dist/index.js threads --name smoke-node
-node dist/index.js stack --name smoke-node --thread-id 1
-node dist/index.js evaluate --name smoke-node --expression "typeof dapCliSelfHostDemo"
+# Use the thread id returned by `threads` (for example `--thread-id 0`).
+THREAD_ID=0  # replace with the id from the threads output
+node dist/index.js stack --name smoke-node --thread-id "$THREAD_ID"
+# Optional: to inspect the top frame symbol, use the frame id from `stack`.
+TOP_FRAME_ID=0  # replace with the top stack frame id from stack output
+node dist/index.js evaluate --name smoke-node --frame-id "$TOP_FRAME_ID" --expression "typeof dapCliSelfHostDemo"
 
 # 6. Continue, then poll events for the breakpoint stop
-node dist/index.js continue --name smoke-node --thread-id 1
+node dist/index.js continue --name smoke-node --thread-id "$THREAD_ID"
 sleep 1
 node dist/index.js events --name smoke-node --limit 500 | grep -E '"event":"(stopped|terminated)"'
 
@@ -108,7 +118,7 @@ Expected verbatim signals:
 | 2    | `"lifecycle":"running"` and a `sessionId` of the form `sess_…` returned from `launch` |
 | 3    | `"paused":true` with `"stoppedReason":"entry"` (post-H-1 closure to `status`) |
 | 4    | response shows `"verified":true` for line 3 |
-| 5    | top frame name is `dapCliSelfHostDemo` at line 2 of the fixture; `evaluate` returns `"function"` |
+| 5    | `threads` returns a thread id; `stack` using that thread id shows top frame name `dapCliSelfHostDemo` at line 2 of the fixture. Optional `evaluate --frame-id <TOP_FRAME_ID>` may be used for frame-scoped inspection, but the stack frame is the required signal. |
 | 6    | a `stopped` event with `"reason":"breakpoint"` appears within ~1s (post-H-2 closure: critical events not evicted by `loadedSource` spam) |
 | 7    | `"paused":true` with `"stoppedReason":"breakpoint"` |
 | 8    | `close` returns `ok:true`; `stop-controller` returns cleanly |
@@ -135,6 +145,11 @@ hand to prove the published CLI surface works.
 node dist/index.js start &
 CTRL_PID=$!
 sleep 1
+
+# 1a. Remove stale persisted session records before asserting session-list shape.
+#     This ensures `sessions` output is not polluted by previously persisted
+#     demo records (for example, `ts-button-demo`).
+node dist/index.js cleanup --purge
 
 # 2. Launch Chromium under js-debug pointed at the simple-chrome-page fixture.
 #    Use the `?manual` query so app.js does NOT auto-run calculate(2,3) at
@@ -206,7 +221,7 @@ Expected verbatim signals:
 |------|--------------------------|
 | 2    | `"lifecycle":"running"` returned from `launch`; a child session id (32-hex CDP target id) appears in the event stream within ~3s |
 | 3    | breakpoint acknowledged with `"verified":true` on the parent (per repo memory: js-debug pwa-chrome routing). Page child returns the verified row with `column` populated and the parent's "Unbound breakpoint" provisional message dropped from the merged response |
-| 4    | first `sessions` invocation shows ONLY the parent `smoke-chrome`; second invocation with `--show-children` adds a `smoke-chrome#<32-hex>` child row |
+| 4    | after `cleanup --purge`, first `sessions` invocation shows the parent `smoke-chrome` with child sessions hidden by default; second invocation with `--show-children` adds at least one `smoke-chrome#<32-hex>` child row. If you intentionally skip purge, stale terminated records may appear, but `smoke-chrome` parent presence and child visibility remain the required signals. |
 | 5    | within ~3s of the `evaluate` trigger, `events --include stopped` shows a `stopped` event with `"reason":"breakpoint"` (post-H-2 closure: critical events not evicted by `loadedSource` spam; post-H-6 closure: page child's `setBreakpoints` response merged into the user-visible breakpoint, parent provisional bp registry propagates to existing children). `status` reports `"paused":true`, `"stoppedReason":"breakpoint"` (post-H-1 closure: child paused state mirrored to parent record). `stack --thread-id 0` returns frames with the top frame `Window.calculate` at `app.js` line 2. The backgrounded `evaluate` exits with `controller_request_timeout` (exit 7) — that is the EXPECTED signal that the page paused and the bp held the eval response open past the 5s controller IPC timeout |
 | 6    | `close` returns `ok:true` |
 | 7    | `pgrep -lf 'remote-debugging-pipe'` exits non-zero / prints `no orphans` (post-H-8 closure: `close` actually terminates the adapter's child Chromium processes) |

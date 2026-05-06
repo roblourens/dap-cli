@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { startControllerServer, type ControllerServer } from '../../src/controller/server.js';
 import { SessionManager } from '../../src/sessions/sessionManager.js';
 import { createProgram } from '../../src/cli/program.js';
-import { createCliTestEnv, runCli, type CliTestEnv } from '../helpers/runCli.js';
+import { createCliTestEnv, runCli, runCliHuman, type CliTestEnv } from '../helpers/runCli.js';
 
 let testEnv: CliTestEnv;
 let server: ControllerServer | undefined;
@@ -37,6 +37,24 @@ describe('session CLI commands', () => {
     expect(statusEnvelope.ok).toBe(true);
     expect(statusEnvelope.data.name).toBe('demo');
     expect(statusEnvelope.data.status).toBe('running');
+  });
+
+  test('sessions supports human output from the environment', async () => {
+    const manager = await SessionManager.create({ dapCliHome: testEnv.dapCliHome });
+    await manager.create({ name: 'demo', lifecycle: 'running' });
+    server = await startControllerServer({ dapCliHome: testEnv.dapCliHome });
+
+    const result = await runCliHuman(['sessions'], { env: { ...testEnv.env, DAP_CLI_HUMAN: '1' } });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toContain('Sessions:');
+    expect(result.stdout).toContain('│ ID');
+    expect(result.stdout).toContain('│ Name │ Status');
+    expect(result.stdout).toContain('│ demo │ running │ unknown │');
+    expect(result.stdout).not.toContain('Command:');
+    expect(result.stdout).not.toContain('Timestamp:');
+    expect(result.stdout).not.toContain('{"ok":true');
   });
 
   test('uses active session and closes it deterministically', async () => {

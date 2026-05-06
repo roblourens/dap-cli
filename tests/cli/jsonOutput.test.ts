@@ -6,7 +6,7 @@ import { getDapCliHome, getDapCliLogDir, getDapCliStateDir } from '../../src/con
 import { toJsonString, writeJsonFailure, writeJsonSuccess } from '../../src/cli/output.js';
 import { usageError } from '../../src/cli/errors.js';
 import { startControllerServer, type ControllerServer } from '../../src/controller/server.js';
-import { createCliTestEnv, runCli, type CliTestEnv } from '../helpers/runCli.js';
+import { createCliTestEnv, runCli, runCliHuman, type CliTestEnv } from '../helpers/runCli.js';
 
 class MemoryStream {
   public readonly chunks: string[] = [];
@@ -111,6 +111,76 @@ describe('JSON output contract', () => {
     expect(getDapCliHome({})).toMatch(/[/\\]\.dap-cli$/);
     expect(getDapCliStateDir({})).toMatch(/[/\\]\.dap-cli[/\\]state$/);
     expect(getDapCliLogDir({})).toMatch(/[/\\]\.dap-cli[/\\]logs$/);
+  });
+
+  test('root help documents human output options', async () => {
+    const result = await runCliHuman(['--help']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('--human');
+    expect(result.stdout).toContain('--no-human');
+  });
+
+  test('default success output remains one JSON envelope', async () => {
+    const result = await runCli(['stop-controller']);
+
+    expect(result.exitCode, JSON.stringify(result)).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.envelope).toMatchObject({ ok: true });
+    expect(typeof (result.envelope as { data: { stopped: unknown } }).data.stopped).toBe('boolean');
+  });
+
+  test('--human success output is human text', async () => {
+    const result = await runCliHuman(['--human', 'stop-controller'], {
+      env: { ...process.env, DAP_CLI_HOME: path.join(tmpdir(), `dap-cli-human-output-${Date.now()}`) },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toContain('Data:');
+    expect(result.stdout).toContain('stopped: false');
+    expect(result.stdout).not.toContain('Command:');
+    expect(result.stdout).not.toContain('Timestamp:');
+    expect(result.stdout).not.toContain('{"ok":true');
+  });
+
+  test('DAP_CLI_HUMAN selects human output and --no-human restores JSON', async () => {
+    const humanEnv = { ...process.env, DAP_CLI_HUMAN: '1' };
+
+    const human = await runCliHuman(['stop-controller'], { env: humanEnv });
+    expect(human.exitCode).toBe(0);
+    expect(human.stdout).toContain('Data:');
+    expect(human.stdout).not.toContain('{"ok":true');
+    expect(human.stdout).not.toContain('Command:');
+
+    const json = await runCli(['--no-human', 'stop-controller'], { env: humanEnv });
+    expect(json.exitCode, JSON.stringify(json)).toBe(0);
+    expect(json.envelope).toMatchObject({ ok: true, data: { stopped: false } });
+  });
+
+  test('invalid DAP_CLI_HUMAN is a handled JSON failure unless explicitly overridden', async () => {
+    const invalidEnv = { ...process.env, DAP_CLI_HUMAN: 'maybe' };
+
+    const invalid = await runCli(['status'], { env: invalidEnv });
+    expect(invalid.exitCode).toBe(2);
+    expect(invalid.stderr).toBe('');
+    expect(invalid.envelope).toMatchObject({ ok: false, error: { code: 'invalid_output_mode_env' } });
+
+    const overridden = await runCliHuman(['--human', 'status'], { env: invalidEnv });
+    expect(overridden.exitCode).toBe(3);
+    expect(overridden.stderr).toBe('');
+    expect(overridden.stdout).toContain('Error: dap-cli controller is unavailable.');
+    expect(overridden.stdout).toContain('Code: controller_unavailable');
+    expect(overridden.stdout).not.toContain('invalid_output_mode_env');
+  });
+
+  test('launch --json remains a payload parser, not an output-mode flag', async () => {
+    const result = await runCli(['launch', '--json', '{not-json']);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toBe('');
+    expect(result.envelope).toMatchObject({ ok: false, error: { code: 'invalid_json' } });
+    expect(result.envelope.meta.command).toBe('launch');
   });
 });
 
@@ -265,5 +335,15 @@ describe('events JSON envelope filters and warnings (gap H-2)', () => {
     const envelope = result.envelope as { ok: true; data: EventsEnvelopeData };
     expect(envelope.ok).toBe(true);
     expect(envelope.data.warnings).toBeUndefined();
+  });
+
+  test('--limit 0 with filters returns no events', async () => {
+    await setupSession();
+
+    const result = await runCli(['events', '--name', 'evt-demo', '--include', 'stopped,initialized', '--limit', '0'], { env: testEnv.env });
+    expect(result.exitCode, JSON.stringify(result)).toBe(0);
+    const envelope = result.envelope as { ok: true; data: EventsEnvelopeData };
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data.events).toHaveLength(0);
   });
 });

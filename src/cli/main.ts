@@ -2,8 +2,9 @@ import type { Command } from 'commander';
 import { CliError, internalError, usageError } from './errors.js';
 import { ExitCode } from './exitCodes.js';
 import type { JsonWritable } from './output.js';
-import { writeJsonFailure } from './output.js';
-import { createProgram } from './program.js';
+import { createOutputWriter } from './outputWriter.js';
+import { createProgram, getProgramHumanOption } from './program.js';
+import { resolveOutputMode } from './outputMode.js';
 
 export interface CliStreams {
   stdout: JsonWritable;
@@ -13,6 +14,10 @@ export interface CliStreams {
 export async function main(args: readonly string[], program: Command | undefined = undefined, streams: CliStreams = process): Promise<ExitCode> {
   const command = getCommandName(args);
   const activeProgram = program ?? createProgram({ stdout: streams.stdout });
+  const output = createOutputWriter({
+    stream: streams.stdout,
+    resolveMode: () => resolveOutputMode({ cliHuman: getProgramHumanOption(activeProgram), env: process.env }),
+  });
 
   activeProgram.configureOutput({
     writeOut: chunk => { streams.stdout.write(chunk); },
@@ -28,25 +33,38 @@ export async function main(args: readonly string[], program: Command | undefined
     }
 
     if (error instanceof CliError) {
-      writeJsonFailure(error, { command }, streams.stdout);
-      return error.exitCode;
-    }
-
-    if (isCommanderError(error)) {
-      const cliError = usageError(error.message, {
-        code: 'usage_error',
-        diagnostics: [error.message],
-      });
-      writeJsonFailure(cliError, { command }, streams.stdout);
+      const cliError = selectRenderableError(error, activeProgram);
+      output.failure(cliError, { command });
       return cliError.exitCode;
     }
 
-    const cliError = internalError('Unexpected internal error', {
+    if (isCommanderError(error)) {
+      const cliError = selectRenderableError(usageError(error.message, {
+        code: 'usage_error',
+        diagnostics: [error.message],
+      }), activeProgram);
+      output.failure(cliError, { command });
+      return cliError.exitCode;
+    }
+
+    const cliError = selectRenderableError(internalError('Unexpected internal error', {
       code: 'internal_error',
       diagnostics: ['The command failed unexpectedly.'],
-    });
-    writeJsonFailure(cliError, { command }, streams.stdout);
+    }), activeProgram);
+    output.failure(cliError, { command });
     return cliError.exitCode;
+  }
+}
+
+function selectRenderableError(error: CliError, program: Command): CliError {
+  try {
+    resolveOutputMode({ cliHuman: getProgramHumanOption(program), env: process.env });
+    return error;
+  } catch (modeError) {
+    if (modeError instanceof CliError) {
+      return modeError;
+    }
+    throw modeError;
   }
 }
 
@@ -59,7 +77,9 @@ function isCommanderHelp(error: unknown): boolean {
 }
 
 function getCommandName(args: readonly string[]): string {
-  const commandParts = args.filter(arg => !arg.startsWith('-')).slice(0, 2);
+  const commandParts = args
+    .filter(arg => !arg.startsWith('-') && !arg.startsWith('{') && !arg.startsWith('['))
+    .slice(0, 2);
 
   return commandParts.length > 0 ? commandParts.join(' ') : 'dap-cli';
 }

@@ -6,7 +6,7 @@ import { controllerUnavailable } from '../../controller/diagnostics.js';
 import { isControllerAlive, readControllerDiscovery, removeControllerDiscovery, type ControllerDiscovery } from '../../controller/ipc.js';
 import { startControllerServer, type ControllerHelloResult, type ControllerStatus } from '../../controller/server.js';
 import { computeBuildId } from '../../controller/buildId.js';
-import { type JsonWritable, writeJsonSuccess } from '../output.js';
+import type { OutputWriter } from '../outputWriter.js';
 
 interface ControllerStartResult {
   started: boolean;
@@ -18,12 +18,12 @@ interface ControllerStartResult {
   buildId: string;
 }
 
-export function registerControllerCommands(program: Command, stdout: JsonWritable): void {
+export function registerControllerCommands(program: Command, output: OutputWriter): void {
   program
     .command('start')
     .description('Start the persistent controller for debug sessions')
     .action(async () => {
-      writeJsonSuccess(await startControllerProcess(), { command: 'start' }, stdout);
+      output.success(await startControllerProcess(), { command: 'start' });
     });
 
   program
@@ -40,7 +40,7 @@ Examples:
       const client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME });
       try {
         const status = await requestSessionOrControllerStatus(client, options.name);
-        writeJsonSuccess(status, { command: 'status' }, stdout);
+        output.success(status, { command: 'status' });
       } finally {
         await client.close();
       }
@@ -54,7 +54,7 @@ Examples:
       const client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME });
       try {
         const result = await requestSessionOrControllerStop(client, options.name);
-        writeJsonSuccess(result, { command: 'stop' }, stdout);
+        output.success(result, { command: 'stop' });
       } finally {
         await client.close();
       }
@@ -72,7 +72,7 @@ Examples:
     .description('Shut down the persistent controller (does not affect on-disk session records)')
     .action(async () => {
       const result = await stopControllerProcess();
-      writeJsonSuccess(result, { command: 'stop-controller' }, stdout);
+      output.success(result, { command: 'stop-controller' });
     });
 }
 

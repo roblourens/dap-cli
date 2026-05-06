@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import type { JsonWritable } from '../output.js';
+import type { OutputWriter } from '../outputWriter.js';
 import { getDapGeneratedCommand } from '../../generated/dapCommandRegistry.js';
 import { parseIntegerOption, parseIntegerValues, parseRequiredIntegerOption, requireGeneratedCommand, sendGeneratedDapRequest } from './dapGenerated.js';
 
@@ -43,7 +43,7 @@ interface ThreadControlOptions extends NamedOptions {
   targetId?: string;
 }
 
-export function registerDapAliasCommands(program: Command, stdout: JsonWritable): void {
+export function registerDapAliasCommands(program: Command, output: OutputWriter): void {
   const breakpoints = program.command('breakpoints').description('Manage source breakpoints');
   breakpoints
     .command('set')
@@ -53,7 +53,7 @@ export function registerDapAliasCommands(program: Command, stdout: JsonWritable)
     .description('Set breakpoints at source file line numbers')
     .action(async (options: BreakpointsSetOptions) => {
       const lines = parseIntegerValues(options.line, 'line');
-      await sendAliasRequest(stdout, 'setBreakpoints', {
+      await sendAliasRequest(output, 'setBreakpoints', {
         source: { path: options.source },
         breakpoints: lines.map(line => ({ line })),
         lines,
@@ -61,11 +61,11 @@ export function registerDapAliasCommands(program: Command, stdout: JsonWritable)
     });
 
   program.command('threads').option('--name <name>', 'session name or id').description('List active threads in a paused session').addHelpText('after', workflowHelp()).action(async (options: NamedOptions) => {
-    await sendAliasRequest(stdout, 'threads', {}, options.name, 'threads');
+    await sendAliasRequest(output, 'threads', {}, options.name, 'threads');
   });
 
   program.command('stack').requiredOption('--thread-id <number>', 'thread id').option('--start-frame <number>', 'start frame').option('--levels <number>', 'frame count').option('--name <name>', 'session name or id').description('Get stack frames for a thread (requires thread-id from threads command)').addHelpText('after', workflowHelp()).action(async (options: StackOptions) => {
-    await sendAliasRequest(stdout, 'stackTrace', compactObject({
+    await sendAliasRequest(output, 'stackTrace', compactObject({
       threadId: parseRequiredIntegerOption(options.threadId, 'thread-id'),
       startFrame: parseIntegerOption(options.startFrame, 'start-frame'),
       levels: parseIntegerOption(options.levels, 'levels'),
@@ -73,23 +73,23 @@ export function registerDapAliasCommands(program: Command, stdout: JsonWritable)
   });
 
   program.command('scopes').requiredOption('--frame-id <number>', 'frame id').option('--name <name>', 'session name or id').description('List scopes for a stack frame (requires frame-id from stack command)').addHelpText('after', workflowHelp()).action(async (options: ScopesOptions) => {
-    await sendAliasRequest(stdout, 'scopes', { frameId: parseRequiredIntegerOption(options.frameId, 'frame-id') }, options.name, 'scopes');
+    await sendAliasRequest(output, 'scopes', { frameId: parseRequiredIntegerOption(options.frameId, 'frame-id') }, options.name, 'scopes');
   });
 
   program.command('variables').requiredOption('--variables-reference <number>', 'variables reference').option('--name <name>', 'session name or id').description('Inspect variables for a scope (requires variables-reference from scopes command)').addHelpText('after', workflowHelp()).action(async (options: VariablesOptions) => {
-    await sendAliasRequest(stdout, 'variables', { variablesReference: parseRequiredIntegerOption(options.variablesReference, 'variables-reference') }, options.name, 'variables');
+    await sendAliasRequest(output, 'variables', { variablesReference: parseRequiredIntegerOption(options.variablesReference, 'variables-reference') }, options.name, 'variables');
   });
 
   program.command('source').requiredOption('--source-reference <number>', 'source reference').option('--path <path>', 'source path').option('--name <name>', 'session name or id').description('Return source content').action(async (options: SourceOptions) => {
     const path = options.path;
-    await sendAliasRequest(stdout, 'source', compactObject({
+    await sendAliasRequest(output, 'source', compactObject({
       sourceReference: parseRequiredIntegerOption(options.sourceReference, 'source-reference'),
       source: path === undefined ? undefined : { path },
     }), options.name, 'source');
   });
 
   program.command('evaluate').requiredOption('--expression <expr>', 'expression').option('--frame-id <number>', 'frame id').option('--context <context>', 'evaluation context').option('--name <name>', 'session name or id').description('Evaluate an expression').action(async (options: EvaluateOptions) => {
-    await sendAliasRequest(stdout, 'evaluate', compactObject({
+    await sendAliasRequest(output, 'evaluate', compactObject({
       expression: options.expression,
       frameId: parseIntegerOption(options.frameId, 'frame-id'),
       context: options.context,
@@ -97,23 +97,23 @@ export function registerDapAliasCommands(program: Command, stdout: JsonWritable)
   });
 
   program.command('continue').requiredOption('--thread-id <number>', 'thread id').option('--single-thread', 'resume only one thread').option('--name <name>', 'session name or id').description('Continue execution').action(async (options: ThreadControlOptions) => {
-    await sendThreadControlAlias(stdout, 'continue', options, 'continue');
+    await sendThreadControlAlias(output, 'continue', options, 'continue');
   });
 
   program.command('pause').requiredOption('--thread-id <number>', 'thread id').option('--name <name>', 'session name or id').description('Pause execution').action(async (options: ThreadControlOptions) => {
-    await sendThreadControlAlias(stdout, 'pause', options, 'pause');
+    await sendThreadControlAlias(output, 'pause', options, 'pause');
   });
 
   program.command('next').requiredOption('--thread-id <number>', 'thread id').option('--single-thread', 'step only one thread').option('--name <name>', 'session name or id').description('Step over').action(async (options: ThreadControlOptions) => {
-    await sendThreadControlAlias(stdout, 'next', options, 'next');
+    await sendThreadControlAlias(output, 'next', options, 'next');
   });
 
   program.command('step-in').requiredOption('--thread-id <number>', 'thread id').option('--single-thread', 'step only one thread').option('--target-id <number>', 'step target id').option('--name <name>', 'session name or id').description('Step in').action(async (options: ThreadControlOptions) => {
-    await sendThreadControlAlias(stdout, 'stepIn', options, 'step-in');
+    await sendThreadControlAlias(output, 'stepIn', options, 'step-in');
   });
 
   program.command('step-out').requiredOption('--thread-id <number>', 'thread id').option('--single-thread', 'step only one thread').option('--name <name>', 'session name or id').description('Step out').action(async (options: ThreadControlOptions) => {
-    await sendThreadControlAlias(stdout, 'stepOut', options, 'step-out');
+    await sendThreadControlAlias(output, 'stepOut', options, 'step-out');
   });
 }
 
@@ -130,17 +130,17 @@ Polling workflow:
 `;
 }
 
-async function sendThreadControlAlias(stdout: JsonWritable, dapCommand: 'continue' | 'pause' | 'next' | 'stepIn' | 'stepOut', options: ThreadControlOptions, commandLabel: string): Promise<void> {
-  await sendAliasRequest(stdout, dapCommand, compactObject({
+async function sendThreadControlAlias(output: OutputWriter, dapCommand: 'continue' | 'pause' | 'next' | 'stepIn' | 'stepOut', options: ThreadControlOptions, commandLabel: string): Promise<void> {
+  await sendAliasRequest(output, dapCommand, compactObject({
     threadId: parseRequiredIntegerOption(options.threadId, 'thread-id'),
     singleThread: options.singleThread === true ? true : undefined,
     targetId: parseIntegerOption(options.targetId, 'target-id'),
   }), options.name, commandLabel);
 }
 
-async function sendAliasRequest(stdout: JsonWritable, dapCommand: string, args: Record<string, unknown>, name: string | undefined, commandLabel: string): Promise<void> {
+async function sendAliasRequest(output: OutputWriter, dapCommand: string, args: Record<string, unknown>, name: string | undefined, commandLabel: string): Promise<void> {
   getDapGeneratedCommand(dapCommand);
-  await sendGeneratedDapRequest(stdout, requireGeneratedCommand(dapCommand), args, name, commandLabel);
+  await sendGeneratedDapRequest(output, requireGeneratedCommand(dapCommand), args, name, commandLabel);
 }
 
 function compactObject(input: Record<string, unknown>): Record<string, unknown> {

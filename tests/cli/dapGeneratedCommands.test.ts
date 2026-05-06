@@ -82,6 +82,42 @@ describe('generated DAP commands', () => {
     expect(envelope.error.code).toBe('invalid_dap_arguments');
     expect(envelope.error.diagnostics[0]).toContain('threadId');
   });
+
+  test('generated --json remains request payload while --human selects presentation', async () => {
+    const stdout = new MemoryStream();
+    const stderr = new MemoryStream();
+
+    const exitCode = await main(['--human', 'dap', 'continue', '--json', '{"threadId":"1"}'], undefined, { stdout, stderr });
+
+    expect(exitCode).toBe(2);
+    expect(stderr.output).toBe('');
+    expect(stdout.output).toContain('Error: Invalid DAP argument');
+    expect(stdout.output).toContain('Code: invalid_dap_arguments');
+    expect(stdout.output).not.toContain('{"ok":false');
+  });
+
+  test('generated --no-human overrides DAP_CLI_HUMAN while keeping --json as payload', async () => {
+    const previousDapCliHuman = process.env.DAP_CLI_HUMAN;
+    process.env.DAP_CLI_HUMAN = '1';
+    const stdout = new MemoryStream();
+    const stderr = new MemoryStream();
+
+    try {
+      const exitCode = await main(['--no-human', 'dap', 'continue', '--json', '{"threadId":"1"}'], undefined, { stdout, stderr });
+      const envelope = JSON.parse(stdout.output) as { ok: false; error: { code: string; diagnostics: string[] } };
+
+      expect(exitCode).toBe(2);
+      expect(stderr.output).toBe('');
+      expect(envelope.error.code).toBe('invalid_dap_arguments');
+      expect(envelope.error.diagnostics[0]).toContain('threadId');
+    } finally {
+      if (previousDapCliHuman === undefined) {
+        delete process.env.DAP_CLI_HUMAN;
+      } else {
+        process.env.DAP_CLI_HUMAN = previousDapCliHuman;
+      }
+    }
+  });
 });
 
 async function fetchOfficialRequestCommands(): Promise<string[]> {

@@ -17,7 +17,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Built-in and Custom Adapter Support** - Add JavaScript, Python, and user-defined adapter flows through descriptor/config/process/transport boundaries, including JS source maps and E2E smoke tests.
 - [x] **Phase 4: Agent Workflow, Documentation, and Self-Hosting Verification** - Polish the agent experience with README/user docs, Playwright interop examples, self-hosting, smoke verification, and agentic exploratory tests.
 - [x] **Phase 5: Stabilize real Chrome/js-debug Playwright same-browser handoff** - Prove or explicitly gate a same-browser Playwright plus real Chrome/js-debug handoff where dap-cli inspects the browser target Playwright controls.
-- [ ] **Phase 5.1: Execute VS Code launch.json configurations and compounds** *(INSERTED)* - Faithfully resolve a `.vscode/launch.json` configuration (variable substitution, platform overrides, full field passthrough) and execute compound configurations as a single coordinated multi-session debug run; preLaunchTask explicitly out of scope.
+- [ ] **Phase 5.1: A mode for the CLI where it produces human-readable nicely formatted output instead of JSON.** *(INSERTED)* - Urgent work to add a non-JSON, human-readable output mode to the CLI.
+- [ ] **Phase 5.2: Execute VS Code launch.json configurations and compounds** *(INSERTED)* - Faithfully resolve a `.vscode/launch.json` configuration (variable substitution, platform overrides, full field passthrough) and execute compound configurations as a single coordinated multi-session debug run; preLaunchTask explicitly out of scope.
 - [ ] **Phase 6: Add conditional breakpoint Playwright interop coverage**
 
 ## Phase Details
@@ -137,7 +138,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 5.1 -> 5.2 -> 6 -> 7 -> 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -146,7 +147,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 3. Built-in and Custom Adapter Support | 4/4 | Complete | 2026-05-03 |
 | 4. Agent Workflow, Documentation, and Self-Hosting Verification | 4/4 | Complete | 2026-05-03 |
 | 5. Stabilize real Chrome/js-debug Playwright same-browser handoff | 26/26 | Complete | 2026-05-04 |
-| 5.1. Execute VS Code launch.json configurations and compounds *(INSERTED)* | 0/0 | Not started | - |
+| 5.1. A mode for the CLI where it produces human-readable nicely formatted output instead of JSON. *(INSERTED)* | 6/6 | Complete | 2026-05-05 |
+| 5.2. Execute VS Code launch.json configurations and compounds *(INSERTED)* | 0/0 | Not started | - |
 | 6. Add conditional breakpoint Playwright interop coverage | 0/0 | Not started | - |
 | 7. Add evaluate-and-mutate browser state coverage | 0/0 | Not started | - |
 | 8. Expand multi-breakpoint UI flow fixture | 0/0 | Not started | - |
@@ -186,7 +188,33 @@ Plans:
 - [x] 05-25-PLAN.md — Round 2 follow-up: H-1a/H-1b paused-state edges (parent + thread filter)
 - [x] 05-26-PLAN.md — Round 2 follow-up: H-3a child-session targeting refinement
 
-### Phase 05.1: Execute VS Code launch.json configurations and compounds (full fidelity, no preLaunchTask) (INSERTED)
+### Phase 05.1: A mode for the CLI where it produces human-readable nicely formatted output instead of JSON. (INSERTED)
+
+**Goal:** dap-cli keeps JSON as the default machine-readable contract while adding an opt-in `--human` / `DAP_CLI_HUMAN` mode that renders existing command results and handled failures as safe, readable terminal text.
+**Requirements**: TBD
+**Depends on:** Phase 05
+**Plans:** 6/6 plans complete
+
+Plans:
+**Wave 1**
+- [x] 05.1-01-PLAN.md — Output-mode resolver, writer foundation, sanitized human fallback, and human test helper
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 05.1-02-PLAN.md — Root `--human` / `--no-human` wiring, handled failures, and controller/session/core DAP output integration
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 05.1-03-PLAN.md — Generated/alias command integration, curated human renderers, and `--json` payload collision regressions
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [x] 05.1-04-PLAN.md — README/agent docs, final output-contract regressions, docs validation, and repo check
+
+**Wave 5** *(blocked on Wave 4 UAT gaps)*
+- [x] 05.1-05-PLAN.md — Hand-driven smoke doc corrections, clean-state UAT rerun, and docs validation
+
+**Wave 6** *(user feedback polish)*
+- [x] 05.1-06-PLAN.md — Human output presentation polish: remove noisy metadata, add bordered tables, and add terminal-aware semantic styling
+
+### Phase 05.2: Execute VS Code launch.json configurations and compounds (full fidelity, no preLaunchTask) (INSERTED)
 
 **Goal:** `npx dap-cli launch --config "<name>" [--workspace <path>]` faithfully executes any `.vscode/launch.json` configuration that VS Code would run — including compounds that bring up multiple coordinated sessions in one command — against `js-debug` and `debugpy`. The motivating target is the `VS Code` compound in [/Users/roblou/code/vscode/.vscode/launch.json](../../../vscode/.vscode/launch.json), which would launch Code OSS plus four process attaches in one shot.
 
@@ -212,11 +240,11 @@ Plans:
 **Verification target:** `cd /Users/roblou/code/vscode && npx dap-cli launch --config "VS Code"` brings up renderer + main process + extension host + shared process + agent host as 5 coordinated dap-cli sessions; `dap-cli sessions` shows the compound group; setting a breakpoint in `chatWidget.ts` and submitting a chat in the running window pauses the renderer member; closing one terminates all per `stopAll`. End-to-end smoke captured into a UAT doc by hand-driving (per repo Hard Rule).
 
 **Depends on:** Phase 5
-**Requirements:** TBD (will be expressed during /gsd-discuss-phase 05.1)
-**Plans:** 0 plans (run /gsd-discuss-phase 05.1 → /gsd-plan-phase 05.1)
+**Requirements:** TBD (will be expressed during /gsd-discuss-phase 05.2)
+**Plans:** 0 plans (run /gsd-discuss-phase 05.2 → /gsd-plan-phase 05.2)
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 05.1 to break down)
+- [ ] TBD (run /gsd-plan-phase 05.2 to break down)
 
 ### Phase 6: Add conditional breakpoint Playwright interop coverage
 

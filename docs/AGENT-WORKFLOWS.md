@@ -78,7 +78,7 @@ Use `sessions` to list known sessions. Use `use <name>` only when you want subse
 
 ## Failure Handling
 
-Handled failures are JSON envelopes, not stack traces. Read `error.code`, `error.diagnostics`, and adapter fields such as `stderrTail` or `logPath` before deciding whether to retry.
+Handled failures are JSON envelopes, not stack traces. Agents should continue relying on the default JSON envelope contract for automation; do not parse human-readable output in scripts. Read `error.code`, `error.diagnostics`, and adapter fields such as `stderrTail` or `logPath` before deciding whether to retry.
 
 ```bash
 dap-cli request threads --name inspect --json '{}'
@@ -87,3 +87,15 @@ dap-cli events --name inspect --limit 20
 ```
 
 If a request fails because the target resumed, start the loop again at `status` and reacquire references after the next stop.
+
+## Output Modes
+
+JSON remains the default output mode for agents and scripts. Humans can opt into readable terminal output with `--human`, or set `DAP_CLI_HUMAN=1` in their shell for a human default. Use `--no-human` to force JSON when `DAP_CLI_HUMAN=1` is inherited. Human output is for reading, not a stable machine-parsing contract.
+
+```bash
+dap-cli sessions --human
+DAP_CLI_HUMAN=1 dap-cli status --name demo
+DAP_CLI_HUMAN=1 dap-cli status --name demo --no-human
+```
+
+The command-level `--json <json>` option remains payload/config input for commands such as `launch`, `attach`, `request`, and generated `dap` requests. It is not an output-format switch.

@@ -74,6 +74,21 @@ Handled failures use:
 }
 ```
 
+## Human-readable output
+
+`dap-cli` emits JSON by default so agents, scripts, and tests can rely on a stable stdout contract. Use `--human` when a person wants readable terminal output instead of the JSON envelope.
+
+```bash
+dap-cli sessions --human
+DAP_CLI_HUMAN=1 dap-cli status --name demo
+DAP_CLI_HUMAN=1 dap-cli status --name demo --no-human
+dap-cli request stackTrace --json '{"threadId":1}' --human
+```
+
+Set `DAP_CLI_HUMAN=1` in a shell to make human output the default when no explicit mode flag is present. Add `--no-human` to force machine-readable JSON when that environment variable is inherited. Human output is for reading, not a stable machine-parsing contract.
+
+Command-level `--json <json>` options are still request payload or launch/attach configuration input. They are not output-format switches; use `--human` and `--no-human` for output mode.
+
 ## Session Management
 
 The controller keeps debugger state across separate CLI invocations. Use `--name` to target a session explicitly, `sessions` to list sessions, `use <name>` to set the active session, and `cleanup` to stop sessions and clear stale state.

@@ -1,15 +1,16 @@
 import type { Command } from 'commander';
 import { usageError } from '../errors.js';
-import { type JsonWritable, writeJsonSuccess } from '../output.js';
+import type { OutputWriter } from '../outputWriter.js';
 import { createControllerClient } from '../../controller/client.js';
 import { dapGeneratedCommands, type DapGeneratedArgumentType, type DapGeneratedArgumentValidation, type DapGeneratedCommandMetadata } from '../../generated/dapCommandRegistry.js';
+import { parseJsonOption } from './jsonOptions.js';
 
 export interface GeneratedDapCommandOptions {
   json?: string;
   name?: string;
 }
 
-export function registerGeneratedDapCommands(program: Command, stdout: JsonWritable): void {
+export function registerGeneratedDapCommands(program: Command, output: OutputWriter): void {
   const dap = program
     .command('dap')
     .description('Send generated DAP requests by protocol command name');
@@ -25,16 +26,16 @@ export function registerGeneratedDapCommands(program: Command, stdout: JsonWrita
       .option('--json <json>', 'request arguments as JSON', '{}')
       .option('--name <name>', 'session name or id')
       .action(async (options: GeneratedDapCommandOptions) => {
-        await sendGeneratedDapRequest(stdout, metadata, parseJsonOption(options.json ?? '{}'), options.name, `dap ${metadata.cliName}`);
+        await sendGeneratedDapRequest(output, metadata, parseJsonOption(options.json ?? '{}'), options.name, `dap ${metadata.cliName}`);
       });
   }
 }
 
-export async function sendGeneratedDapRequest(stdout: JsonWritable, metadata: DapGeneratedCommandMetadata, args: unknown, name: string | undefined, commandLabel: string): Promise<void> {
+export async function sendGeneratedDapRequest(output: OutputWriter, metadata: DapGeneratedCommandMetadata, args: unknown, name: string | undefined, commandLabel: string): Promise<void> {
   validateGeneratedDapArguments(metadata.validation, args, metadata.command);
   const client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME });
   try {
-    writeJsonSuccess(await client.request('dap.request', createDapRequestParams(metadata.command, args, name)), { command: commandLabel }, stdout);
+    output.success(await client.request('dap.request', createDapRequestParams(metadata.command, args, name)), { command: commandLabel });
   } finally {
     await client.close();
   }
@@ -59,14 +60,6 @@ export function validateGeneratedDapArguments(validation: DapGeneratedArgumentVa
     if (property.name in args && !isGeneratedArgumentType(args[property.name], property.type)) {
       throw invalidDapArguments(command, `Invalid DAP argument '${property.name}': expected ${property.type}.`);
     }
-  }
-}
-
-export function parseJsonOption(value: string): unknown {
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    throw usageError('Invalid JSON argument.', { code: 'invalid_json' });
   }
 }
 

@@ -10,6 +10,12 @@ export interface RunCliResult {
   envelope: JsonSuccess<unknown> | JsonFailure;
 }
 
+export interface RunCliHumanResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
 export type CliTestEnv = TempDapCliEnv;
 
 export interface RunCliOptions {
@@ -39,9 +45,11 @@ export async function createCliTestEnv(prefix = 'dap-cli-test-'): Promise<CliTes
 export async function runCli(args: readonly string[], options: RunCliOptions = {}): Promise<RunCliResult> {
   const previousDapCliHome = process.env.DAP_CLI_HOME;
   const previousDapCliEntrypoint = process.env.DAP_CLI_ENTRYPOINT;
+  const previousDapCliHuman = process.env.DAP_CLI_HUMAN;
   const env = options.env ?? process.env;
   setOptionalEnv('DAP_CLI_HOME', env.DAP_CLI_HOME);
   setOptionalEnv('DAP_CLI_ENTRYPOINT', env.DAP_CLI_ENTRYPOINT);
+  setOptionalEnv('DAP_CLI_HUMAN', env.DAP_CLI_HUMAN);
 
   const stdout = new MemoryStream();
   const stderr = new MemoryStream();
@@ -57,6 +65,33 @@ export async function runCli(args: readonly string[], options: RunCliOptions = {
   } finally {
     setOptionalEnv('DAP_CLI_HOME', previousDapCliHome);
     setOptionalEnv('DAP_CLI_ENTRYPOINT', previousDapCliEntrypoint);
+    setOptionalEnv('DAP_CLI_HUMAN', previousDapCliHuman);
+  }
+}
+
+export async function runCliHuman(args: readonly string[], options: RunCliOptions = {}): Promise<RunCliHumanResult> {
+  const previousDapCliHome = process.env.DAP_CLI_HOME;
+  const previousDapCliEntrypoint = process.env.DAP_CLI_ENTRYPOINT;
+  const previousDapCliHuman = process.env.DAP_CLI_HUMAN;
+  const env = options.env ?? process.env;
+  setOptionalEnv('DAP_CLI_HOME', env.DAP_CLI_HOME);
+  setOptionalEnv('DAP_CLI_ENTRYPOINT', env.DAP_CLI_ENTRYPOINT);
+  setOptionalEnv('DAP_CLI_HUMAN', env.DAP_CLI_HUMAN);
+
+  const stdout = new MemoryStream();
+  const stderr = new MemoryStream();
+
+  try {
+    const exitCode = await main(args, undefined, { stdout, stderr });
+    return {
+      exitCode,
+      stdout: stdout.output,
+      stderr: stderr.output,
+    };
+  } finally {
+    setOptionalEnv('DAP_CLI_HOME', previousDapCliHome);
+    setOptionalEnv('DAP_CLI_ENTRYPOINT', previousDapCliEntrypoint);
+    setOptionalEnv('DAP_CLI_HUMAN', previousDapCliHuman);
   }
 }
 
@@ -86,7 +121,7 @@ async function stopController(dapCliHome: string): Promise<void> {
   }
 }
 
-function setOptionalEnv(key: 'DAP_CLI_HOME' | 'DAP_CLI_ENTRYPOINT', value: string | undefined): void {
+function setOptionalEnv(key: 'DAP_CLI_HOME' | 'DAP_CLI_ENTRYPOINT' | 'DAP_CLI_HUMAN', value: string | undefined): void {
   if (value === undefined) {
     delete process.env[key];
     return;

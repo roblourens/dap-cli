@@ -1,6 +1,8 @@
 import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import type { JsonWritable } from './output.js';
+import { resolveOutputMode } from './outputMode.js';
+import { createOutputWriter } from './outputWriter.js';
 import { registerControllerCommands } from './commands/controller.js';
 import { registerDapAliasCommands } from './commands/dapAliases.js';
 import { registerDapCoreCommands } from './commands/dapCore.js';
@@ -17,19 +19,25 @@ export interface ProgramOptions {
 export function createProgram(options: ProgramOptions = {}): Command {
   const program = new Command();
   const stdout = options.stdout ?? process.stdout;
+  const output = createOutputWriter({
+    stream: stdout,
+    resolveMode: () => resolveOutputMode({ cliHuman: getProgramHumanOption(program), env: process.env }),
+  });
 
   program
     .name('dap-cli')
     .description('A Debug Adapter Protocol CLI for agents. Control debug sessions from shell commands.')
     .version(getPackageVersion(packageJson))
+    .option('--human', 'render human-readable output')
+    .option('--no-human', 'render machine-readable JSON output even if DAP_CLI_HUMAN is set')
     .showHelpAfterError()
     .exitOverride();
 
-  registerControllerCommands(program, stdout);
-  registerSessionCommands(program, stdout);
-  registerDapCoreCommands(program, stdout);
-  registerGeneratedDapCommands(program, stdout);
-  registerDapAliasCommands(program, stdout);
+  registerControllerCommands(program, output);
+  registerSessionCommands(program, output);
+  registerDapCoreCommands(program, output);
+  registerGeneratedDapCommands(program, output);
+  registerDapAliasCommands(program, output);
 
   program.addHelpText('after', `
 
@@ -43,6 +51,16 @@ Examples:
 `);
 
   return program;
+}
+
+export function getProgramHumanOption(program: Command): boolean | undefined {
+  const options: unknown = program.opts();
+  if (typeof options !== 'object' || options === null || !('human' in options)) {
+    return undefined;
+  }
+
+  const value = options.human;
+  return typeof value === 'boolean' ? value : undefined;
 }
 
 function getPackageVersion(rawPackageJson: unknown): string {

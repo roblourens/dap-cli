@@ -6,7 +6,8 @@ import type { AdapterDescriptor } from '../../adapters/descriptor.js';
 import { loadAdapterConfig } from '../../adapters/config.js';
 import { AdapterRegistry } from '../../adapters/registry.js';
 import { loadVSCodeLaunchConfig, mapDebugpyFlags, mapJsDebugFlags, resolveAdapterIdFromType, resolveLaunchConfig } from '../../config/launchConfig.js';
-import { type JsonWritable, writeJsonSuccess } from '../output.js';
+import type { OutputWriter } from '../outputWriter.js';
+import { parseJsonOption } from './jsonOptions.js';
 
 interface DapStartCommandOptions {
   adapter?: string;
@@ -46,7 +47,7 @@ interface DapEventsCommandOptions {
   exclude?: string;
 }
 
-export function registerDapCoreCommands(program: Command, stdout: JsonWritable): void {
+export function registerDapCoreCommands(program: Command, output: OutputWriter): void {
   program
     .command('launch')
     .description('Start a DAP launch session using an adapter id, named launch config, or fake adapter')
@@ -69,7 +70,7 @@ export function registerDapCoreCommands(program: Command, stdout: JsonWritable):
     .option('--stop-on-entry', 'halt at the first program statement (adapter must support stopOnEntry)')
     .option('--no-use', 'do not make the new session active')
     .action(async (options: DapStartCommandOptions) => {
-      await startDap(stdout, 'launch', options);
+      await startDap(output, 'launch', options);
     });
 
   program
@@ -94,7 +95,7 @@ export function registerDapCoreCommands(program: Command, stdout: JsonWritable):
     .option('--stop-on-entry', 'halt at the first program statement (adapter must support stopOnEntry)')
     .option('--no-use', 'do not make the new session active')
     .action(async (options: DapStartCommandOptions) => {
-      await startDap(stdout, 'attach', options);
+      await startDap(output, 'attach', options);
     });
 
   program
@@ -110,7 +111,7 @@ Examples:
   $ dap-cli request stackTrace --json '{"threadId":1}'
 `)
     .action(async (command: string, options: DapRequestCommandOptions) => {
-      await withController(stdout, 'request', async client => client.request('dap.request', {
+      await withController(output, 'request', async client => client.request('dap.request', {
         command,
         args: parseJsonOption(options.json ?? '{}'),
         name: options.name,
@@ -122,7 +123,7 @@ Examples:
     .option('--name <name>', 'session name or id')
     .description('Return adapter capabilities for a fake/custom session')
     .action(async (options: DapCapabilitiesCommandOptions) => {
-      await withController(stdout, 'capabilities', async client => client.request('dap.capabilities', createNameParams(options.name)));
+      await withController(output, 'capabilities', async client => client.request('dap.capabilities', createNameParams(options.name)));
     });
 
   program
@@ -142,7 +143,7 @@ Examples:
   $ dap-cli events --include stopped,thread,output
 `)
     .action(async (options: DapEventsCommandOptions) => {
-      await runEventsCommand(stdout, options);
+      await runEventsCommand(output, options);
     });
 }
 
@@ -150,7 +151,7 @@ function createNameParams(name: string | undefined): { name?: string } {
   return name === undefined ? {} : { name };
 }
 
-async function startDap(stdout: JsonWritable, mode: 'launch' | 'attach', options: DapStartCommandOptions): Promise<void> {
+async function startDap(output: OutputWriter, mode: 'launch' | 'attach', options: DapStartCommandOptions): Promise<void> {
   const namedConfig = await resolveNamedConfig(options.config);
   const jsonConfig = parseJsonRecordOption(options.json ?? '{}');
   const adapterConfig = await loadAdapterConfig(process.env.DAP_CLI_HOME);
@@ -165,7 +166,7 @@ async function startDap(stdout: JsonWritable, mode: 'launch' | 'attach', options
     ? createFakeDescriptor(options.script ?? (mode === 'attach' ? 'attach-stopped' : 'stopped-on-entry'), mode)
     : new AdapterRegistry({ config: adapterConfig }).resolve(adapterId);
 
-  await withController(stdout, mode, async client => client.request('dap.start', {
+  await withController(output, mode, async client => client.request('dap.start', {
     mode,
     name: options.name ?? 'default',
     use: options.use !== false,
@@ -253,10 +254,10 @@ function setIfDefined(target: Record<string, unknown>, key: string, value: unkno
   }
 }
 
-async function withController<T>(stdout: JsonWritable, command: string, callback: (client: Awaited<ReturnType<typeof createControllerClient>>) => Promise<T>): Promise<void> {
+async function withController<T>(output: OutputWriter, command: string, callback: (client: Awaited<ReturnType<typeof createControllerClient>>) => Promise<T>): Promise<void> {
   const client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME });
   try {
-    writeJsonSuccess(await callback(client), { command }, stdout);
+    output.success(await callback(client), { command });
   } finally {
     await client.close();
   }
@@ -272,14 +273,6 @@ function createFakeDescriptor(script: string, mode: 'launch' | 'attach'): Adapte
       args: ['--experimental-strip-types', path.join(process.cwd(), 'tests', 'fixtures', 'fake-adapter-entry.ts'), '--script', script, '--mode', mode],
     },
   };
-}
-
-function parseJsonOption(value: string): unknown {
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    throw usageError('Invalid JSON argument.', { code: 'invalid_json' });
-  }
 }
 
 function parseJsonRecordOption(value: string): Record<string, unknown> {
@@ -352,7 +345,7 @@ function parseEventNameList(raw: string | undefined, optionName: string): Readon
   return new Set(names);
 }
 
-async function runEventsCommand(stdout: JsonWritable, options: DapEventsCommandOptions): Promise<void> {
+async function runEventsCommand(output: OutputWriter, options: DapEventsCommandOptions): Promise<void> {
   const include = parseEventNameList(options.include, 'include');
   const exclude = parseEventNameList(options.exclude, 'exclude');
   const hasFilter = include !== undefined || exclude !== undefined;
@@ -373,7 +366,7 @@ async function runEventsCommand(stdout: JsonWritable, options: DapEventsCommandO
     requestParams.limit = limit;
   }
 
-  await withController(stdout, 'events', async client => {
+  await withController(output, 'events', async client => {
     const response = await client.request<EventsRecentResponse>('events.recent', requestParams);
     let events = response.events;
     if (include !== undefined) {
@@ -383,7 +376,7 @@ async function runEventsCommand(stdout: JsonWritable, options: DapEventsCommandO
       events = events.filter(e => !exclude.has(e.event));
     }
     if (limit !== undefined && hasFilter) {
-      events = events.slice(-limit);
+      events = limit === 0 ? [] : events.slice(-limit);
     }
 
     const data: EventsCommandData = { ...response, events };
