@@ -1,6 +1,6 @@
 import { resolveTargetSession } from './activeSession.js';
 import { sessionError } from '../cli/errors.js';
-import { createSessionId, projectSessionStatus, projectSessionSummary, REMOVABLE_LIFECYCLES, type OwnedAdapterMetadata, type SessionId, type SessionLifecycle, type SessionRecord, type SessionStatus, type SessionSummary } from './session.js';
+import { createSessionId, projectSessionStatus, projectSessionSummary, REMOVABLE_LIFECYCLES, type CompoundSessionMetadata, type OwnedAdapterMetadata, type SessionId, type SessionLifecycle, type SessionRecord, type SessionStatus, type SessionSummary } from './session.js';
 import { SessionStore, type SessionStoreData } from './sessionStore.js';
 
 export interface CreateSessionOptions {
@@ -8,6 +8,7 @@ export interface CreateSessionOptions {
   adapter?: string;
   lifecycle?: SessionLifecycle;
   ownedAdapter?: Partial<OwnedAdapterMetadata>;
+  compound?: CompoundSessionMetadata;
   makeActive?: boolean;
 }
 
@@ -363,7 +364,7 @@ export class SessionManager {
 
   private buildSessionRecord(options: CreateSessionOptions): SessionRecord {
     const now = new Date().toISOString();
-    return {
+    const session: SessionRecord = {
       id: createSessionId(),
       name: options.name,
       adapter: options.adapter ?? 'unknown',
@@ -376,6 +377,10 @@ export class SessionManager {
         ...optionalOwnedAdapterFields(options.ownedAdapter),
       },
     };
+    if (options.compound !== undefined) {
+      session.compound = options.compound;
+    }
+    return session;
   }
 }
 

@@ -56,6 +56,33 @@ export function createFakeAdapterScript(name: string): FakeAdapterScript {
     return createLifecycleScript(name, 'attach', { request: 'attach', port: 4711 });
   }
 
+  if (name === 'expect-compound-launch-member-a') {
+    return createLifecycleScript(name, 'launch', {
+      request: 'launch',
+      cleanUp: 'fixture-env',
+      cascadeTerminateToConfigurations: true,
+    });
+  }
+
+  if (name === 'expect-compound-attach-member-b') {
+    return createLifecycleScript(name, 'attach', {
+      request: 'attach',
+      port: 9229,
+      cleanUp: 'fixture-env',
+      cascadeTerminateToConfigurations: false,
+    });
+  }
+
+  if (name === 'compound-startup-fails-after-initialize') {
+    return {
+      name,
+      steps: [
+        { kind: 'expectRequest', command: 'initialize', respond: { seq: 1, type: 'response', request_seq: 0, success: true, command: 'initialize', body: { supportsConfigurationDoneRequest: true } } },
+        { kind: 'expectRequest', command: 'launch', respond: { seq: 2, type: 'response', request_seq: 0, success: false, command: 'launch', message: 'compound fixture startup failed' } },
+      ],
+    };
+  }
+
   if (name === 'stop-then-transport-close') {
     // Stop-on-entry, answer one threads request, then close the transport.
     // Used to exercise the adapter_transport_closed stale-session diagnostic.

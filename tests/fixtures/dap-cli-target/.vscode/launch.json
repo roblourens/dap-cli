@@ -1,0 +1,92 @@
+{
+  // Fixture used by integration tests to prove VS Code launch.json behavior
+  // through the published CLI surface.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "fakeFixtureLaunchA",
+      "request": "launch",
+      "name": "Fixture Single",
+      "program": "${workspaceFolder}/index.js",
+      "cwd": "${workspaceFolder}",
+      "webRoot": "${workspaceFolder}/web",
+      "userDataDir": "${userHome}/.dap-cli-fixture/${workspaceFolderBasename}",
+      "cleanUp": "${env:DAP_CLI_COMPOUND_FIXTURE}",
+      "cascadeTerminateToConfigurations": true,
+      "preLaunchTask": "should-be-stripped",
+      "presentation": { "group": "fixtures" },
+      "internalConsoleOptions": "neverOpen",
+      "osx": {
+        "runtimeExecutable": "${workspaceFolder}/bin/mac-runtime"
+      },
+      "linux": {
+        "runtimeExecutable": "${workspaceFolder}/bin/linux-runtime"
+      },
+      "windows": {
+        "runtimeExecutable": "${workspaceFolder}/bin/windows-runtime.exe"
+      }
+    },
+    {
+      "type": "fakeFixtureLaunchA",
+      "request": "launch",
+      "name": "Fixture Launch A",
+      "program": "${workspaceFolder}/index.js",
+      "cwd": "${workspaceFolder}",
+      "webRoot": "${workspaceFolder}/web",
+      "userDataDir": "${userHome}/.dap-cli-fixture/${workspaceFolderBasename}",
+      "cleanUp": "${env:DAP_CLI_COMPOUND_FIXTURE}",
+      "cascadeTerminateToConfigurations": true,
+      "preLaunchTask": "should-be-stripped",
+      "postDebugTask": "should-also-be-stripped",
+      "presentation": { "group": "fixtures" },
+      "osx": {
+        "runtimeExecutable": "${workspaceFolder}/bin/mac-runtime"
+      },
+      "linux": {
+        "runtimeExecutable": "${workspaceFolder}/bin/linux-runtime"
+      },
+      "windows": {
+        "runtimeExecutable": "${workspaceFolder}/bin/windows-runtime.exe"
+      }
+    },
+    {
+      "type": "fakeFixtureAttachB",
+      "request": "attach",
+      "name": "Fixture Attach B",
+      "program": "${workspaceFolder}/index.js",
+      "cwd": "${workspaceFolder}",
+      "webRoot": "${workspaceFolder}/web",
+      "userDataDir": "${userHome}/.dap-cli-fixture/${workspaceFolderBasename}",
+      "cleanUp": "${env:DAP_CLI_COMPOUND_FIXTURE}",
+      "port": 9229,
+      "cascadeTerminateToConfigurations": false,
+      "serverReadyAction": { "pattern": "ready" }
+    },
+    {
+      "type": "fakeFixtureBrokenB",
+      "request": "launch",
+      "name": "Fixture Broken B",
+      "program": "${workspaceFolder}/index.js",
+      "cwd": "${workspaceFolder}",
+      "webRoot": "${workspaceFolder}/web",
+      "userDataDir": "${userHome}/.dap-cli-fixture/${workspaceFolderBasename}",
+      "cleanUp": "${env:DAP_CLI_COMPOUND_FIXTURE}",
+      "cascadeTerminateToConfigurations": true
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Fixture Compound",
+      "configurations": ["Fixture Launch A", "Fixture Attach B"]
+    },
+    {
+      "name": "Fixture Independent Compound",
+      "configurations": ["Fixture Launch A", "Fixture Attach B"],
+      "stopAll": false
+    },
+    {
+      "name": "Fixture Broken Compound",
+      "configurations": ["Fixture Launch A", "Fixture Broken B"]
+    }
+  ]
+}

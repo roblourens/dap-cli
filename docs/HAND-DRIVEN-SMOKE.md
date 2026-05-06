@@ -61,6 +61,29 @@ no `setBreakpoints` subcommand — breakpoints live under `breakpoints set`.
 `stackTrace` is `stack`. `start-controller` is just `start` and is global —
 the controller is process-singleton, not per-session.)
 
+## Launch.json Discovery And Compounds
+
+For workspaces with `.vscode/launch.json`, the real CLI can list and start
+named configurations or compounds:
+
+```bash
+node dist/index.js launch --workspace tests/fixtures/dap-cli-target --list-configs
+node dist/index.js launch --workspace tests/fixtures/dap-cli-target --config "Fixture Compound"
+node dist/index.js sessions
+node dist/index.js close "Fixture Compound/Fixture Launch A"
+```
+
+Compound members are targetable sessions named `<compound>/<member>`. If
+`stopAll` is omitted or `true`, closing one member removes the group. If
+`stopAll: false`, peers remain running.
+
+dap-cli resolves `${workspaceFolder}`, `${workspaceFolderBasename}`,
+`${userHome}`, `${env:NAME}`, and `${execPath}`, and merges current-platform
+overlays. It does not run VS Code tasks: `preLaunchTask` and `postDebugTask`
+are ignored silently. `${input:...}` and `${command:...}` variables are
+unsupported and fail fast. The CLI remains polling-only; there is no event
+streaming mode in this phase.
+
 ## Sequence A — Node target, breakpoint round-trip via the real CLI
 
 Use the bundled fixture `tests/fixtures/dap-cli-target/index.js`.

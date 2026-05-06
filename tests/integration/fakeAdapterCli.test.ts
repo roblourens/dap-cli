@@ -23,9 +23,21 @@ interface JsonFailureEnvelope {
     sessionId?: string;
     request?: { command: string; seq?: number };
     adapter?: { descriptorId?: string; pid?: number; stderrTail?: string[]; logPath?: string };
+    data?: Record<string, unknown>;
   };
   meta: { command: string; timestamp: string };
 }
+
+interface CompoundStartResult {
+  compoundId: string;
+  name: string;
+  stopAll: boolean;
+  members: Array<{ sessionId: string; name: string; lifecycle: string; capabilities: unknown; eventCursor: number }>;
+}
+
+type LaunchConfigEntryOutput =
+  | { kind: 'configuration'; name: string; type: string; request?: string }
+  | { kind: 'compound'; name: string; configurations: string[]; stopAll?: boolean };
 
 let testEnv: CliTestEnv;
 let server: ControllerServer | undefined;
@@ -233,6 +245,276 @@ describe('fake adapter controller integration', () => {
     }
   });
 
+  test('launch --workspace resolves named launch configs and lets flags override JSON and named config', async () => {
+    const workspace = await createLaunchWorkspace('workspace-launch', {
+      configurations: [{ type: 'fakeType', name: 'Named Fake', request: 'launch', program: '${workspaceFolder}/app.js', cwd: '${workspaceFolder}' }],
+    });
+    await writeAdapterConfig(testEnv.dapCliHome, {
+      adapters: {
+        'named-fake': createCustomFakeDescriptor('named-fake', 'expect-workspace-launch'),
+      },
+      launchConfigTypeMap: { fakeType: 'named-fake' },
+    });
+
+    const launch = await runCli([
+      'launch',
+      '--workspace', workspace,
+      '--config', 'Named Fake',
+      '--json', '{"customField":"json"}',
+      '--program', path.join(workspace, 'from-flag.js'),
+      '--name', 'workspace-config-test',
+    ], {
+      env: {
+        ...testEnv.env,
+        DAP_CLI_EXPECT_PROGRAM: path.join(workspace, 'from-flag.js'),
+        DAP_CLI_EXPECT_CWD: workspace,
+      },
+    });
+
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+  });
+
+  test('attach --workspace resolves named attach configs through attach adapters', async () => {
+    const workspace = await createLaunchWorkspace('workspace-attach', {
+      configurations: [{ type: 'fakeType', name: 'Attach Fake', request: 'attach', program: '${workspaceFolder}/worker.js', cwd: '${workspaceFolder}' }],
+    });
+    await writeAdapterConfig(testEnv.dapCliHome, {
+      adapters: {
+        'named-fake': createCustomFakeDescriptor('named-fake', 'expect-workspace-attach'),
+      },
+      launchConfigTypeMap: { fakeType: 'named-fake' },
+    });
+
+    const attach = await runCli([
+      'attach',
+      '--workspace', workspace,
+      '--config', 'Attach Fake',
+      '--name', 'workspace-attach-test',
+    ], {
+      env: {
+        ...testEnv.env,
+        DAP_CLI_EXPECT_PROGRAM: path.join(workspace, 'worker.js'),
+        DAP_CLI_EXPECT_CWD: workspace,
+      },
+    });
+
+    expect(attach.exitCode, JSON.stringify(attach)).toBe(0);
+  });
+
+  test('launch --workspace --config starts every compound member with derived names', async () => {
+    const workspace = await createLaunchWorkspace('workspace-compound-launch', {
+      configurations: [
+        { type: 'fakeType', name: 'Server', request: 'launch', program: '${workspaceFolder}/server.js' },
+        { type: 'fakeType', name: 'Client', request: 'launch', program: '${workspaceFolder}/client.js' },
+      ],
+      compounds: [{ name: 'Compound Fake', configurations: ['Server', 'Client'] }],
+    });
+    await writeAdapterConfig(testEnv.dapCliHome, {
+      adapters: {
+        'named-fake': createCustomFakeDescriptor('named-fake', 'stopped-on-entry'),
+      },
+      launchConfigTypeMap: { fakeType: 'named-fake' },
+    });
+
+    const launch = await runCli(['launch', '--workspace', workspace, '--config', 'Compound Fake', '--name', 'ignored'], { env: testEnv.env });
+    const envelope = launch.envelope as JsonEnvelope<CompoundStartResult>;
+
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+    expect(envelope.data.name).toBe('Compound Fake');
+    expect(envelope.data.stopAll).toBe(true);
+    expect(envelope.data.members.map(member => member.name)).toEqual(['Compound Fake/Server', 'Compound Fake/Client']);
+
+    const sessions = await runCli(['sessions'], { env: testEnv.env });
+    const sessionsEnvelope = sessions.envelope as JsonEnvelope<Array<{ name: string; compound?: { name: string; stopAll: boolean } }>>;
+    expect(sessionsEnvelope.data).toEqual([
+      expect.objectContaining({ name: 'Compound Fake/Server', compound: expect.objectContaining({ name: 'Compound Fake', stopAll: true }) }),
+      expect.objectContaining({ name: 'Compound Fake/Client', compound: expect.objectContaining({ name: 'Compound Fake', stopAll: true }) }),
+    ]);
+  });
+
+  test('launch --workspace --config preflights missing compound members before controller IPC', async () => {
+    await server?.stop();
+    server = undefined;
+    const workspace = await createLaunchWorkspace('workspace-compound-missing-member', {
+      configurations: [{ type: 'fakeType', name: 'Server', request: 'launch', program: 'server.js' }],
+      compounds: [{ name: 'Broken Compound', configurations: ['Server', 'Missing'] }],
+    });
+
+    const launch = await runCli(['launch', '--workspace', workspace, '--config', 'Broken Compound'], { env: testEnv.env });
+    const failure = launch.envelope as unknown as JsonFailureEnvelope;
+
+    expect(launch.exitCode).toBe(2);
+    expect(failure.error.code).toBe('compound_member_not_found');
+    expect(failure.error.data).toEqual({ workspaceFolder: workspace, compoundName: 'Broken Compound', memberName: 'Missing' });
+  });
+
+  test('close cascades to compound peers when stopAll is true', async () => {
+    const workspace = await createLaunchWorkspace('workspace-compound-stop-all', {
+      configurations: [
+        { type: 'fakeType', name: 'Server', request: 'launch', program: 'server.js' },
+        { type: 'fakeType', name: 'Client', request: 'launch', program: 'client.js' },
+      ],
+      compounds: [{ name: 'Stop All Compound', configurations: ['Server', 'Client'] }],
+    });
+    await writeAdapterConfig(testEnv.dapCliHome, {
+      adapters: {
+        'named-fake': createCustomFakeDescriptor('named-fake', 'stopped-on-entry'),
+      },
+      launchConfigTypeMap: { fakeType: 'named-fake' },
+    });
+
+    const launch = await runCli(['launch', '--workspace', workspace, '--config', 'Stop All Compound'], { env: testEnv.env });
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+
+    const close = await runCli(['close', 'Stop All Compound/Server'], { env: testEnv.env });
+    expect(close.exitCode, JSON.stringify(close)).toBe(0);
+
+    const sessions = await runCli(['sessions'], { env: testEnv.env });
+    expect((sessions.envelope as JsonEnvelope<unknown[]>).data).toEqual([]);
+  });
+
+  test('close leaves compound peers when stopAll is false', async () => {
+    const workspace = await createLaunchWorkspace('workspace-compound-no-stop-all', {
+      configurations: [
+        { type: 'fakeType', name: 'Server', request: 'launch', program: 'server.js' },
+        { type: 'fakeType', name: 'Client', request: 'launch', program: 'client.js' },
+      ],
+      compounds: [{ name: 'Independent Compound', configurations: ['Server', 'Client'], stopAll: false }],
+    });
+    await writeAdapterConfig(testEnv.dapCliHome, {
+      adapters: {
+        'named-fake': createCustomFakeDescriptor('named-fake', 'stopped-on-entry'),
+      },
+      launchConfigTypeMap: { fakeType: 'named-fake' },
+    });
+
+    const launch = await runCli(['launch', '--workspace', workspace, '--config', 'Independent Compound'], { env: testEnv.env });
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+
+    const close = await runCli(['close', 'Independent Compound/Server'], { env: testEnv.env });
+    expect(close.exitCode, JSON.stringify(close)).toBe(0);
+
+    const sessions = await runCli(['sessions'], { env: testEnv.env });
+    const sessionsEnvelope = sessions.envelope as JsonEnvelope<Array<{ name: string }>>;
+    expect(sessionsEnvelope.data).toEqual([expect.objectContaining({ name: 'Independent Compound/Client' })]);
+  });
+
+  test('launch --workspace --list-configs lists configurations and compounds without controller IPC', async () => {
+    await server?.stop();
+    server = undefined;
+    const workspace = await createLaunchWorkspace('workspace-list-launch', {
+      configurations: [{ type: 'fakeType', name: 'Named Fake', request: 'launch', program: 'app.js' }],
+      compounds: [{ name: 'Compound Fake', configurations: ['Named Fake'], stopAll: false }],
+    });
+
+    const result = await runCli(['launch', '--workspace', workspace, '--list-configs'], { env: testEnv.env });
+    const envelope = result.envelope as JsonEnvelope<LaunchConfigEntryOutput[]>;
+
+    expect(result.exitCode, JSON.stringify(result)).toBe(0);
+    expect(envelope.meta.command).toBe('launch configs');
+    expect(envelope.data).toEqual([
+      { kind: 'configuration', name: 'Named Fake', type: 'fakeType', request: 'launch' },
+      { kind: 'compound', name: 'Compound Fake', configurations: ['Named Fake'], stopAll: false },
+    ]);
+  });
+
+  test('attach --workspace --list-configs uses the same discovery data without requiring --config', async () => {
+    await server?.stop();
+    server = undefined;
+    const workspace = await createLaunchWorkspace('workspace-list-attach', {
+      configurations: [{ type: 'fakeType', name: 'Attach Fake', request: 'attach', program: 'worker.js' }],
+      compounds: [{ name: 'Attach Compound', configurations: ['Attach Fake'] }],
+    });
+
+    const result = await runCli(['attach', '--workspace', workspace, '--list-configs'], { env: testEnv.env });
+    const envelope = result.envelope as JsonEnvelope<LaunchConfigEntryOutput[]>;
+
+    expect(result.exitCode, JSON.stringify(result)).toBe(0);
+    expect(envelope.meta.command).toBe('launch configs');
+    expect(envelope.data).toEqual([
+      { kind: 'configuration', name: 'Attach Fake', type: 'fakeType', request: 'attach' },
+      { kind: 'compound', name: 'Attach Compound', configurations: ['Attach Fake'] },
+    ]);
+  });
+
+  test('launch.json compound fixture lists configurations and compounds', async () => {
+    await server?.stop();
+    server = undefined;
+
+    const result = await runCli(['launch', '--workspace', fixtureWorkspacePath(), '--list-configs'], { env: fixtureEnv() });
+    const envelope = result.envelope as JsonEnvelope<LaunchConfigEntryOutput[]>;
+
+    expect(result.exitCode, JSON.stringify(result)).toBe(0);
+    expect(envelope.data).toEqual([
+      { kind: 'configuration', name: 'Fixture Single', type: 'fakeFixtureLaunchA', request: 'launch' },
+      { kind: 'configuration', name: 'Fixture Launch A', type: 'fakeFixtureLaunchA', request: 'launch' },
+      { kind: 'configuration', name: 'Fixture Attach B', type: 'fakeFixtureAttachB', request: 'attach' },
+      { kind: 'configuration', name: 'Fixture Broken B', type: 'fakeFixtureBrokenB', request: 'launch' },
+      { kind: 'compound', name: 'Fixture Compound', configurations: ['Fixture Launch A', 'Fixture Attach B'] },
+      { kind: 'compound', name: 'Fixture Independent Compound', configurations: ['Fixture Launch A', 'Fixture Attach B'], stopAll: false },
+      { kind: 'compound', name: 'Fixture Broken Compound', configurations: ['Fixture Launch A', 'Fixture Broken B'] },
+    ]);
+  });
+
+  test('launch.json compound fixture starts targetable members and routes DAP requests', async () => {
+    await writeFixtureAdapterConfig();
+
+    const launch = await runCli(['launch', '--workspace', fixtureWorkspacePath(), '--config', 'Fixture Compound'], { env: fixtureEnv() });
+    const launchEnvelope = launch.envelope as JsonEnvelope<CompoundStartResult>;
+
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+    expect(launchEnvelope.data.name).toBe('Fixture Compound');
+    expect(launchEnvelope.data.stopAll).toBe(true);
+    expect(launchEnvelope.data.members.map(member => member.name)).toEqual(['Fixture Compound/Fixture Launch A', 'Fixture Compound/Fixture Attach B']);
+
+    const sessions = await runCli(['sessions'], { env: fixtureEnv() });
+    const sessionsEnvelope = sessions.envelope as JsonEnvelope<Array<{ name: string; targetable?: boolean; compound?: { name: string; memberName: string; stopAll: boolean } }>>;
+    expect(sessionsEnvelope.data).toEqual([
+      expect.objectContaining({ name: 'Fixture Compound/Fixture Launch A', compound: expect.objectContaining({ name: 'Fixture Compound', memberName: 'Fixture Launch A', stopAll: true }) }),
+      expect.objectContaining({ name: 'Fixture Compound/Fixture Attach B', compound: expect.objectContaining({ name: 'Fixture Compound', memberName: 'Fixture Attach B', stopAll: true }) }),
+    ]);
+    expect(sessionsEnvelope.data.every(session => session.targetable !== false)).toBe(true);
+
+    const launchThreads = await runCli(['request', 'threads', '--name', 'Fixture Compound/Fixture Launch A', '--json', '{}'], { env: fixtureEnv() });
+    expect(parseEnvelope<{ threads: Array<{ id: number; name: string }> }>(launchThreads.stdout).data.threads).toEqual([{ id: 1, name: 'main' }]);
+
+    const attachThreads = await runCli(['request', 'threads', '--name', 'Fixture Compound/Fixture Attach B', '--json', '{}'], { env: fixtureEnv() });
+    expect(parseEnvelope<{ threads: Array<{ id: number; name: string }> }>(attachThreads.stdout).data.threads).toEqual([{ id: 1, name: 'main' }]);
+
+    const close = await runCli(['close', 'Fixture Compound/Fixture Launch A'], { env: fixtureEnv() });
+    expect(close.exitCode, JSON.stringify(close)).toBe(0);
+    const afterClose = await runCli(['sessions'], { env: fixtureEnv() });
+    expect((afterClose.envelope as JsonEnvelope<unknown[]>).data).toEqual([]);
+  });
+
+  test('launch.json compound fixture honors stopAll false on close', async () => {
+    await writeFixtureAdapterConfig();
+
+    const launch = await runCli(['launch', '--workspace', fixtureWorkspacePath(), '--config', 'Fixture Independent Compound'], { env: fixtureEnv() });
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+
+    const close = await runCli(['close', 'Fixture Independent Compound/Fixture Launch A'], { env: fixtureEnv() });
+    expect(close.exitCode, JSON.stringify(close)).toBe(0);
+
+    const sessions = await runCli(['sessions'], { env: fixtureEnv() });
+    const sessionsEnvelope = sessions.envelope as JsonEnvelope<Array<{ name: string; compound?: { stopAll: boolean } }>>;
+    expect(sessionsEnvelope.data).toEqual([expect.objectContaining({ name: 'Fixture Independent Compound/Fixture Attach B', compound: expect.objectContaining({ stopAll: false }) })]);
+  });
+
+  test('launch.json compound fixture cleans up partial startup failures', async () => {
+    await writeFixtureAdapterConfig();
+
+    const launch = await runCli(['launch', '--workspace', fixtureWorkspacePath(), '--config', 'Fixture Broken Compound'], { env: fixtureEnv() });
+    const failure = launch.envelope as unknown as JsonFailureEnvelope;
+
+    expect(launch.exitCode).toBe(5);
+    expect(failure.error.code).toBe('compound_member_start_failed');
+    expect(failure.error.data).toEqual({ compoundName: 'Fixture Broken Compound', memberName: 'Fixture Broken B', startedMembers: ['Fixture Launch A'] });
+
+    const sessions = await runCli(['sessions'], { env: fixtureEnv() });
+    expect((sessions.envelope as JsonEnvelope<unknown[]>).data).toEqual([]);
+  });
+
   test('reports unknown adapter ids before controller start request', async () => {
     const launch = await runCli(['launch', '--adapter', 'missing-adapter'], { env: testEnv.env });
     const failure = launch.envelope as unknown as JsonFailureEnvelope;
@@ -397,6 +679,72 @@ describe('fake adapter controller integration', () => {
     }
   });
 
+  test('dap.startCompound starts fake members with derived names and compound metadata', async () => {
+    const client = await createControllerClient({ dapCliHome: testEnv.dapCliHome });
+
+    try {
+      const result = await client.request<CompoundStartResult>('dap.startCompound', {
+        name: 'Compound Fake',
+        stopAll: true,
+        use: true,
+        members: [
+          { memberName: 'Server', mode: 'launch', descriptor: createCustomFakeDescriptor('fake', 'stopped-on-entry'), config: { request: 'launch', program: 'server.js' } },
+          { memberName: 'Client', mode: 'launch', descriptor: createCustomFakeDescriptor('fake', 'stopped-on-entry'), config: { request: 'launch', program: 'client.js' } },
+        ],
+      });
+
+      expect(result.name).toBe('Compound Fake');
+      expect(result.compoundId).toMatch(/^compound_/);
+      expect(result.stopAll).toBe(true);
+      expect(result.members.map(member => member.name)).toEqual(['Compound Fake/Server', 'Compound Fake/Client']);
+      expect(result.members.every(member => member.lifecycle === 'stopped')).toBe(true);
+
+      const sessions = await client.request<Array<{ id: string; name: string; compound?: { id: string; name: string; memberName: string; stopAll: boolean; members: string[] } }>>('sessions.list');
+      expect(sessions).toEqual([
+        expect.objectContaining({
+          id: result.members[0]?.sessionId,
+          name: 'Compound Fake/Server',
+          compound: { id: result.compoundId, name: 'Compound Fake', memberName: 'Server', stopAll: true, members: ['Server', 'Client'] },
+        }),
+        expect.objectContaining({
+          id: result.members[1]?.sessionId,
+          name: 'Compound Fake/Client',
+          compound: { id: result.compoundId, name: 'Compound Fake', memberName: 'Client', stopAll: true, members: ['Server', 'Client'] },
+        }),
+      ]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test('dap.startCompound cleans up started members when a later member fails', async () => {
+    const client = await createControllerClient({ dapCliHome: testEnv.dapCliHome });
+
+    try {
+      await expect(client.request('dap.startCompound', {
+        name: 'Broken Compound',
+        stopAll: true,
+        use: true,
+        members: [
+          { memberName: 'Good', mode: 'launch', descriptor: createCustomFakeDescriptor('fake', 'stopped-on-entry'), config: { request: 'launch', program: 'good.js' } },
+          { memberName: 'Bad', mode: 'launch', descriptor: createCustomFakeDescriptor('fake', 'attach-stopped'), config: { request: 'launch', program: 'bad.js' } },
+        ],
+      })).rejects.toMatchObject({
+        code: 'compound_member_start_failed',
+        category: 'dap',
+        data: {
+          compoundName: 'Broken Compound',
+          memberName: 'Bad',
+          startedMembers: ['Good'],
+        },
+      });
+
+      await expect(client.request('sessions.list')).resolves.toEqual([]);
+    } finally {
+      await client.close();
+    }
+  });
+
   test('launch with attach-only script returns structured error within 5s and leaves the controller alive', async () => {
     // Plan 05-07 / UAT gap 14 — a bad fake-adapter script must not hang or kill the controller.
     const startedAt = Date.now();
@@ -439,6 +787,13 @@ async function writeAdapterConfig(dapCliHome: string, config: Record<string, unk
   await fs.writeFile(path.join(configDir, 'adapters.json'), `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 }
 
+async function createLaunchWorkspace(name: string, launchJson: Record<string, unknown>): Promise<string> {
+  const workspace = path.join(testEnv.dapCliHome, name);
+  await fs.mkdir(path.join(workspace, '.vscode'), { recursive: true });
+  await fs.writeFile(path.join(workspace, '.vscode', 'launch.json'), `${JSON.stringify(launchJson, null, 2)}\n`, 'utf8');
+  return workspace;
+}
+
 async function readOptionalFile(filePath: string): Promise<string | undefined> {
   try {
     return await fs.readFile(filePath, 'utf8');
@@ -448,4 +803,48 @@ async function readOptionalFile(filePath: string): Promise<string | undefined> {
     }
     throw error;
   }
+}
+
+function fixtureWorkspacePath(): string {
+  return path.join(process.cwd(), 'tests', 'fixtures', 'dap-cli-target');
+}
+
+function fixtureEnv(): NodeJS.ProcessEnv {
+  return { ...testEnv.env, DAP_CLI_COMPOUND_FIXTURE: 'fixture-env' };
+}
+
+async function writeFixtureAdapterConfig(): Promise<void> {
+  await writeAdapterConfig(testEnv.dapCliHome, {
+    adapters: {
+      'fixture-launch-a': createCustomFakeDescriptor('fixture-launch-a', 'expect-compound-launch-member-a', {
+        transport: {
+          kind: 'stdio',
+          command: process.execPath,
+          args: ['--experimental-strip-types', path.join(process.cwd(), 'tests', 'fixtures', 'fake-adapter-entry.ts'), '--script', 'expect-compound-launch-member-a'],
+          env: { DAP_CLI_COMPOUND_FIXTURE: 'fixture-env' },
+        },
+      }),
+      'fixture-attach-b': createCustomFakeDescriptor('fixture-attach-b', 'expect-compound-attach-member-b', {
+        transport: {
+          kind: 'stdio',
+          command: process.execPath,
+          args: ['--experimental-strip-types', path.join(process.cwd(), 'tests', 'fixtures', 'fake-adapter-entry.ts'), '--script', 'expect-compound-attach-member-b'],
+          env: { DAP_CLI_COMPOUND_FIXTURE: 'fixture-env' },
+        },
+      }),
+      'fixture-broken-b': createCustomFakeDescriptor('fixture-broken-b', 'compound-startup-fails-after-initialize', {
+        transport: {
+          kind: 'stdio',
+          command: process.execPath,
+          args: ['--experimental-strip-types', path.join(process.cwd(), 'tests', 'fixtures', 'fake-adapter-entry.ts'), '--script', 'compound-startup-fails-after-initialize'],
+          env: { DAP_CLI_COMPOUND_FIXTURE: 'fixture-env' },
+        },
+      }),
+    },
+    launchConfigTypeMap: {
+      fakeFixtureLaunchA: 'fixture-launch-a',
+      fakeFixtureAttachB: 'fixture-attach-b',
+      fakeFixtureBrokenB: 'fixture-broken-b',
+    },
+  });
 }

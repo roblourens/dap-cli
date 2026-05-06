@@ -134,9 +134,36 @@ function renderCuratedSuccess(data: unknown, command: string): CuratedOutput | u
       return renderRecordSection('Cleanup:', data);
     case 'close':
       return renderRecordSection('Close:', data);
+    case 'launch configs':
+      return renderLaunchConfigs(data);
     default:
       return undefined;
   }
+}
+
+function renderLaunchConfigs(data: unknown): CuratedOutput | undefined {
+  if (!isRecordArray(data)) {
+    return undefined;
+  }
+
+  return {
+    title: 'Launch Configs:',
+    lines: formatTable([
+      { header: 'Kind' },
+      { header: 'Name' },
+      { header: 'Type' },
+      { header: 'Request' },
+      { header: 'Members' },
+      { header: 'Stop all', style: 'boolean' },
+    ], data.map(entry => [
+      fieldText(entry, 'kind'),
+      fieldText(entry, 'name'),
+      fieldText(entry, 'type'),
+      fieldText(entry, 'request'),
+      fieldText(entry, 'configurations'),
+      booleanText(entry.stopAll),
+    ])),
+  };
 }
 
 function renderSessions(data: unknown): CuratedOutput | undefined {
@@ -146,12 +173,16 @@ function renderSessions(data: unknown): CuratedOutput | undefined {
 
   const includeActive = data.some(session => 'active' in session);
   const includeChild = data.some(session => 'parent_session_id' in session || 'parentSessionId' in session || session.targetable === false);
+  const includeCompound = data.some(session => isRecord(session.compound));
   const headers: TableColumn[] = [
     { header: 'ID' },
     { header: 'Name' },
     { header: 'Status', style: 'status' },
     { header: 'Adapter' },
   ];
+  if (includeCompound) {
+    headers.push({ header: 'Compound' });
+  }
   if (includeActive) {
     headers.push({ header: 'Active', style: 'boolean' });
   }
@@ -161,6 +192,9 @@ function renderSessions(data: unknown): CuratedOutput | undefined {
 
   const rows = data.map(session => {
     const row = [fieldText(session, 'id'), fieldText(session, 'name'), fieldText(session, 'status') || fieldText(session, 'lifecycle'), fieldText(session, 'adapter') || 'unknown'];
+    if (includeCompound) {
+      row.push(compoundSummaryText(session.compound));
+    }
     if (includeActive) {
       row.push(booleanText(session.active));
     }
@@ -190,12 +224,32 @@ function renderStatus(data: unknown): CuratedOutput | undefined {
   pushField(fields, 'State directory', data, 'stateDir');
   pushField(fields, 'Log directory', data, 'logDir');
   pushField(fields, 'Build ID', data, 'buildId');
-
+  if (isRecord(data.compound)) {
+    pushField(fields, 'Compound', data.compound, 'name');
+    pushField(fields, 'Compound member', data.compound, 'memberName');
+    fields.push(['Compound stop all', booleanText(data.compound.stopAll)]);
+    pushArrayField(fields, 'Compound members', data.compound, 'members');
+  }
   if (fields.length === 0) {
     return undefined;
   }
 
   return { title: 'Status:', lines: fields.map(([label, value]) => `${label}: ${value}`) };
+}
+
+function compoundSummaryText(value: unknown): string {
+  if (!isRecord(value)) {
+    return '';
+  }
+  const name = fieldText(value, 'name');
+  const member = fieldText(value, 'memberName');
+  if (name.length === 0) {
+    return member;
+  }
+  if (member.length === 0) {
+    return name;
+  }
+  return `${name}/${member}`;
 }
 
 function renderEvents(data: unknown): CuratedOutput | undefined {

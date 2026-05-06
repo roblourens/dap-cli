@@ -1,4 +1,5 @@
 import type net from 'node:net';
+import { randomBytes } from 'node:crypto';
 import { parseAdapterDescriptor, type AdapterDescriptor } from '../adapters/descriptor.js';
 import { startProcessAdapter, type StartedProcessAdapter } from '../adapters/processAdapter.js';
 import { connectSocketAdapter, startServerSocketAdapter, type ConnectedSocketAdapter, type StartedServerSocketAdapter } from '../adapters/socketAdapter.js';
@@ -10,7 +11,7 @@ import { DapLifecycleController, DapLifecycleHandshakeTimeoutError } from '../pr
 import { getDapGeneratedCommand } from '../generated/dapCommandRegistry.js';
 import type { DapTransport } from '../protocol/transport.js';
 import { SessionManager } from '../sessions/sessionManager.js';
-import type { OwnedAdapterMetadata, SessionStatus } from '../sessions/session.js';
+import type { CompoundSessionMetadata, OwnedAdapterMetadata, SessionStatus } from '../sessions/session.js';
 import { ChildSessionCoordinator } from './childSessions.js';
 import { derivePausedStateFromStopped } from './pausedState.js';
 import { controllerRequestSchema, type ControllerFailureResponse, type ControllerRequest, type ControllerResponse } from './requests.js';
@@ -311,24 +312,32 @@ export class ControllerServer {
     }
     if (request.method === 'sessions.close') {
       const target = getOptionalStringParam(request.params, 'name');
-      // Resolve the session BEFORE removing it so we can locate the runtime
-      // map entry. closeSession also accepts target so a second resolve is
-      // fine; child sessions go through the same SessionManager cascade as
-      // before.
-      let teardown: { orphanPids: number[]; warnings: string[] } = { orphanPids: [], warnings: [] };
       try {
         const status = manager.status(target);
-        const runtime = this.runtimes.get(status.id);
-        if (runtime !== undefined) {
-          teardown = await this.terminateRuntime(runtime, { terminateDebuggee: true });
-          this.runtimes.delete(status.id);
+        const closeTargets = status.compound?.stopAll === true
+          ? manager.list().filter(session => session.compound?.id === status.compound?.id).map(session => session.id)
+          : [status.id];
+        const teardownResults = await Promise.all(closeTargets.map(async sessionId => {
+          const runtime = this.runtimes.get(sessionId);
+          if (runtime !== undefined) {
+            const teardown = await this.terminateRuntime(runtime, { terminateDebuggee: true });
+            this.runtimes.delete(sessionId);
+            return teardown;
+          }
+          return { orphanPids: [], warnings: [] };
+        }));
+        for (const sessionId of closeTargets) {
+          await manager.closeSession(sessionId);
         }
+        const orphanPids = teardownResults.flatMap(result => result.orphanPids);
+        const warnings = teardownResults.flatMap(result => result.warnings);
+        return { ...status, orphanPids, warnings };
       } catch {
         // Resolution failures (e.g. session_not_found) fall through to
         // closeSession which produces the canonical error.
       }
       const sessionStatus = await manager.closeSession(target);
-      return { ...sessionStatus, orphanPids: teardown.orphanPids, warnings: teardown.warnings };
+      return { ...sessionStatus, orphanPids: [], warnings: [] };
     }
     if (request.method === 'sessions.cleanup') {
       const purge = isRecord(request.params) && request.params.purge === true;
@@ -357,6 +366,9 @@ export class ControllerServer {
     if (request.method === 'dap.start') {
       return this.startDapSession(request.params);
     }
+    if (request.method === 'dap.startCompound') {
+      return this.startDapCompound(request.params);
+    }
     if (request.method === 'dap.request') {
       return this.routeDapRequest(request.params);
     }
@@ -371,9 +383,70 @@ export class ControllerServer {
   }
 
   private async startDapSession(params: unknown): Promise<DapStartResult> {
+    return this.startDapSessionFromParams(parseDapStartParams(params));
+  }
+
+  private async startDapCompound(params: unknown): Promise<DapStartCompoundResult> {
+    const manager = this.requireSessionManager();
+    const startParams = parseDapStartCompoundParams(params);
+    const compoundId = createCompoundId();
+    const memberNames = startParams.members.map(member => member.memberName);
+    const startedMembers: Array<{ memberName: string; result: DapStartResult }> = [];
+
+    try {
+      for (const member of startParams.members) {
+        const compound: CompoundSessionMetadata = {
+          id: compoundId,
+          name: startParams.name,
+          memberName: member.memberName,
+          stopAll: startParams.stopAll,
+          members: memberNames,
+        };
+        const result = await this.startDapSessionFromParams({
+          mode: member.mode,
+          name: `${startParams.name}/${member.memberName}`,
+          use: startParams.use,
+          descriptor: member.descriptor,
+          config: member.config,
+          compound,
+        });
+        startedMembers.push({ memberName: member.memberName, result });
+      }
+    } catch (error) {
+      for (const started of [...startedMembers].reverse()) {
+        const runtime = this.runtimes.get(started.result.sessionId);
+        if (runtime !== undefined) {
+          await this.terminateRuntime(runtime, { terminateDebuggee: true }).catch(() => undefined);
+          this.runtimes.delete(started.result.sessionId);
+        }
+        await manager.closeSession(started.result.sessionId).catch(() => undefined);
+      }
+      const failedMemberName = findFailedCompoundMemberName(error, startParams.members, startedMembers.map(member => member.memberName));
+      if (failedMemberName !== undefined) {
+        await manager.closeSession(`${startParams.name}/${failedMemberName}`).catch(() => undefined);
+      }
+      throw dapError(`Compound member '${failedMemberName ?? 'unknown'}' failed to start.`, {
+        code: 'compound_member_start_failed',
+        diagnostics: createCompoundFailureDiagnostics(startParams.name, failedMemberName, error),
+        data: {
+          compoundName: startParams.name,
+          memberName: failedMemberName,
+          startedMembers: startedMembers.map(member => member.memberName),
+        },
+      });
+    }
+
+    return {
+      compoundId,
+      name: startParams.name,
+      stopAll: startParams.stopAll,
+      members: startedMembers.map(member => member.result),
+    };
+  }
+
+  private async startDapSessionFromParams(startParams: DapStartSessionParams): Promise<DapStartResult> {
     const manager = this.requireSessionManager();
     const discovery = this.requireDiscovery();
-    const startParams = parseDapStartParams(params);
     const descriptor = parseAdapterDescriptor(startParams.descriptor);
     const adapter = await this.startAdapter(descriptor, discovery.logDir);
     const { config, initialBreakpoints } = extractDapCliStartConfig(startParams.config);
@@ -385,15 +458,16 @@ export class ControllerServer {
     const preparedConfig = descriptor.id === 'js-debug'
       ? applyJsDebugTraceDefaults(config, discovery.logDir)
       : config;
-    const session = await manager.create({
+    const createOptions = {
       name: startParams.name,
       adapter: descriptor.id,
       lifecycle: 'adapterStarting',
       makeActive: startParams.use,
       ownedAdapter: getOwnedAdapter(adapter),
-    });
-    const client = new DapClient(adapter.transport, { requestTimeoutMs: 5_000 });
-    const lifecycle = new DapLifecycleController(client);
+    } as const;
+    const session = await manager.create(startParams.compound === undefined ? createOptions : { ...createOptions, compound: startParams.compound });
+    const client = new DapClient(adapter.transport, { requestTimeoutMs: controllerDapRequestTimeoutMs });
+    const lifecycle = new DapLifecycleController(client, { handshakeTimeoutMs: controllerDapRequestTimeoutMs });
     // Plan 05-18 (gap H-2): two-ring cache so js-debug `loadedSource` spam
     // (93/100 in a single hello-world, see 05-UAT.md) cannot evict critical
     // events like `stopped`. 200 high-priority + 50 low-priority = 250 total.
@@ -811,6 +885,8 @@ const PAUSED_REQUIRED_DAP_COMMANDS: ReadonlySet<string> = new Set([
   'variables',
 ]);
 
+const controllerDapRequestTimeoutMs = 30_000;
+
 function createInitializeArgs(adapterId: string): Record<string, unknown> {  return {
     adapterID: adapterId,
     clientID: 'dap-cli',
@@ -843,6 +919,36 @@ interface DapStartResult {
   eventCursor: number;
 }
 
+interface DapStartCompoundResult {
+  compoundId: string;
+  name: string;
+  stopAll: boolean;
+  members: readonly DapStartResult[];
+}
+
+interface DapStartSessionParams {
+  mode: 'launch' | 'attach';
+  name: string;
+  use: boolean;
+  descriptor: unknown;
+  config?: unknown;
+  compound?: CompoundSessionMetadata;
+}
+
+interface DapStartCompoundMemberParams {
+  memberName: string;
+  mode: 'launch' | 'attach';
+  descriptor: unknown;
+  config?: unknown;
+}
+
+interface DapStartCompoundParams {
+  name: string;
+  stopAll: boolean;
+  use: boolean;
+  members: readonly DapStartCompoundMemberParams[];
+}
+
 interface EventsRecentResult {
   sessionId: string;
   name: string;
@@ -861,14 +967,14 @@ interface DapCapabilitiesResult {
   capabilities: unknown;
 }
 
-function parseDapStartParams(params: unknown): { mode: 'launch' | 'attach'; name: string; use: boolean; descriptor: unknown; config?: unknown } {
+function parseDapStartParams(params: unknown): DapStartSessionParams {
   if (!isRecord(params)) {
     throw usageError('Missing DAP start parameters.', { code: 'missing_parameter' });
   }
 
   const mode = params.mode;
   const name = params.name;
-  const parsed: { mode: 'launch' | 'attach'; name: string; use: boolean; descriptor: unknown; config?: unknown } = {
+  const parsed: DapStartSessionParams = {
     mode: mode === 'attach' ? 'attach' : 'launch',
     name: typeof name === 'string' && name.length > 0 ? name : 'default',
     use: params.use !== false,
@@ -879,6 +985,72 @@ function parseDapStartParams(params: unknown): { mode: 'launch' | 'attach'; name
   }
 
   return parsed;
+}
+
+function parseDapStartCompoundParams(params: unknown): DapStartCompoundParams {
+  if (!isRecord(params)) {
+    throw usageError('Missing compound start parameters.', { code: 'missing_parameter' });
+  }
+
+  const name = typeof params.name === 'string' && params.name.length > 0 ? params.name : undefined;
+  if (name === undefined) {
+    throw usageError('Missing compound name.', { code: 'missing_parameter' });
+  }
+  if (!Array.isArray(params.members) || params.members.length === 0) {
+    throw usageError('Compound launch requires at least one member.', { code: 'missing_parameter' });
+  }
+
+  return {
+    name,
+    stopAll: params.stopAll !== false,
+    use: params.use !== false,
+    members: params.members.map(parseDapStartCompoundMemberParams),
+  };
+}
+
+function parseDapStartCompoundMemberParams(value: unknown): DapStartCompoundMemberParams {
+  if (!isRecord(value)) {
+    throw usageError('Invalid compound member.', { code: 'missing_parameter' });
+  }
+  const memberName = typeof value.memberName === 'string' && value.memberName.length > 0 ? value.memberName : undefined;
+  if (memberName === undefined) {
+    throw usageError('Compound member is missing memberName.', { code: 'missing_parameter' });
+  }
+  const mode = value.mode === 'attach' ? 'attach' : 'launch';
+  const parsed: DapStartCompoundMemberParams = {
+    memberName,
+    mode,
+    descriptor: value.descriptor,
+  };
+  if ('config' in value) {
+    parsed.config = value.config;
+  }
+  return parsed;
+}
+
+function createCompoundId(): string {
+  return `compound_${randomBytes(12).toString('base64url')}`;
+}
+
+function findFailedCompoundMemberName(error: unknown, members: readonly DapStartCompoundMemberParams[], startedMemberNames: readonly string[]): string | undefined {
+  const failed = members.find(member => !startedMemberNames.includes(member.memberName));
+  if (failed !== undefined) {
+    return failed.memberName;
+  }
+  if (error instanceof CliError && error.data !== undefined && typeof error.data.memberName === 'string') {
+    return error.data.memberName;
+  }
+  return undefined;
+}
+
+function createCompoundFailureDiagnostics(compoundName: string, memberName: string | undefined, error: unknown): readonly string[] {
+  const diagnostics = [`Compound '${compoundName}' failed while starting member '${memberName ?? 'unknown'}'.`];
+  if (error instanceof CliError) {
+    diagnostics.push(...error.diagnostics);
+  } else if (error instanceof Error) {
+    diagnostics.push(error.message);
+  }
+  return diagnostics;
 }
 
 interface DapCliStartConfig {
@@ -1147,7 +1319,7 @@ function hasTruthyCapability(capabilities: unknown, capability: string): boolean
 }
 
 function isImplementedDapRequestMethod(method: string): boolean {
-  return method === 'dap.start' || method === 'dap.request' || method === 'dap.capabilities' || method === 'events.recent' || method === 'events.list';
+  return method === 'dap.start' || method === 'dap.startCompound' || method === 'dap.request' || method === 'dap.capabilities' || method === 'events.recent' || method === 'events.list';
 }
 
 export async function startControllerServer(options: StartControllerServerOptions = {}): Promise<ControllerServer> {

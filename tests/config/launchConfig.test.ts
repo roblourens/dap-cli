@@ -5,10 +5,14 @@ import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
   launchConfigTypeMap,
+  listLaunchConfigEntries,
+  loadVSCodeLaunchJson,
   loadVSCodeLaunchConfig,
   mapDebugpyFlags,
   mapJsDebugFlags,
   resolveAdapterIdFromType,
+  resolveLaunchConfigurationConfig,
+  resolveLaunchConfigEntry,
   resolveLaunchConfig,
 } from '../../src/config/launchConfig.js';
 
@@ -65,6 +69,165 @@ describe('launch config resolution', () => {
     expect(await loadVSCodeLaunchConfig(tempDir)).toEqual([{ type: 'node', name: 'Run app', program: 'app.js' }]);
   });
 
+  test('loads launch.json documents with configurations and compounds', async () => {
+    await fs.mkdir(path.join(tempDir, '.vscode'));
+    await fs.writeFile(path.join(tempDir, '.vscode', 'launch.json'), `{
+      // VS Code launch files allow JSONC.
+      "configurations": [
+        { "type": "node", "request": "launch", "name": "Run app", "program": "app.js", },
+      ],
+      "compounds": [
+        { "name": "Full stack", "configurations": ["Run app"], "stopAll": false, },
+      ],
+    }`, 'utf8');
+
+    expect(await loadVSCodeLaunchConfig(tempDir)).toEqual([{ type: 'node', request: 'launch', name: 'Run app', program: 'app.js' }]);
+    expect(await loadVSCodeLaunchJson(tempDir)).toEqual({
+      workspaceFolder: tempDir,
+      configurations: [{ type: 'node', request: 'launch', name: 'Run app', program: 'app.js' }],
+      compounds: [{ name: 'Full stack', configurations: ['Run app'], stopAll: false }],
+    });
+  });
+
+  test('lists configuration and compound entries', () => {
+    expect(listLaunchConfigEntries({
+      workspaceFolder: tempDir,
+      configurations: [{ type: 'node', request: 'launch', name: 'Run app', program: 'app.js' }],
+      compounds: [{ name: 'Full stack', configurations: ['Run app'], stopAll: true }],
+    })).toEqual([
+      { kind: 'configuration', name: 'Run app', type: 'node', request: 'launch' },
+      { kind: 'compound', name: 'Full stack', configurations: ['Run app'], stopAll: true },
+    ]);
+  });
+
+  test('resolves launch config entries and reports missing or ambiguous names', () => {
+    const document = {
+      workspaceFolder: tempDir,
+      configurations: [{ type: 'node', request: 'launch', name: 'Run app', program: 'app.js' }],
+      compounds: [{ name: 'Full stack', configurations: ['Run app'], stopAll: true }],
+    };
+
+    expect(resolveLaunchConfigEntry(document, 'Run app')).toEqual({
+      kind: 'configuration',
+      configuration: { type: 'node', request: 'launch', name: 'Run app', program: 'app.js' },
+    });
+    expect(resolveLaunchConfigEntry(document, 'Full stack')).toEqual({
+      kind: 'compound',
+      compound: { name: 'Full stack', configurations: ['Run app'], stopAll: true },
+    });
+    expect(catchErrorCode(() => resolveLaunchConfigEntry(document, 'Missing'))).toBe('launch_config_not_found');
+    expect(catchErrorCode(() => resolveLaunchConfigEntry({
+      workspaceFolder: tempDir,
+      configurations: [{ type: 'node', request: 'launch', name: 'Duplicate', program: 'app.js' }],
+      compounds: [{ name: 'Duplicate', configurations: ['Duplicate'] }],
+    }, 'Duplicate'))).toBe('launch_config_ambiguous');
+  });
+
+  test('resolves workspace and environment variables recursively', () => {
+    const resolved = resolveLaunchConfigurationConfig({
+      type: 'node',
+      name: 'Run app',
+      request: 'launch',
+      program: '${workspaceFolder}/src/app.js',
+      cwd: '${workspaceFolder}',
+      args: ['--root', '${workspaceFolderBasename}', '--home', '${userHome}'],
+      env: { PATH_VALUE: '${env:EXAMPLE_PATH}', EXEC_PATH: '${execPath}' },
+      nested: { file: '${workspaceFolder}/nested.js' },
+    }, {
+      workspaceFolder: path.join(tempDir, 'workspace-root'),
+      env: { EXAMPLE_PATH: '/example/bin' },
+      execPath: '/usr/local/bin/node',
+      userHome: '/Users/example',
+    });
+
+    expect(resolved).toMatchObject({
+      program: path.join(tempDir, 'workspace-root', 'src/app.js'),
+      cwd: path.join(tempDir, 'workspace-root'),
+      args: ['--root', 'workspace-root', '--home', '/Users/example'],
+      env: { PATH_VALUE: '/example/bin', EXEC_PATH: '/usr/local/bin/node' },
+      nested: { file: path.join(tempDir, 'workspace-root', 'nested.js') },
+    });
+  });
+
+  test('reports unresolved and unsupported launch variables with paths', () => {
+    expect(catchErrorCode(() => resolveLaunchConfigurationConfig({
+      type: 'node',
+      name: 'Run app',
+      request: 'launch',
+      env: { MISSING: '${env:DOES_NOT_EXIST}' },
+    }, { workspaceFolder: tempDir, env: {} }))).toBe('unresolved_launch_variable');
+
+    expect(catchErrorCode(() => resolveLaunchConfigurationConfig({
+      type: 'node',
+      name: 'Run app',
+      request: 'launch',
+      program: '${command:extension.command}',
+    }, { workspaceFolder: tempDir }))).toBe('unsupported_launch_variable');
+
+    expect(catchErrorCode(() => resolveLaunchConfigurationConfig({
+      type: 'node',
+      name: 'Run app',
+      request: 'launch',
+      args: ['${input:choice}'],
+    }, { workspaceFolder: tempDir }))).toBe('unsupported_launch_variable');
+  });
+
+  test('applies platform overlays and strips nonmatching overlays', () => {
+    const resolved = resolveLaunchConfigurationConfig({
+      type: 'chrome',
+      name: 'Run browser',
+      request: 'launch',
+      runtimeExecutable: 'base-browser',
+      osx: { runtimeExecutable: 'mac-browser', args: ['--mac'] },
+      mac: { cwd: '${workspaceFolder}' },
+      linux: { runtimeExecutable: 'linux-browser' },
+      windows: { runtimeExecutable: 'windows-browser' },
+    }, { workspaceFolder: tempDir, platform: 'darwin' });
+
+    expect(resolved).toMatchObject({
+      runtimeExecutable: 'mac-browser',
+      args: ['--mac'],
+      cwd: tempDir,
+    });
+    expect(resolved).not.toHaveProperty('osx');
+    expect(resolved).not.toHaveProperty('mac');
+    expect(resolved).not.toHaveProperty('linux');
+    expect(resolved).not.toHaveProperty('windows');
+  });
+
+  test('preserves adapter-native fields and strips VS Code-only fields', () => {
+    expect(resolveLaunchConfigurationConfig({
+      type: 'chrome',
+      name: 'Launch VS Code Internal',
+      request: 'launch',
+      userDataDir: '${userHome}/.vscode-oss-dev',
+      webRoot: '${workspaceFolder}',
+      cleanUp: 'wholeBrowser',
+      killBehavior: 'polite',
+      browserLaunchLocation: 'workspace',
+      cascadeTerminateToConfigurations: ['Attach to Extension Host'],
+      pauseForSourceMap: false,
+      env: { NULL_VALUE: null },
+      presentation: { hidden: true },
+      internalConsoleOptions: 'neverOpen',
+      serverReadyAction: { pattern: 'ready' },
+      preLaunchTask: 'build',
+      postDebugTask: 'cleanup',
+    }, { workspaceFolder: tempDir, userHome: '/Users/example' })).toEqual({
+      type: 'chrome',
+      name: 'Launch VS Code Internal',
+      request: 'launch',
+      userDataDir: '/Users/example/.vscode-oss-dev',
+      webRoot: tempDir,
+      cleanUp: 'wholeBrowser',
+      killBehavior: 'polite',
+      browserLaunchLocation: 'workspace',
+      cascadeTerminateToConfigurations: ['Attach to Extension Host'],
+      pauseForSourceMap: false,
+      env: { NULL_VALUE: null },
+    });
+  });
+
   test('reports invalid launch JSON', async () => {
     await fs.mkdir(path.join(tempDir, '.vscode'));
     await fs.writeFile(path.join(tempDir, '.vscode', 'launch.json'), '{', 'utf8');
@@ -98,6 +261,24 @@ describe('launch config resolution', () => {
 
   test('passes stopOnEntry through to js-debug native config', () => {
     expect(mapJsDebugFlags({ program: 'app.js', stopOnEntry: true })).toEqual({ program: 'app.js', stopOnEntry: true });
+  });
+
+  test('passes adapter-native js-debug fields through flag mapping', () => {
+    expect(mapJsDebugFlags({
+      type: 'chrome',
+      userDataDir: '/tmp/profile',
+      webRoot: '/repo',
+      cleanUp: 'wholeBrowser',
+      browserLaunchLocation: 'workspace',
+      pauseForSourceMap: false,
+    })).toEqual({
+      type: 'pwa-chrome',
+      userDataDir: '/tmp/profile',
+      webRoot: '/repo',
+      cleanUp: 'wholeBrowser',
+      browserLaunchLocation: 'workspace',
+      pauseForSourceMap: false,
+    });
   });
 
   test('passes stopOnEntry through to debugpy native config', () => {

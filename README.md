@@ -100,6 +100,35 @@ dap-cli stop --name demo
 dap-cli cleanup
 ```
 
+## VS Code `launch.json` Workspaces
+
+`launch` and `attach` can discover VS Code-style `.vscode/launch.json` files from a workspace. Use `--list-configs` to inspect available configurations and compounds without contacting the controller:
+
+```bash
+dap-cli launch --workspace /path/to/workspace --list-configs
+dap-cli attach --workspace /path/to/workspace --list-configs
+```
+
+Start a named configuration with `--config <name>`:
+
+```bash
+dap-cli launch --workspace /path/to/workspace --config "Launch App"
+dap-cli attach --workspace /path/to/workspace --config "Attach Worker"
+```
+
+Compounds start every referenced member as a coordinated group. Member session names are derived as `<compound>/<member>`, so DAP requests target the member by that derived name:
+
+```bash
+dap-cli launch --workspace /path/to/workspace --config "Full Stack"
+dap-cli sessions
+dap-cli threads --name "Full Stack/Server"
+dap-cli close "Full Stack/Server"
+```
+
+If `stopAll` is omitted or `true`, closing one member closes the whole compound group. If `stopAll: false`, closing one member leaves peers running.
+
+Supported launch variables are `${workspaceFolder}`, `${workspaceFolderBasename}`, `${userHome}`, `${env:NAME}`, and `${execPath}`. Platform overlays (`osx`/`mac`, `linux`, `windows`) are merged for the current platform. VS Code task fields such as `preLaunchTask` and `postDebugTask` are ignored silently; dap-cli does not run VS Code tasks. `${input:...}` and `${command:...}` variables are rejected as unsupported. Phase 05.2 does not add new adapters or event streaming; this remains the polling CLI model described above.
+
 ## Built-in Adapters
 
 JavaScript debugging uses the built-in `js-debug` adapter descriptor. Python debugging uses the built-in `debugpy` adapter descriptor. The intended v1 path is first-party setup/readiness, not manual adapter installation by every user. If adapter readiness fails, see [docs/ADAPTER-SETUP.md](docs/ADAPTER-SETUP.md) for troubleshooting and advanced manual provisioning.

@@ -1,10 +1,9 @@
 # Driving VS Code (built from sources) with `dap-cli` + `playwright-cli`
 
-This walkthrough launches **VS Code OSS built from `/Users/roblou/code/vscode`**,
-attaches `dap-cli` (via the bundled `js-debug` adapter, `pwa-chrome` mode) to its
-renderer, sets a breakpoint inside the chat widget, then drives the chat panel
-with `playwright-cli` and observes the breakpoint fire when the user submits a
-message.
+This walkthrough launches **VS Code OSS built from `/Users/roblou/code/vscode`**
+through its workspace `.vscode/launch.json` compound, sets a breakpoint inside
+the chat widget, then drives the chat panel with `playwright-cli` and observes
+the breakpoint fire when the user submits a message.
 
 It is the VS Code analogue of [PLAYWRIGHT-INTEROP.md](PLAYWRIGHT-INTEROP.md):
 two clients (a debugger and a UI driver) sharing one Chrome DevTools Protocol
@@ -50,60 +49,51 @@ For background on the VS Code launch flags below, see the launch skill at
 
 ## Sequence
 
-Run all three terminals from `/Users/roblou/code/dap-cli` unless noted.
+Run all terminals from `/Users/roblou/code/dap-cli` unless noted.
 
-### Terminal A — launch Code OSS with CDP enabled
-
-```bash
-cd /Users/roblou/code/vscode
-unset ELECTRON_RUN_AS_NODE
-VSCODE_SKIP_PRELAUNCH=1 ./scripts/code.sh \
-  --user-data-dir .build/chat-memory-smoke/user-data \
-  --remote-debugging-port=9224
-```
-
-Wait until the workbench is fully loaded, then confirm CDP from another
-terminal:
-
-```bash
-curl -s http://127.0.0.1:9224/json/version | head -c 200
-```
-
-Expect a `{ "Browser": "Chrome/...", ... }` payload. `curl
-http://127.0.0.1:9224/json` lists targets — there should be a single page
-target whose URL is `vscode-file://vscode-app/.../workbench-dev.html`.
-
-### Terminal B — start the dap-cli controller and attach to the renderer
+### Terminal A — start the controller and launch the VS Code compound
 
 ```bash
 cd /Users/roblou/code/dap-cli
 
-# 1. Start the controller (background).
-npx dap-cli start &
-
-# 2. Attach to the running Electron renderer over CDP.
-npx dap-cli attach --name vscode-chat --adapter js-debug \
-  --json '{"type":"pwa-chrome","request":"attach","port":9224,"webRoot":"/Users/roblou/code/vscode","urlFilter":"vscode-file://*"}'
-
-# 3. Confirm the page registered as a child session.
-npx dap-cli sessions --show-children
+npx dap-cli cleanup --purge || true
+npx dap-cli stop-controller || true
+npx dap-cli start
+npx dap-cli launch --config "VS Code" --workspace /Users/roblou/code/vscode
 ```
 
-`sessions --show-children` should show `vscode-chat` plus one child whose
-name is `vscode-chat#<targetId>` — that is the workbench page.
+Expected compound member sessions:
 
-### Terminal B (cont.) — set a breakpoint in the chat widget (TypeScript source)
+```text
+VS Code/Launch VS Code Internal
+VS Code/Attach to Main Process
+VS Code/Attach to Extension Host
+VS Code/Attach to Shared Process
+VS Code/Attach to Agent Host Process
+```
 
-`ChatWidget.acceptInput` runs every time the user submits a chat message,
-regardless of backend or auth state — a reliable target. We point dap-cli
-at the **TypeScript source** so binding goes through the inline source map.
-
-First make sure the chat module is loaded (cold start hasn't imported it
-yet). Open the chat panel once with `playwright-cli` (Terminal C, below)
-or by clicking the chat icon in the workbench, then come back and:
+Verify them with human output:
 
 ```bash
-npx dap-cli breakpoints set --name vscode-chat \
+DAP_CLI_HUMAN=1 npx dap-cli sessions
+```
+
+If fewer than five members appear, stop and record the run as blocked or failed
+in UAT. The expected compound uses `stopAll`, so closing one member should close
+the whole group during cleanup.
+
+### Terminal A (cont.) — set a breakpoint in the chat widget
+
+`ChatWidget.acceptInput` runs every time the user submits a chat message,
+regardless of backend or auth state — a reliable target. We point dap-cli at the
+**TypeScript source** so binding goes through the inline source map.
+
+First make sure the chat module is loaded (cold start may not have imported it
+yet). Open the chat panel once with `playwright-cli` (Terminal B, below) or by
+clicking the chat icon in the workbench, then come back and:
+
+```bash
+npx dap-cli breakpoints set --name "VS Code/Launch VS Code Internal" \
   --source /Users/roblou/code/vscode/src/vs/workbench/contrib/chat/browser/widget/chatWidget.ts \
   --line 2271
 ```
@@ -120,7 +110,7 @@ If you see `"verified": false`, the chat module still isn't loaded — open
 the panel and re-issue the command. If `acceptInput` has moved, find the
 new line with `grep -n "async acceptInput" .../widget/chatWidget.ts`.
 
-### Terminal C — drive the UI with playwright-cli
+### Terminal B — drive the UI with playwright-cli
 
 ```bash
 playwright-cli attach --cdp=http://127.0.0.1:9224
@@ -148,19 +138,18 @@ keystroke in the background and switch to the dap-cli terminal:
 ```bash
 ( playwright-cli press "Enter" ) &
 sleep 1
-npx dap-cli events  --name vscode-chat --include stopped --limit 5
-npx dap-cli threads --name vscode-chat
-npx dap-cli stack   --name vscode-chat --thread-id 0 --levels 5
+npx dap-cli events  --name "VS Code/Launch VS Code Internal" --include stopped --limit 5
+npx dap-cli threads --name "VS Code/Launch VS Code Internal"
+npx dap-cli stack   --name "VS Code/Launch VS Code Internal" --thread-id 0 --levels 5
 ```
 
 Expected highlights from the captured run that produced this doc:
 
 ```text
-events:  reason: "breakpoint", hitBreakpointIds: [0],
-         child_session_id: "sess_…"   # the workbench page child
+events:  reason: "breakpoint", hitBreakpointIds: [0]
 
-threads: [{ id: 0, name: "Welcome",            sessionName: "vscode-chat#…" },
-          { id: 1, name: "editorWorkerService", sessionName: "vscode-chat#…" }]
+threads: [{ id: 0, name: "Welcome" },
+          { id: 1, name: "editorWorkerService" }]
 
 stack:   ChatWidget.acceptInput              chatWidget.ts:2271      # source-mapped
          ChatSubmitAction.run                chatExecuteActions.ts:159
@@ -175,7 +164,7 @@ that the inline source map resolved end-to-end.
 Resume:
 
 ```bash
-npx dap-cli continue --name vscode-chat --thread-id 0
+npx dap-cli continue --name "VS Code/Launch VS Code Internal" --thread-id 0
 ```
 
 The backgrounded `playwright-cli press "Enter"` will then return; the chat
@@ -185,11 +174,13 @@ panel will show the submitted message.
 
 ```bash
 playwright-cli detach
-npx dap-cli close vscode-chat
+npx dap-cli close "VS Code/Launch VS Code Internal"
+npx dap-cli sessions
 npx dap-cli stop-controller
-# then Cmd-Q the Code OSS window, or:
-pkill -f "Electron.*remote-debugging-port=9224"
 ```
+
+Because the VS Code compound uses `stopAll`, `sessions` should show that the
+group was removed after closing `VS Code/Launch VS Code Internal`.
 
 ## Troubleshooting
 

@@ -56,7 +56,7 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [x] **TEST-03**: CLI parsing and JSON output contracts are covered by automated tests for representative commands and failure cases.
 - [x] **TEST-04**: JavaScript and Python built-in adapters have end-to-end smoke tests that agents can run without relying on manual user validation.
 - [x] **TEST-05**: The repository includes a deterministic scripted test suite that exercises every implemented feature and supported command path.
-- [ ] **TEST-06**: Once dap-cli reaches a minimally usable form, development and validation include self-hosting workflows that use dap-cli to debug dap-cli or its fixtures.
+- [x] **TEST-06**: Once dap-cli reaches a minimally usable form, development and validation include self-hosting workflows that use dap-cli to debug dap-cli or its fixtures.
 - [x] **TEST-07**: The verification strategy includes agentic exploratory debugging scenarios that combine dap-cli with dynamic application interaction, such as Playwright-driven UI actions.
 
 ## v2 Requirements
@@ -131,7 +131,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TEST-03 | Phase 1 | Complete |
 | TEST-04 | Phase 3 | Complete |
 | TEST-05 | Phase 2 | Complete |
-| TEST-06 | Phase 4 | Pending |
+| TEST-06 | Phase 4 | Complete |
 | TEST-07 | Phase 4 | Complete |
 
 **Coverage:**

@@ -36,8 +36,16 @@ const scripts: Record<string, FakeStep[]> = {
 	'execution-control': createExecutionControlScript(),
 	'failed-threads': createFailedThreadsScript(),
 	'expect-launch-overrides': createLifecycleScript('launch', { request: 'launch', program: 'flag.js', cwd: 'flag-cwd' }),
+	'expect-workspace-launch': createLifecycleScript('launch'),
+	'expect-workspace-attach': createLifecycleScript('attach'),
+	'expect-compound-launch-member-a': createLifecycleScript('launch'),
+	'expect-compound-attach-member-b': createLifecycleScript('attach'),
 	'expect-stop-on-entry': createLifecycleScript('launch', { stopOnEntry: true }),
 	'expect-attach-overrides': createLifecycleScript('attach', { request: 'attach', port: 4711 }),
+	'compound-startup-fails-after-initialize': [
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch', success: false, message: 'compound fixture startup failed' },
+	],
 	'stop-then-transport-close': [
 		// Stop-on-entry, answer one threads request, then close the transport.
 		// Used by the stale-session diagnostic test.
@@ -127,6 +135,12 @@ process.stdin.on('data', (chunk: Buffer) => {
 			process.exit(1);
 		}
 
+		const validationError = validateDynamicArguments(scriptName, message.command, message.arguments);
+		if (validationError !== undefined) {
+			writeResponse(message, false, validationError);
+			process.exit(1);
+		}
+
 		writeResponse(message, step.success ?? true, step.message, step.body);
 		flushEvents();
 	}
@@ -150,6 +164,99 @@ function createLifecycleScript(startCommand: 'launch' | 'attach', expectedStartA
 		{ event: 'terminated' },
 		{ close: true },
 	];
+}
+
+function validateDynamicArguments(scriptName: string, command: string, actual: unknown): string | undefined {
+	if (scriptName !== 'expect-workspace-launch' && scriptName !== 'expect-workspace-attach' && scriptName !== 'expect-compound-launch-member-a' && scriptName !== 'expect-compound-attach-member-b') {
+		return undefined;
+	}
+	if (command !== 'launch' && command !== 'attach') {
+		return undefined;
+	}
+	if (typeof actual !== 'object' || actual === null || Array.isArray(actual)) {
+		return `Unexpected arguments for ${command}: ${JSON.stringify(actual)}`;
+	}
+
+	const actualRecord = actual as Record<string, unknown>;
+	if (scriptName === 'expect-workspace-launch') {
+		const program = typeof actualRecord.program === 'string' ? actualRecord.program : '';
+		const cwd = typeof actualRecord.cwd === 'string' ? actualRecord.cwd : '';
+		if (actualRecord.request !== 'launch' || !program.endsWith('/workspace-launch/from-flag.js') || !cwd.endsWith('/workspace-launch') || actualRecord.customField !== 'json') {
+			return `Unexpected arguments for ${command}: ${JSON.stringify(actual)}`;
+		}
+		return undefined;
+	}
+
+	if (scriptName === 'expect-compound-launch-member-a') {
+		return validateCompoundLaunchMember(command, actualRecord);
+	}
+
+	if (scriptName === 'expect-compound-attach-member-b') {
+		return validateCompoundAttachMember(command, actualRecord);
+	}
+
+	const program = typeof actualRecord.program === 'string' ? actualRecord.program : '';
+	const cwd = typeof actualRecord.cwd === 'string' ? actualRecord.cwd : '';
+	if (actualRecord.request !== 'attach' || !program.endsWith('/workspace-attach/worker.js') || !cwd.endsWith('/workspace-attach')) {
+		return `Unexpected arguments for ${command}: ${JSON.stringify(actual)}`;
+	}
+	return undefined;
+}
+
+function validateCompoundLaunchMember(command: string, actualRecord: Record<string, unknown>): string | undefined {
+	const program = typeof actualRecord.program === 'string' ? actualRecord.program : '';
+	const cwd = typeof actualRecord.cwd === 'string' ? actualRecord.cwd : '';
+	const webRoot = typeof actualRecord.webRoot === 'string' ? actualRecord.webRoot : '';
+	const userDataDir = typeof actualRecord.userDataDir === 'string' ? actualRecord.userDataDir : '';
+	const runtimeExecutable = typeof actualRecord.runtimeExecutable === 'string' ? actualRecord.runtimeExecutable : '';
+	if (
+		actualRecord.request !== 'launch' ||
+		!program.endsWith('/tests/fixtures/dap-cli-target/index.js') ||
+		!cwd.endsWith('/tests/fixtures/dap-cli-target') ||
+		!webRoot.endsWith('/tests/fixtures/dap-cli-target/web') ||
+		!userDataDir.endsWith('/.dap-cli-fixture/dap-cli-target') ||
+		runtimeExecutable !== expectedFixtureRuntimeExecutable() ||
+		actualRecord.cleanUp !== process.env.DAP_CLI_COMPOUND_FIXTURE ||
+		actualRecord.cascadeTerminateToConfigurations !== true ||
+		'preLaunchTask' in actualRecord ||
+		'postDebugTask' in actualRecord ||
+		'presentation' in actualRecord ||
+		'internalConsoleOptions' in actualRecord
+	) {
+		return `Unexpected arguments for ${command}: ${JSON.stringify(actualRecord)}`;
+	}
+	return undefined;
+}
+
+function validateCompoundAttachMember(command: string, actualRecord: Record<string, unknown>): string | undefined {
+	const program = typeof actualRecord.program === 'string' ? actualRecord.program : '';
+	const cwd = typeof actualRecord.cwd === 'string' ? actualRecord.cwd : '';
+	const webRoot = typeof actualRecord.webRoot === 'string' ? actualRecord.webRoot : '';
+	const userDataDir = typeof actualRecord.userDataDir === 'string' ? actualRecord.userDataDir : '';
+	if (
+		actualRecord.request !== 'attach' ||
+		actualRecord.port !== 9229 ||
+		!program.endsWith('/tests/fixtures/dap-cli-target/index.js') ||
+		!cwd.endsWith('/tests/fixtures/dap-cli-target') ||
+		!webRoot.endsWith('/tests/fixtures/dap-cli-target/web') ||
+		!userDataDir.endsWith('/.dap-cli-fixture/dap-cli-target') ||
+		actualRecord.cleanUp !== process.env.DAP_CLI_COMPOUND_FIXTURE ||
+		actualRecord.cascadeTerminateToConfigurations !== false ||
+		'serverReadyAction' in actualRecord
+	) {
+		return `Unexpected arguments for ${command}: ${JSON.stringify(actualRecord)}`;
+	}
+	return undefined;
+}
+
+function expectedFixtureRuntimeExecutable(): string {
+	if (process.platform === 'darwin') {
+		return `${process.cwd()}/tests/fixtures/dap-cli-target/bin/mac-runtime`;
+	}
+	if (process.platform === 'win32') {
+		return `${process.cwd()}\\tests\\fixtures\\dap-cli-target\\bin\\windows-runtime.exe`;
+	}
+	return `${process.cwd()}/tests/fixtures/dap-cli-target/bin/linux-runtime`;
 }
 
 function matchesExpectedArguments(actual: unknown, expected: Record<string, unknown>): boolean {

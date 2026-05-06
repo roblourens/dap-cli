@@ -46,9 +46,9 @@ export function registerSessionCommands(program: Command, output: OutputWriter):
       // the DAP client's 5s timeout when an adapter is wedged). The default
       // IPC client timeout is 5s, so close was returning controller_request_timeout
       // exit 7 even though the underlying cascade finished cleanly. Give close
-      // a 30s ceiling so the command surfaces the real outcome (orphanPids etc.)
+      // a 60s ceiling so the command surfaces the real outcome (orphanPids etc.)
       // instead of a misleading timeout. Other commands keep the 5s default.
-      await withController(output, 'close', async client => client.request('sessions.close', createNameParams(target)), { timeoutMs: 30_000 });
+      await withController(output, 'close', async client => client.request('sessions.close', createNameParams(target)), { timeoutMs: closeControllerRequestTimeoutMs });
     });
 
   program
@@ -70,6 +70,8 @@ async function withController<T>(output: OutputWriter, command: string, callback
     await client.close();
   }
 }
+
+const closeControllerRequestTimeoutMs = 60_000;
 
 function createNameParams(name: string | undefined): { name?: string } {
   return name === undefined ? {} : { name };

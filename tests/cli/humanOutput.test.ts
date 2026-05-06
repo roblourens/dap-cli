@@ -150,6 +150,22 @@ describe('curated human success renderers', () => {
     expect(output).not.toContain('Timestamp:');
   });
 
+  test('sessions includes a compact compound column only when compound metadata exists', () => {
+    const compoundOutput = renderHumanSuccess([
+      { id: 's1', name: 'VS Code/Renderer', status: 'running', adapter: 'fake', compound: { name: 'VS Code', memberName: 'Renderer', stopAll: true, members: ['Renderer', 'Main'] } },
+      { id: 's2', name: 'plain', status: 'running', adapter: 'fake' },
+    ], { command: 'sessions', timestamp });
+
+    expect(compoundOutput).toContain('│ ID │ Name             │ Status  │ Adapter │ Compound         │');
+    expect(compoundOutput).toContain('│ s1 │ VS Code/Renderer │ running │ fake    │ VS Code/Renderer │');
+    expect(compoundOutput).toContain('│ s2 │ plain            │ running │ fake    │                  │');
+
+    const plainOutput = renderHumanSuccess([
+      { id: 's2', name: 'plain', status: 'running', adapter: 'fake' },
+    ], { command: 'sessions', timestamp });
+    expect(plainOutput).not.toContain('Compound');
+  });
+
   test('status renders common session and controller fields', () => {
     const output = renderHumanSuccess({
       id: 's1',
@@ -167,6 +183,20 @@ describe('curated human success renderers', () => {
     expect(output).toContain('Paused: true');
     expect(output).toContain('Stopped thread IDs: 1, 2');
     expect(output).toContain('PID: 123');
+  });
+
+  test('status renders compound metadata when present', () => {
+    const output = renderHumanSuccess({
+      id: 's1',
+      name: 'VS Code/Renderer',
+      status: 'running',
+      compound: { name: 'VS Code', memberName: 'Renderer', stopAll: true, members: ['Renderer', 'Main'] },
+    }, { command: 'status', timestamp });
+
+    expect(output).toContain('Compound: VS Code');
+    expect(output).toContain('Compound member: Renderer');
+    expect(output).toContain('Compound stop all: yes');
+    expect(output).toContain('Compound members: Renderer, Main');
   });
 
   test('events renders warnings before event rows', () => {
@@ -236,6 +266,18 @@ describe('curated human success renderers', () => {
     expect(renderHumanSuccess({ result: '42', type: 'number', variablesReference: 0 }, { command: 'evaluate', timestamp })).toContain('Evaluate:');
     expect(renderHumanSuccess({ removed: 2, remaining: 1 }, { command: 'cleanup', timestamp })).toContain('Cleanup:');
     expect(renderHumanSuccess({ name: 'demo', status: 'terminated', orphanPids: [123] }, { command: 'close', timestamp })).toContain('Close:');
+  });
+
+  test('launch configs renders configuration and compound discovery rows', () => {
+    const output = renderHumanSuccess([
+      { kind: 'configuration', name: 'Named Fake', type: 'fakeType', request: 'launch' },
+      { kind: 'compound', name: 'Compound Fake', configurations: ['Named Fake'], stopAll: false },
+    ], { command: 'launch configs', timestamp });
+
+    expect(output).toContain('Launch Configs:');
+    expect(output).toContain('│ Kind          │ Name          │ Type     │ Request │ Members    │ Stop all │');
+    expect(output).toContain('│ configuration │ Named Fake    │ fakeType │ launch  │            │          │');
+    expect(output).toContain('│ compound      │ Compound Fake │          │         │ Named Fake │ no       │');
   });
 
   test('unknown command results use the generic fallback', () => {

@@ -21,6 +21,14 @@ const ownedAdapterSchema = z.object({
   startedByDapCli: z.boolean(),
 });
 
+const compoundSessionMetadataSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  memberName: z.string().min(1),
+  stopAll: z.boolean(),
+  members: z.array(z.string().min(1)),
+});
+
 const sessionRecordSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -33,6 +41,7 @@ const sessionRecordSchema = z.object({
   // children carry their parent's id so the controller can route requests
   // and so 'sessions list' can hide them by default (plan 05-19, gap H-3).
   parent_session_id: z.string().min(1).optional(),
+  compound: compoundSessionMetadataSchema.optional(),
   // Plan 05-17 (gap H-1) — paused projection mirrors DAP stopped/continued
   // events onto persisted SessionRecord state. Optional; absence === unknown.
   paused: z.boolean().optional(),

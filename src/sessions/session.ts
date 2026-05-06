@@ -39,6 +39,14 @@ export interface OwnedAdapterMetadata {
   startedByDapCli: boolean;
 }
 
+export interface CompoundSessionMetadata {
+  id: string;
+  name: string;
+  memberName: string;
+  stopAll: boolean;
+  members: readonly string[];
+}
+
 export interface SessionRecord {
   id: SessionId;
   name: string;
@@ -48,6 +56,7 @@ export interface SessionRecord {
   updatedAt: string;
   ownedAdapter: OwnedAdapterMetadata;
   parent_session_id?: SessionId;
+  compound?: CompoundSessionMetadata;
   // Hand-driven gap H-1 (plan 05-17): mirror DAP `stopped`/`continued` event
   // state so `dap-cli status` can report paused-vs-running without polling
   // events. Absence (undefined) means "unknown"; explicit `false` means
@@ -65,6 +74,7 @@ export interface SessionSummary {
   status: SessionStatusState;
   updatedAt: string;
   parent_session_id?: SessionId;
+  compound?: CompoundSessionMetadata;
   // Plan 05-19 (gap H-3): explicit `targetable: false` is set on child
   // sessions because the parent owns the bp registry, threads, and event
   // stream in js-debug pwa-chrome. Absence === targetable. Children stay
@@ -118,6 +128,9 @@ export function projectSessionSummary(session: SessionRecord): SessionSummary {
   }
   if (session.stoppedThreadIds !== undefined) {
     result = { ...result, stoppedThreadIds: session.stoppedThreadIds };
+  }
+  if (session.compound !== undefined) {
+    result = { ...result, compound: session.compound };
   }
   return result;
 }

@@ -5,13 +5,25 @@ import { createControllerClient } from '../../controller/client.js';
 import type { AdapterDescriptor } from '../../adapters/descriptor.js';
 import { loadAdapterConfig } from '../../adapters/config.js';
 import { AdapterRegistry } from '../../adapters/registry.js';
-import { loadVSCodeLaunchConfig, mapDebugpyFlags, mapJsDebugFlags, resolveAdapterIdFromType, resolveLaunchConfig } from '../../config/launchConfig.js';
+import {
+  type LaunchConfiguration,
+  loadVSCodeLaunchJson,
+  listLaunchConfigEntries,
+  mapDebugpyFlags,
+  mapJsDebugFlags,
+  resolveAdapterIdFromType,
+  resolveLaunchConfig,
+  resolveLaunchConfigEntry,
+  resolveLaunchConfigurationConfig,
+} from '../../config/launchConfig.js';
 import type { OutputWriter } from '../outputWriter.js';
 import { parseJsonOption } from './jsonOptions.js';
 
 interface DapStartCommandOptions {
   adapter?: string;
   config?: string;
+  workspace?: string;
+  listConfigs?: boolean;
   json?: string;
   script?: string;
   name?: string;
@@ -53,6 +65,8 @@ export function registerDapCoreCommands(program: Command, output: OutputWriter):
     .description('Start a DAP launch session using an adapter id, named launch config, or fake adapter')
     .option('--adapter <adapter>', 'adapter id')
     .option('--config <name>', 'named .vscode/launch.json configuration')
+    .option('--workspace <path>', 'workspace root for .vscode/launch.json discovery and variable substitution')
+    .option('--list-configs', 'list VS Code launch configurations and compounds without starting a session')
     .option('--json <json>', 'raw adapter-native launch configuration JSON', '{}')
     .option('--script <script>', 'fake adapter script', 'stopped-on-entry')
     .option('--name <name>', 'session name', 'default')
@@ -78,6 +92,8 @@ export function registerDapCoreCommands(program: Command, output: OutputWriter):
     .description('Start a DAP attach session using an adapter id, named launch config, or fake adapter')
     .option('--adapter <adapter>', 'adapter id')
     .option('--config <name>', 'named .vscode/launch.json configuration')
+    .option('--workspace <path>', 'workspace root for .vscode/launch.json discovery and variable substitution')
+    .option('--list-configs', 'list VS Code launch configurations and compounds without starting a session')
     .option('--json <json>', 'raw adapter-native attach configuration JSON', '{}')
     .option('--script <script>', 'fake adapter script', 'attach-stopped')
     .option('--name <name>', 'session name', 'default')
@@ -152,14 +168,48 @@ function createNameParams(name: string | undefined): { name?: string } {
 }
 
 async function startDap(output: OutputWriter, mode: 'launch' | 'attach', options: DapStartCommandOptions): Promise<void> {
-  const namedConfig = await resolveNamedConfig(options.config);
+  const workspace = path.resolve(options.workspace ?? process.cwd());
+  if (options.listConfigs === true) {
+    output.success(listLaunchConfigEntries(await loadVSCodeLaunchJson(workspace)), { command: 'launch configs' });
+    return;
+  }
+
+  const namedEntry = await resolveNamedEntry(options.config, workspace);
   const jsonConfig = parseJsonRecordOption(options.json ?? '{}');
   const adapterConfig = await loadAdapterConfig(process.env.DAP_CLI_HOME);
+  if (namedEntry?.kind === 'compound') {
+    for (const memberName of namedEntry.compound.configurations) {
+      if (!namedEntry.document.configurations.some(configuration => configuration.name === memberName)) {
+        throw usageError(`Compound member '${memberName}' was not found.`, {
+          code: 'compound_member_not_found',
+          diagnostics: [`Compound '${namedEntry.compound.name}' references missing configuration '${memberName}'.`],
+          data: { workspaceFolder: workspace, compoundName: namedEntry.compound.name, memberName },
+        });
+      }
+    }
+    const members = namedEntry.compound.configurations.map(memberName => {
+      const memberConfig = namedEntry.document.configurations.find(configuration => configuration.name === memberName);
+      if (memberConfig === undefined) {
+        throw new Error(`Preflight missed compound member '${memberName}'.`);
+      }
+      return createCompoundStartMember(memberConfig, memberName, namedEntry.document.workspaceFolder, mode, options, jsonConfig, adapterConfig);
+    });
+
+    await withController(output, mode, async client => client.request('dap.startCompound', {
+      name: namedEntry.compound.name,
+      stopAll: namedEntry.compound.stopAll !== false,
+      use: options.use !== false,
+      members,
+    }), { timeoutMs: startControllerRequestTimeoutMs });
+    return;
+  }
+
+  const namedConfig = namedEntry?.configuration;
   const adapterId = resolveAdapterId(options.adapter, namedConfig, adapterConfig.launchConfigTypeMap);
   const adapterFlags = mapFlagsForAdapter(adapterId, collectFlagOverrides(options));
   const adapterDefaults = getAdapterDefaults(adapterConfig, adapterId, mode);
   const config = {
-    ...resolveLaunchConfig({ namedConfig: { ...adapterDefaults, ...namedConfig }, jsonConfig, flags: adapterFlags }),
+    ...mapConfigForAdapter(adapterId, resolveLaunchConfig({ namedConfig: { ...adapterDefaults, ...namedConfig }, jsonConfig, flags: adapterFlags })),
     request: mode,
   };
   const descriptor = adapterId === 'fake'
@@ -172,7 +222,32 @@ async function startDap(output: OutputWriter, mode: 'launch' | 'attach', options
     use: options.use !== false,
     descriptor,
     config,
-  }));
+  }), { timeoutMs: startControllerRequestTimeoutMs });
+}
+
+function createCompoundStartMember(
+  configuration: LaunchConfiguration,
+  memberName: string,
+  workspaceFolder: string,
+  commandMode: 'launch' | 'attach',
+  options: DapStartCommandOptions,
+  jsonConfig: Record<string, unknown>,
+  adapterConfig: Awaited<ReturnType<typeof loadAdapterConfig>>,
+): { memberName: string; mode: 'launch' | 'attach'; descriptor: AdapterDescriptor; config: Record<string, unknown> } {
+  const resolvedConfig = resolveLaunchConfigurationConfig(configuration, { workspaceFolder });
+  const memberMode = resolvedConfig.request === 'attach' ? 'attach' : resolvedConfig.request === 'launch' ? 'launch' : commandMode;
+  const adapterId = resolveAdapterId(options.adapter, resolvedConfig, adapterConfig.launchConfigTypeMap);
+  const adapterFlags = mapFlagsForAdapter(adapterId, collectFlagOverrides(options));
+  const adapterDefaults = getAdapterDefaults(adapterConfig, adapterId, memberMode);
+  const config = {
+    ...mapConfigForAdapter(adapterId, resolveLaunchConfig({ namedConfig: { ...adapterDefaults, ...resolvedConfig }, jsonConfig, flags: adapterFlags })),
+    request: memberMode,
+  };
+  const descriptor = adapterId === 'fake'
+    ? createFakeDescriptor(options.script ?? (memberMode === 'attach' ? 'attach-stopped' : 'stopped-on-entry'), memberMode)
+    : new AdapterRegistry({ config: adapterConfig }).resolve(adapterId);
+
+  return { memberName, mode: memberMode, descriptor, config };
 }
 
 function getAdapterDefaults(adapterConfig: Awaited<ReturnType<typeof loadAdapterConfig>>, adapterId: string, mode: 'launch' | 'attach'): Record<string, unknown> {
@@ -181,21 +256,22 @@ function getAdapterDefaults(adapterConfig: Awaited<ReturnType<typeof loadAdapter
   return defaults ?? {};
 }
 
-async function resolveNamedConfig(name: string | undefined): Promise<Record<string, unknown> | undefined> {
+type NamedEntryResolution =
+  | { kind: 'configuration'; configuration: Record<string, unknown> }
+  | { kind: 'compound'; compound: { name: string; configurations: string[]; stopAll?: boolean | undefined }; document: Awaited<ReturnType<typeof loadVSCodeLaunchJson>> };
+
+async function resolveNamedEntry(name: string | undefined, workspace: string): Promise<NamedEntryResolution | undefined> {
   if (name === undefined) {
     return undefined;
   }
 
-  const configurations = await loadVSCodeLaunchConfig(process.cwd());
-  const config = configurations.find(candidate => candidate.name === name);
-  if (config === undefined) {
-    throw usageError(`Launch configuration '${name}' was not found.`, {
-      code: 'launch_config_not_found',
-      diagnostics: [`No .vscode/launch.json configuration named '${name}' was found in ${process.cwd()}.`],
-    });
+  const document = await loadVSCodeLaunchJson(workspace);
+  const entry = resolveLaunchConfigEntry(document, name);
+  if (entry.kind === 'compound') {
+    return { kind: 'compound', compound: entry.compound, document };
   }
 
-  return config;
+  return { kind: 'configuration', configuration: resolveLaunchConfigurationConfig(entry.configuration, { workspaceFolder: workspace }) };
 }
 
 function resolveAdapterId(adapter: string | undefined, namedConfig: Record<string, unknown> | undefined, customTypeMap: Record<string, string> | undefined): string {
@@ -248,14 +324,27 @@ function mapFlagsForAdapter(adapterId: string, flags: Record<string, unknown>): 
   return flags;
 }
 
+function mapConfigForAdapter(adapterId: string, config: Record<string, unknown>): Record<string, unknown> {
+  if (adapterId === 'js-debug') {
+    return mapJsDebugFlags(config);
+  }
+  if (adapterId === 'debugpy') {
+    return mapDebugpyFlags(config);
+  }
+
+  return config;
+}
+
 function setIfDefined(target: Record<string, unknown>, key: string, value: unknown): void {
   if (value !== undefined) {
     target[key] = value;
   }
 }
 
-async function withController<T>(output: OutputWriter, command: string, callback: (client: Awaited<ReturnType<typeof createControllerClient>>) => Promise<T>): Promise<void> {
-  const client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME });
+const startControllerRequestTimeoutMs = 60_000;
+
+async function withController<T>(output: OutputWriter, command: string, callback: (client: Awaited<ReturnType<typeof createControllerClient>>) => Promise<T>, options: { timeoutMs?: number } = {}): Promise<void> {
+  const client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME, ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}) });
   try {
     output.success(await callback(client), { command });
   } finally {

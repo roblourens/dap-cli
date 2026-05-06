@@ -240,11 +240,27 @@ Plans:
 **Verification target:** `cd /Users/roblou/code/vscode && npx dap-cli launch --config "VS Code"` brings up renderer + main process + extension host + shared process + agent host as 5 coordinated dap-cli sessions; `dap-cli sessions` shows the compound group; setting a breakpoint in `chatWidget.ts` and submitting a chat in the running window pauses the renderer member; closing one terminates all per `stopAll`. End-to-end smoke captured into a UAT doc by hand-driving (per repo Hard Rule).
 
 **Depends on:** Phase 5
-**Requirements:** TBD (will be expressed during /gsd-discuss-phase 05.2)
-**Plans:** 0 plans (run /gsd-discuss-phase 05.2 → /gsd-plan-phase 05.2)
+**Requirements:** CONF-01, SESS-02, SESS-03, SESS-04, SESS-05, AGNT-01, AGNT-02, AGNT-03, AGNT-04, AGNT-05, TEST-04, TEST-05, TEST-06, TEST-07
+**Plans:** 6/6 plans complete
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 05.2 to break down)
+**Wave 1**
+- [x] 05.2-01-PLAN.md — Launch.json document loading, variable/platform resolution, passthrough, and diagnostics
+
+**Wave 2** *(blocked on Wave 1 resolver foundation)*
+- [x] 05.2-02-PLAN.md — Workspace-aware CLI launch/list-configs and single configuration routing
+
+**Wave 3** *(blocked on Wave 2 CLI output ownership)*
+- [x] 05.2-03-PLAN.md — Persisted compound session metadata and session/status projection
+
+**Wave 4** *(blocked on Wave 3 CLI/session foundations)*
+- [x] 05.2-04-PLAN.md — Compound controller orchestration, failure cleanup, and stopAll close cascade
+
+**Wave 5** *(blocked on Wave 4 compound orchestration)*
+- [x] 05.2-05-PLAN.md — In-repo launch.json compound fixture and published CLI integration tests
+
+**Wave 6** *(blocked on Wave 5 fixture confidence)*
+- [x] 05.2-06-PLAN.md — Docs, automated verification record, and real VS Code compound UAT
 
 ### Phase 6: Add conditional breakpoint Playwright interop coverage
 

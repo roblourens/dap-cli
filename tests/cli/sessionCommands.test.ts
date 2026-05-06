@@ -1,6 +1,9 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { startControllerServer, type ControllerServer } from '../../src/controller/server.js';
 import { SessionManager } from '../../src/sessions/sessionManager.js';
+import { SessionStore } from '../../src/sessions/sessionStore.js';
 import { createProgram } from '../../src/cli/program.js';
 import { createCliTestEnv, runCli, runCliHuman, type CliTestEnv } from '../helpers/runCli.js';
 
@@ -98,6 +101,100 @@ describe('session CLI commands', () => {
     const reused = await manager.create({ name: 'demo', lifecycle: 'running' });
     expect(reused.name).toBe('demo');
     expect(reused.id).not.toBe(first.id);
+  });
+
+  test('compound member sessions project metadata in sessions and status output', async () => {
+    const manager = await SessionManager.create({ dapCliHome: testEnv.dapCliHome });
+    await manager.create({
+      name: 'VS Code/Launch VS Code Internal',
+      lifecycle: 'running',
+      compound: {
+        id: 'compound-1',
+        name: 'VS Code',
+        memberName: 'Launch VS Code Internal',
+        stopAll: true,
+        members: ['Launch VS Code Internal', 'Attach to Main Process'],
+      },
+    });
+    server = await startControllerServer({ dapCliHome: testEnv.dapCliHome });
+
+    const sessions = await runCli(['sessions'], { env: testEnv.env });
+    expect(sessions.exitCode).toBe(0);
+    const sessionsEnvelope = parseJson(sessions.stdout) as { ok: true; data: Array<{ name: string; targetable?: boolean; compound?: { name: string; memberName: string; stopAll: boolean; members: string[] } }> };
+    expect(sessionsEnvelope.data).toEqual([
+      expect.objectContaining({
+        name: 'VS Code/Launch VS Code Internal',
+        compound: {
+          id: 'compound-1',
+          name: 'VS Code',
+          memberName: 'Launch VS Code Internal',
+          stopAll: true,
+          members: ['Launch VS Code Internal', 'Attach to Main Process'],
+        },
+      }),
+    ]);
+    expect(sessionsEnvelope.data[0]?.targetable).not.toBe(false);
+
+    const status = await runCli(['status', '--name', 'VS Code/Launch VS Code Internal'], { env: testEnv.env });
+    expect(status.exitCode, JSON.stringify(status)).toBe(0);
+    const statusEnvelope = parseJson(status.stdout) as { ok: true; data: { name: string; compound?: { name: string; memberName: string; stopAll: boolean; members: string[] } } };
+    expect(statusEnvelope.data.compound).toMatchObject({ name: 'VS Code', memberName: 'Launch VS Code Internal', stopAll: true });
+  });
+
+  test('duplicate live name rejection applies to derived compound member names', async () => {
+    const manager = await SessionManager.create({ dapCliHome: testEnv.dapCliHome });
+    await manager.create({
+      name: 'VS Code/Launch VS Code Internal',
+      lifecycle: 'running',
+      compound: { id: 'compound-1', name: 'VS Code', memberName: 'Launch VS Code Internal', stopAll: true, members: ['Launch VS Code Internal'] },
+    });
+
+    await expect(manager.create({
+      name: 'VS Code/Launch VS Code Internal',
+      lifecycle: 'running',
+      compound: { id: 'compound-2', name: 'VS Code', memberName: 'Launch VS Code Internal', stopAll: true, members: ['Launch VS Code Internal'] },
+    })).rejects.toMatchObject({ code: 'session_name_in_use' });
+  });
+
+  test('old session store records without compound metadata still load', async () => {
+    const store = new SessionStore({ dapCliHome: testEnv.dapCliHome });
+    await fs.mkdir(path.dirname(store.path), { recursive: true });
+    await fs.writeFile(store.path, `${JSON.stringify({
+      sessions: [{
+        id: 'sess_old',
+        name: 'old-session',
+        adapter: 'fake',
+        lifecycle: 'running',
+        createdAt: '2026-05-06T00:00:00.000Z',
+        updatedAt: '2026-05-06T00:00:00.000Z',
+        ownedAdapter: { stderrTail: [], startedByDapCli: false },
+      }],
+    })}\n`, 'utf8');
+
+    await expect(store.read()).resolves.toMatchObject({ sessions: [{ name: 'old-session' }] });
+  });
+
+  test('session store records with compound metadata validate and round-trip', async () => {
+    const store = new SessionStore({ dapCliHome: testEnv.dapCliHome });
+    await store.write({
+      sessions: [{
+        id: 'sess_compound',
+        name: 'VS Code/Renderer',
+        adapter: 'fake',
+        lifecycle: 'running',
+        createdAt: '2026-05-06T00:00:00.000Z',
+        updatedAt: '2026-05-06T00:00:00.000Z',
+        ownedAdapter: { stderrTail: [], startedByDapCli: false },
+        compound: { id: 'compound-1', name: 'VS Code', memberName: 'Renderer', stopAll: true, members: ['Renderer', 'Main'] },
+      }],
+    });
+
+    await expect(store.read()).resolves.toMatchObject({
+      sessions: [{
+        name: 'VS Code/Renderer',
+        compound: { id: 'compound-1', name: 'VS Code', memberName: 'Renderer', stopAll: true, members: ['Renderer', 'Main'] },
+      }],
+    });
   });
 
   test('cleanup leaves sessions empty after terminating an owned adapter', async () => {

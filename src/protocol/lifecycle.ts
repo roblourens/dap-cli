@@ -73,7 +73,7 @@ export class DapLifecycleController {
         startRequest = this.client.request('attach', options.attachArgs);
       }
 
-      await this.withTimeout('initialized-event', this.waitForInitializedEvent());
+      await this.withTimeout('initialized-event', Promise.race([this.waitForInitializedEvent(), rejectWhenStartRequestFails(startRequest)]));
       await options.beforeConfigurationDone?.();
       await this.withTimeout('configurationDone', this.client.request('configurationDone'));
       // The launch/attach request is awaited last; give it its own fresh timeout window.
@@ -173,6 +173,13 @@ function parseStoppedState(body: unknown): DapStoppedState {
   const threadId = 'threadId' in body && typeof body.threadId === 'number' ? body.threadId : undefined;
 
   return threadId === undefined ? { reason } : { reason, threadId };
+}
+
+function rejectWhenStartRequestFails(startRequest: Promise<unknown>): Promise<never> {
+  return startRequest.then(
+    () => new Promise<never>(() => undefined),
+    error => Promise.reject(error),
+  );
 }
 
 function normalizeDisconnectArgs(opts: unknown): unknown {
