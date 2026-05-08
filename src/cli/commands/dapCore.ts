@@ -11,6 +11,7 @@ import {
   listLaunchConfigEntries,
   mapDebugpyFlags,
   mapJsDebugFlags,
+  applyJsDebugSourceMapDefaults,
   resolveAdapterIdFromType,
   resolveLaunchConfig,
   resolveLaunchConfigEntry,
@@ -187,13 +188,13 @@ async function startDap(output: OutputWriter, mode: 'launch' | 'attach', options
         });
       }
     }
-    const members = namedEntry.compound.configurations.map(memberName => {
+    const members = await Promise.all(namedEntry.compound.configurations.map(async memberName => {
       const memberConfig = namedEntry.document.configurations.find(configuration => configuration.name === memberName);
       if (memberConfig === undefined) {
         throw new Error(`Preflight missed compound member '${memberName}'.`);
       }
       return createCompoundStartMember(memberConfig, memberName, namedEntry.document.workspaceFolder, mode, options, jsonConfig, adapterConfig);
-    });
+    }));
 
     await withController(output, mode, async client => client.request('dap.startCompound', {
       name: namedEntry.compound.name,
@@ -209,7 +210,7 @@ async function startDap(output: OutputWriter, mode: 'launch' | 'attach', options
   const adapterFlags = mapFlagsForAdapter(adapterId, collectFlagOverrides(options));
   const adapterDefaults = getAdapterDefaults(adapterConfig, adapterId, mode);
   const config = {
-    ...mapConfigForAdapter(adapterId, resolveLaunchConfig({ namedConfig: { ...adapterDefaults, ...namedConfig }, jsonConfig, flags: adapterFlags })),
+    ...await mapConfigForAdapter(adapterId, resolveLaunchConfig({ namedConfig: { ...adapterDefaults, ...namedConfig }, jsonConfig, flags: adapterFlags }), workspace),
     request: mode,
   };
   const descriptor = adapterId === 'fake'
@@ -225,7 +226,7 @@ async function startDap(output: OutputWriter, mode: 'launch' | 'attach', options
   }), { timeoutMs: startControllerRequestTimeoutMs });
 }
 
-function createCompoundStartMember(
+async function createCompoundStartMember(
   configuration: LaunchConfiguration,
   memberName: string,
   workspaceFolder: string,
@@ -233,14 +234,14 @@ function createCompoundStartMember(
   options: DapStartCommandOptions,
   jsonConfig: Record<string, unknown>,
   adapterConfig: Awaited<ReturnType<typeof loadAdapterConfig>>,
-): { memberName: string; mode: 'launch' | 'attach'; descriptor: AdapterDescriptor; config: Record<string, unknown> } {
+): Promise<{ memberName: string; mode: 'launch' | 'attach'; descriptor: AdapterDescriptor; config: Record<string, unknown> }> {
   const resolvedConfig = resolveLaunchConfigurationConfig(configuration, { workspaceFolder });
   const memberMode = resolvedConfig.request === 'attach' ? 'attach' : resolvedConfig.request === 'launch' ? 'launch' : commandMode;
   const adapterId = resolveAdapterId(options.adapter, resolvedConfig, adapterConfig.launchConfigTypeMap);
   const adapterFlags = mapFlagsForAdapter(adapterId, collectFlagOverrides(options));
   const adapterDefaults = getAdapterDefaults(adapterConfig, adapterId, memberMode);
   const config = {
-    ...mapConfigForAdapter(adapterId, resolveLaunchConfig({ namedConfig: { ...adapterDefaults, ...resolvedConfig }, jsonConfig, flags: adapterFlags })),
+    ...await mapConfigForAdapter(adapterId, resolveLaunchConfig({ namedConfig: { ...adapterDefaults, ...resolvedConfig }, jsonConfig, flags: adapterFlags }), workspaceFolder),
     request: memberMode,
   };
   const descriptor = adapterId === 'fake'
@@ -324,9 +325,9 @@ function mapFlagsForAdapter(adapterId: string, flags: Record<string, unknown>): 
   return flags;
 }
 
-function mapConfigForAdapter(adapterId: string, config: Record<string, unknown>): Record<string, unknown> {
+async function mapConfigForAdapter(adapterId: string, config: Record<string, unknown>, workspaceFolder: string): Promise<Record<string, unknown>> {
   if (adapterId === 'js-debug') {
-    return mapJsDebugFlags(config);
+    return applyJsDebugSourceMapDefaults(mapJsDebugFlags(config), { workspaceFolder });
   }
   if (adapterId === 'debugpy') {
     return mapDebugpyFlags(config);

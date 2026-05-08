@@ -30,6 +30,23 @@ export function createFakeAdapterScript(name: string): FakeAdapterScript {
     };
   }
 
+  if (name === 'failed-step-out') {
+    return {
+      name,
+      steps: [
+        { kind: 'expectRequest', command: 'initialize', respond: { seq: 1, type: 'response', request_seq: 0, success: true, command: 'initialize', body: { supportsConfigurationDoneRequest: true } } },
+        { kind: 'expectRequest', command: 'launch', respond: { seq: 2, type: 'response', request_seq: 0, success: true, command: 'launch' } },
+        { kind: 'sendEvent', event: { seq: 3, type: 'event', event: 'initialized' } },
+        { kind: 'expectRequest', command: 'configurationDone', respond: { seq: 4, type: 'response', request_seq: 0, success: true, command: 'configurationDone' } },
+        { kind: 'sendEvent', event: { seq: 5, type: 'event', event: 'stopped', body: { reason: 'entry', threadId: 1 } } },
+        { kind: 'expectRequest', command: 'threads', respond: { seq: 6, type: 'response', request_seq: 0, success: true, command: 'threads', body: { threads: [{ id: 1, name: 'main' }] } } },
+        { kind: 'expectRequest', command: 'stepOut', respond: { seq: 7, type: 'response', request_seq: 0, success: false, command: 'stepOut', message: 'Unable to step out' } },
+        { kind: 'expectRequest', command: 'disconnect', respond: { seq: 8, type: 'response', request_seq: 0, success: true, command: 'disconnect' } },
+        { kind: 'sendEvent', event: { seq: 9, type: 'event', event: 'terminated' } },
+      ],
+    };
+  }
+
   if (name === 'playwright-inspection') {
     return createPlaywrightInspectionScript(name);
   }

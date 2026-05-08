@@ -10,6 +10,7 @@ import {
   loadVSCodeLaunchConfig,
   mapDebugpyFlags,
   mapJsDebugFlags,
+  applyJsDebugSourceMapDefaults,
   resolveAdapterIdFromType,
   resolveLaunchConfigurationConfig,
   resolveLaunchConfigEntry,
@@ -278,6 +279,31 @@ describe('launch config resolution', () => {
       cleanUp: 'wholeBrowser',
       browserLaunchLocation: 'workspace',
       pauseForSourceMap: false,
+    });
+  });
+
+  test('adds js-debug source map defaults for TypeScript workspaces', async () => {
+    await fs.writeFile(path.join(tempDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: { sourceMap: true } }), 'utf8');
+
+    await expect(applyJsDebugSourceMapDefaults({ type: 'pwa-node', program: 'dist/index.js' }, { workspaceFolder: tempDir })).resolves.toEqual({
+      type: 'pwa-node',
+      program: 'dist/index.js',
+      sourceMaps: true,
+      outFiles: [
+        path.join(tempDir, 'dist', '**', '*.js'),
+        path.join(tempDir, 'out', '**', '*.js'),
+        path.join(tempDir, 'build', '**', '*.js'),
+      ],
+    });
+  });
+
+  test('keeps explicit js-debug source map settings', async () => {
+    await fs.writeFile(path.join(tempDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: { sourceMap: true } }), 'utf8');
+
+    await expect(applyJsDebugSourceMapDefaults({ type: 'pwa-node', sourceMaps: false, outFiles: ['custom/**/*.js'] }, { workspaceFolder: tempDir })).resolves.toEqual({
+      type: 'pwa-node',
+      sourceMaps: false,
+      outFiles: ['custom/**/*.js'],
     });
   });
 

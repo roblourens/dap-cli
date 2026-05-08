@@ -233,6 +233,31 @@ export function mapJsDebugFlags(flags: Record<string, unknown>): Record<string, 
   return mapped;
 }
 
+export async function applyJsDebugSourceMapDefaults(config: Record<string, unknown>, options: { workspaceFolder: string }): Promise<Record<string, unknown>> {
+  if (!isJsDebugLaunchType(config.type)) {
+    return config;
+  }
+
+  const hasTsConfig = await pathExists(path.join(options.workspaceFolder, 'tsconfig.json'));
+  if (!hasTsConfig) {
+    return config;
+  }
+
+  const mapped = { ...config };
+  if (mapped.sourceMaps === undefined) {
+    mapped.sourceMaps = true;
+  }
+  if (mapped.outFiles === undefined) {
+    mapped.outFiles = [
+      path.join(options.workspaceFolder, 'dist', '**', '*.js'),
+      path.join(options.workspaceFolder, 'out', '**', '*.js'),
+      path.join(options.workspaceFolder, 'build', '**', '*.js'),
+    ];
+  }
+
+  return mapped;
+}
+
 export function mapDebugpyFlags(flags: Record<string, unknown>): Record<string, unknown> {
   const mapped = copyDefinedEntries(flags);
   if (typeof flags.port === 'number') {
@@ -341,6 +366,22 @@ function resolveLaunchString(value: string, jsonPath: string, context: Required<
       data: { token, path: jsonPath },
     });
   });
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.stat(filePath);
+    return true;
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function isJsDebugLaunchType(type: unknown): boolean {
+  return type === 'node' || type === 'pwa-node' || type === 'chrome' || type === 'pwa-chrome';
 }
 
 function cloneLaunchValue(value: unknown): unknown {

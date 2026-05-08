@@ -51,3 +51,18 @@ export function threadNotPaused(options: { sessionId?: string; sessionName?: str
     ...(options.command !== undefined ? { request: { command: options.command } } : {}),
   });
 }
+
+export function breakpointBindingGuidance(options: { sourcePath?: string | undefined; adapterId?: string | undefined } = {}): string[] {
+  if (options.adapterId !== 'js-debug' && options.adapterId !== undefined) {
+    return [];
+  }
+
+  const diagnostics = [
+    'Breakpoint verification timed out. Check the js-debug trace log for source-map resolution details.',
+  ];
+  if (options.sourcePath?.endsWith('.ts') === true || options.sourcePath?.endsWith('.tsx') === true) {
+    diagnostics.push('TypeScript source breakpoints usually require `sourceMaps: true` and an `outFiles` glob that matches emitted JavaScript, for example `"outFiles": ["${workspaceFolder}/dist/**/*.js"]`.');
+    diagnostics.push('If the launch uses ts-node, make sure source maps are enabled for the runtime; if it uses Jest, prefer `--runInBand --no-coverage` while debugging.');
+  }
+  return diagnostics;
+}

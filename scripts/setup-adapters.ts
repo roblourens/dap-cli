@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 const jsDebugVersion = '1.117.0';
 const debugpyVersion = '1.8.20';
 const appDirectoryName = '.dap-cli';
+const jsDebugPackageBoundary = '{"type":"commonjs"}\n';
 
 interface SetupOptions {
   dryRun: boolean;
@@ -54,6 +55,9 @@ async function setupJsDebug(options: { adaptersDir: string; dryRun: boolean }): 
   const bootloader = path.join(jsDebugDir, 'src', 'bootloader.js');
 
   if (await pathExists(entrypoint) && await pathExists(bootloader)) {
+    if (!options.dryRun) {
+      await writeJsDebugPackageBoundary(jsDebugDir);
+    }
     console.log(`js-debug already available at ${jsDebugDir}`);
     return;
   }
@@ -83,8 +87,13 @@ async function setupJsDebug(options: { adaptersDir: string; dryRun: boolean }): 
   if (!await pathExists(bootloader)) {
     throw new Error(`js-debug extraction completed but ${bootloader} was not found.`);
   }
+  await writeJsDebugPackageBoundary(jsDebugDir);
 
   console.log(`js-debug v${jsDebugVersion} provisioned to ${jsDebugDir}`);
+}
+
+async function writeJsDebugPackageBoundary(jsDebugDir: string): Promise<void> {
+  await fs.writeFile(path.join(jsDebugDir, 'package.json'), jsDebugPackageBoundary, 'utf8');
 }
 
 async function setupDebugpy(options: { dapCliHome: string; venvPython: string; dryRun: boolean }): Promise<void> {

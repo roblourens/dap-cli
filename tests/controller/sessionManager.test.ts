@@ -1238,7 +1238,7 @@ describe('ChildSessionCoordinator', () => {
 
     const result = (await coordinator.maybeIntercept('setBreakpoints', { source: { path: 'app.js' }, breakpoints: [{ line: 2 }] }))?.value as {
       breakpoints: Array<{ verified: boolean; line: number; id?: number }>;
-      warnings?: Array<{ sessionId: string; message: string }>;
+      warnings?: Array<{ sessionId: string; message: string; diagnostics?: string[] }>;
     };
 
     expect(result.breakpoints).toHaveLength(1);
@@ -1447,7 +1447,11 @@ describe('ChildSessionCoordinator', () => {
     expect(result.breakpoints).toHaveLength(1);
     expect(result.breakpoints[0]?.verified, 'verified must remain false on timeout').toBe(false);
     expect(result.warnings, 'warnings must be present on verification timeout').toBeDefined();
-    expect(result.warnings).toEqual([{ sessionId: parent.id, message: 'verification_timeout' }]);
+    expect(result.warnings).toEqual([{
+      sessionId: parent.id,
+      message: 'verification_timeout',
+      diagnostics: ['Breakpoint verification timed out. Check the js-debug trace log for source-map resolution details.'],
+    }]);
 
     await coordinator.dispose();
     await parentClient.close();

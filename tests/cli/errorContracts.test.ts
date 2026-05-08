@@ -1,12 +1,14 @@
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test } from 'vitest';
 import { Command } from 'commander';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { startControllerServer, type ControllerServer } from '../../src/controller/server.js';
 import { ExitCode } from '../../src/cli/exitCodes.js';
 import { adapterError, controllerError, dapError, internalError, sessionError, timeoutError, usageError } from '../../src/cli/errors.js';
 import { threadNotPaused } from '../../src/controller/diagnostics.js';
 import { writeJsonFailure } from '../../src/cli/output.js';
 import { main } from '../../src/cli/main.js';
+import { createCliTestEnv, runCli, type CliTestEnv } from '../helpers/runCli.js';
 
 class MemoryStream {
   public readonly chunks: string[] = [];
@@ -22,6 +24,20 @@ class MemoryStream {
 }
 
 describe('CLI error contracts', () => {
+  let testEnv: CliTestEnv | undefined;
+  let server: ControllerServer | undefined;
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.stop();
+      server = undefined;
+    }
+    if (testEnv !== undefined) {
+      await testEnv.cleanup();
+      testEnv = undefined;
+    }
+  });
+
   test('all handled error factories produce stable categories, exit codes, and diagnostics', () => {
     const cases = [
       { error: usageError('Bad input'), category: 'usage', exitCode: ExitCode.Usage },
@@ -187,6 +203,34 @@ describe('CLI error contracts', () => {
       expect(envelope.error.code).toBe('thread_not_paused');
       expect(envelope.error.diagnostics.join('\n')).not.toContain('dap-cli start');
     });
+  });
+
+  test('step-out adapter failure preserves DAP error category', async () => {
+    testEnv = await createCliTestEnv('dap-cli-step-out-error-');
+    server = await startControllerServer({ dapCliHome: testEnv.dapCliHome });
+
+    const launch = await runCli(['launch', '--adapter', 'fake', '--script', 'failed-step-out', '--name', 'step-out-demo'], { env: testEnv.env });
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+
+    const threads = await runCli(['threads', '--name', 'step-out-demo'], { env: testEnv.env });
+    expect(threads.exitCode, JSON.stringify(threads)).toBe(0);
+
+    const result = await runCli(['step-out', '--name', 'step-out-demo', '--thread-id', '1'], { env: testEnv.env });
+
+    expect(result.exitCode).toBe(ExitCode.Dap);
+    expect(result.envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: 'dap_request_failed',
+        category: 'dap',
+        message: 'Unable to step out',
+      },
+    });
+    if (!result.envelope.ok) {
+      expect(result.envelope.error.category).not.toBe('controller');
+      expect(result.envelope.error.code).not.toBe('controller_unavailable');
+      expect(result.envelope.error.diagnostics.join('\n')).not.toContain('dap-cli start');
+    }
   });
 
   // Plan 05-20 (gap H-4 audit): no source file under src/controller/ or

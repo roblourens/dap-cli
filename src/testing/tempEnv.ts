@@ -36,6 +36,8 @@ export interface ProvisionAdapterResult {
   copiedAdapterConfig: boolean;
 }
 
+const jsDebugPackageBoundary = '{"type":"commonjs"}\n';
+
 /**
  * Mirrors a built-in adapter that the user has installed via `npm run setup-adapters`
  * into a temporary DAP_CLI_HOME used by self-contained tests. Prefers a directory
@@ -77,6 +79,10 @@ export async function provisionAdapterIntoTempEnv(
   } catch {
     await fs.cp(source, destination, { recursive: true, dereference: true });
     mode = 'copy';
+  }
+
+  if (adapterId === 'js-debug') {
+    await fs.writeFile(path.join(destination, 'package.json'), jsDebugPackageBoundary, 'utf8');
   }
 
   // Mirror config/adapters.json when the user has one — the registry merges built-ins

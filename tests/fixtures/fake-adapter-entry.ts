@@ -36,6 +36,7 @@ const scripts: Record<string, FakeStep[]> = {
 	'playwright-inspection': createPlaywrightInspectionScript(),
 	'execution-control': createExecutionControlScript(),
 	'failed-threads': createFailedThreadsScript(),
+	'failed-step-out': createFailedStepOutScript(),
 	'expect-launch-overrides': createLifecycleScript('launch', { request: 'launch', program: 'flag.js', cwd: 'flag-cwd' }),
 	'expect-workspace-launch': createLifecycleScript('launch'),
 	'expect-workspace-attach': createLifecycleScript('attach'),
@@ -273,6 +274,17 @@ function createFailedThreadsScript(): FakeStep[] {
 	return createLifecycleScript('launch').map(step => step.command === 'threads'
 		? { command: 'threads', success: false, message: 'threads failed' }
 		: step);
+}
+
+function createFailedStepOutScript(): FakeStep[] {
+	return [
+		...createLifecycleScript('launch').slice(0, 5),
+		{ command: 'threads', body: { threads: [{ id: 1, name: 'main' }] } },
+		{ command: 'stepOut', success: false, message: 'Unable to step out' },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	];
 }
 
 function createAliasInspectionScript(): FakeStep[] {

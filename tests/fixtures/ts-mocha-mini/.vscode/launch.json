@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "TypeScript Mini",
+      "program": "${workspaceFolder}/dist/test/sample.js",
+      "args": ["run"],
+      "console": "internalConsole",
+      "stopOnEntry": true
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
@@ -64,6 +64,45 @@ describe('js-debug adapter integration', () => {
       expectedSourcePathSuffix: path.join('simple-node-app', 'index.js'),
       expectedLocalNames: [],
     });
+  }, 30_000);
+
+  test('js-debug adapter works under type=module DAP_CLI_HOME', async (ctx) => {
+    await writeFile(path.join(testEnv.dapCliHome, 'package.json'), '{"type":"module"}\n', 'utf8');
+    try {
+      await provisionAdapterIntoTempEnv(testEnv, 'js-debug');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      ctx.skip(`js-debug not provisioned in user DAP_CLI_HOME — ${message}`);
+      return;
+    }
+
+    const boundaryPath = path.join(testEnv.dapCliHome, 'adapters', 'js-debug', 'package.json');
+    await expect(readFile(boundaryPath, 'utf8')).resolves.toBe('{"type":"commonjs"}\n');
+
+    const fixture = path.join(process.cwd(), 'tests', 'fixtures', 'dap-cli-target', 'index.js');
+    const launchConfig = {
+      type: 'pwa-node',
+      request: 'launch',
+      name: 'type-module-home-smoke',
+      program: fixture,
+      console: 'internalConsole',
+      stopOnEntry: true,
+    } satisfies Record<string, unknown>;
+
+    const launch = await runCli(
+      ['launch', '--adapter', 'js-debug', '--name', 'type-module-home-smoke', '--json', JSON.stringify(launchConfig)],
+      { env: testEnv.env },
+    );
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+
+    try {
+      const threads = await runCli(['threads', '--name', 'type-module-home-smoke'], { env: testEnv.env });
+      expect(threads.exitCode, JSON.stringify(threads)).toBe(0);
+      expect(JSON.stringify(threads.envelope)).not.toContain('Dynamic require of "fs" is not supported');
+    } finally {
+      await runCli(['close', '--name', 'type-module-home-smoke'], { env: testEnv.env }).catch(() => undefined);
+      await runCli(['cleanup', '--purge'], { env: testEnv.env }).catch(() => undefined);
+    }
   }, 30_000);
 
   // Plan 05-26 (gap H-3a): parent-name routing for thread-scoped DAP commands

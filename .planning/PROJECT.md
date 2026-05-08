@@ -23,11 +23,16 @@ Agents can reliably control a DAP debug session from repeatable CLI commands and
 - ✓ Modular CLI/controller/session/protocol/adapter boundaries with deterministic fake-adapter tests — Phase 1
 - ✓ Complete typed DAP command surface, raw passthrough, capability checks, and ergonomic debugging operations — Phase 2
 - ✓ Built-in JavaScript/Python adapter descriptors, source-map smoke coverage, custom adapter config, and adapter override flows — Phase 3
+- ✓ Agent workflow documentation, self-hosting smoke coverage, and docs validation — Phase 4
+- ✓ Real Chrome/js-debug and Playwright same-browser handoff, child-session routing, cleanup, and hand-driven smoke closure — Phase 5
+- ✓ Opt-in human-readable CLI output while preserving JSON as the default automation contract — Phase 5.1
+- ✓ VS Code launch.json and compound execution with real Code OSS capstone verification — Phase 5.2
+- ✓ Conditional breakpoint metadata through the friendly alias and Playwright/js-debug interop coverage — Phase 6
+- ✓ Post-Phase-6 hardening discovery, external project smoke, gap closure, and final hand-driven CLI smoke — Phase 7
 
 ### Active
 
-- [ ] Keep the CLI ergonomic for agent workflows that interleave dap-cli calls with `playwright-cli` (`@playwright/cli`) calls.
-- [ ] Provide README, user documentation, agent workflow docs, and project polish expected of a real professional CLI project.
+- None. v1 hardening is verified complete.
 
 ### Out of Scope
 
@@ -65,9 +70,12 @@ Agents can reliably control a DAP debug session from repeatable CLI commands and
 | Expose typed commands for all DAP requests | The user wants DAP methods available as CLI arguments, with a command surface agents can discover and use. | Validated in Phase 2 generated command surface and coverage tests |
 | Keep core DAP-first and language-neutral | Adapter-specific behavior should not leak into the core architecture. | Validated in Phase 1 protocol and architecture gates |
 | Treat debug adapters as external services | Adapter-specific launch, attach, process, and transport behavior should live behind descriptors/config instead of inside protocol core. | Validated in Phase 3 built-in/custom adapter boundaries |
-| Make docs and project polish part of v1 | The CLI should be usable by agents and humans as a professional project, not just as raw implementation code. | - Pending |
+| Make docs and project polish part of v1 | The CLI should be usable by agents and humans as a professional project, not just as raw implementation code. | Validated through Phase 4 docs, Phase 5/5.2 hand-driven smoke docs, and Phase 6 Playwright interop docs |
+| Keep dap-cli ergonomic for Playwright-style agent workflows | Agents need to interleave debugger commands with browser/app actions while inspecting shared debug state. | Validated through Phase 5 same-browser handoff, Phase 5.1 human output, and Phase 6 conditional breakpoint interop |
+| Support real VS Code launch.json and compound workflows | Agent debugging must work against real project launch configurations, not only hand-authored CLI flags. | Validated in Phase 5.2 with launch.json compounds and real Code OSS capstone UAT |
 | Disambiguate "Playwright CLI" as `@playwright/cli` (the imperative `playwright-cli` binary) | Phases 02–05 used "Playwright CLI" ambiguously; some text reads as `@playwright/test` (the spec runner). The interaction-model inspiration is and always was the imperative binary. Live docs, REQUIREMENTS.md AGNT-04, and the project thesis updated; historical phase artifacts intentionally untouched per GSD convention. | Live docs and PROJECT/REQUIREMENTS updated 2026-05-04 |
 | Reject duplicate `--name` at session create time instead of disambiguating downstream | Earlier work added a `session_ambiguous` resolver branch on the assumption that two persisted sessions could legitimately share a `--name`. That misread intent — duplicate live names should simply be an error. Quick task `260504-rp5` rejects the second create with `session_name_in_use`, lets `resolveTargetSession` prefer live records over terminated ones when looking up by name, and keeps the `session_ambiguous` branch only as a defensive guard. Reuse against terminated/failed records is allowed. | Reversed 2026-05-04 in quick task 260504-rp5 |
+| Close hardening gaps as GSD-native UAT gaps before milestone closure | A stabilization phase can discover issues first, then plan and execute gap closure inside the same phase without filing external GitHub issues unless explicitly requested. | Validated in Phase 7 with GAP-07-01 closed, GAP-07-02 mitigated/verified, GAP-07-03 closed, full tests green, and final hand-driven smoke pass |
 
 ## Evolution
 
@@ -87,4 +95,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-03 after Phase 3 verification*
+*Last updated: 2026-05-08 after Phase 7 hardening verification*

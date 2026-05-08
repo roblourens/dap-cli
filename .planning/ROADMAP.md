@@ -20,6 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 5.1: A mode for the CLI where it produces human-readable nicely formatted output instead of JSON.** *(INSERTED)* - Urgent work to add a non-JSON, human-readable output mode to the CLI.
 - [ ] **Phase 5.2: Execute VS Code launch.json configurations and compounds** *(INSERTED)* - Faithfully resolve a `.vscode/launch.json` configuration (variable substitution, platform overrides, full field passthrough) and execute compound configurations as a single coordinated multi-session debug run; preLaunchTask explicitly out of scope.
 - [x] **Phase 6: Add conditional breakpoint Playwright interop coverage** (completed 2026-05-06)
+- [x] **Phase 7: Hardening bug discovery and exploratory smoke testing** - Run a broad post-feature hardening campaign that hammers published dap-cli workflows across adapters, output modes, launch.json, lifecycle, error, cleanup, and Playwright interop scenarios; file every discovered bug as GSD UAT gaps before planning fixes. (completed 2026-05-08)
 
 ## Phase Details
 
@@ -138,7 +139,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 5.1 -> 5.2 -> 6
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 5.1 -> 5.2 -> 6 -> 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -150,6 +151,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 5.1 -> 5.2 -> 6
 | 5.1. A mode for the CLI where it produces human-readable nicely formatted output instead of JSON. *(INSERTED)* | 6/6 | Complete | 2026-05-05 |
 | 5.2. Execute VS Code launch.json configurations and compounds *(INSERTED)* | 0/0 | Not started | - |
 | 6. Add conditional breakpoint Playwright interop coverage | 3/3 | Complete   | 2026-05-06 |
+| 7. Hardening bug discovery and exploratory smoke testing | 4/4 | Complete | 2026-05-08 |
 
 ### Phase 5: Stabilize real Chrome/js-debug Playwright same-browser handoff
 
@@ -186,7 +188,7 @@ Plans:
 - [x] 05-25-PLAN.md — Round 2 follow-up: H-1a/H-1b paused-state edges (parent + thread filter)
 - [x] 05-26-PLAN.md — Round 2 follow-up: H-3a child-session targeting refinement
 
-### Phase 05.1: A mode for the CLI where it produces human-readable nicely formatted output instead of JSON. (INSERTED)
+### Phase 5.1: A mode for the CLI where it produces human-readable nicely formatted output instead of JSON. (INSERTED)
 
 **Goal:** dap-cli keeps JSON as the default machine-readable contract while adding an opt-in `--human` / `DAP_CLI_HUMAN` mode that renders existing command results and handled failures as safe, readable terminal text.
 **Requirements**: TBD
@@ -212,7 +214,7 @@ Plans:
 **Wave 6** *(user feedback polish)*
 - [x] 05.1-06-PLAN.md — Human output presentation polish: remove noisy metadata, add bordered tables, and add terminal-aware semantic styling
 
-### Phase 05.2: Execute VS Code launch.json configurations and compounds (full fidelity, no preLaunchTask) (INSERTED)
+### Phase 5.2: Execute VS Code launch.json configurations and compounds (full fidelity, no preLaunchTask) (INSERTED)
 
 **Goal:** `npx dap-cli launch --config "<name>" [--workspace <path>]` faithfully executes any `.vscode/launch.json` configuration that VS Code would run — including compounds that bring up multiple coordinated sessions in one command — against `js-debug` and `debugpy`. The motivating target is the `VS Code` compound in [/Users/roblou/code/vscode/.vscode/launch.json](../../../vscode/.vscode/launch.json), which would launch Code OSS plus four process attaches in one shot.
 
@@ -276,3 +278,14 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [x] 06-03-PLAN.md - Playwright/js-debug conditional smoke, docs, and UAT record
+
+### Phase 7: Hardening bug discovery and exploratory smoke testing
+
+**Goal:** Agents can run dap-cli through a broad, adversarial post-feature hardening sweep against the published CLI, exercising successful and failing workflows across adapters, output modes, launch.json, compounds, session lifecycle, cleanup, child sessions, and Playwright-driven browser interaction, with every discovered bug captured as a structured GSD UAT gap before fixes are planned.
+**Requirements**: SESS-02, SESS-03, SESS-04, SESS-05, DBG-01, DBG-02, DBG-03, DBG-04, DBG-05, DBG-06, ADPT-01, ADPT-02, ADPT-03, ADPT-04, ADPT-05, ADPT-06, AGNT-01, AGNT-02, AGNT-03, AGNT-04, AGNT-05, TEST-04, TEST-05, TEST-06, TEST-07, CONF-01
+**Depends on:** Phase 6
+**Plans:** 1 plan
+
+Plans:
+**Wave 1**
+- [ ] 07-01-PLAN.md — Hardening scenario matrix, published CLI smoke sweep, and UAT bug ledger

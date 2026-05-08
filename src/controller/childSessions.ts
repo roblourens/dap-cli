@@ -1,4 +1,5 @@
 import type { DapEventCache } from '../protocol/eventCache.js';
+import { breakpointBindingGuidance } from './diagnostics.js';
 import type { DapEventMessage } from '../protocol/dapMessages.js';
 import type { DapTransport } from '../protocol/transport.js';
 import { DapClient, type ReverseRequestResult } from '../protocol/dapClient.js';
@@ -680,7 +681,8 @@ export class ChildSessionCoordinator {
       const parentResponse = await parentRequest;
       const parentBps: Bp[] = parentResponse?.breakpoints ?? [];
 
-      const childWarnings = childResults
+      type BreakpointWarning = { sessionId: SessionId; message: string; diagnostics?: string[] };
+      const childWarnings: BreakpointWarning[] = childResults
         .filter((result): result is Extract<ChildResult, { ok: false }> => !result.ok)
         .map(result => ({
           sessionId: result.sessionId,
@@ -755,7 +757,11 @@ export class ChildSessionCoordinator {
       const allVerified = merged.every(bp => bp.verified === true);
       const warnings = [...childWarnings];
       if (!allVerified) {
-        warnings.push({ sessionId: this.options.parentSessionId, message: 'verification_timeout' });
+        warnings.push({
+          sessionId: this.options.parentSessionId,
+          message: 'verification_timeout',
+          diagnostics: breakpointBindingGuidance({ sourcePath, adapterId: this.options.adapterId }),
+        });
       }
 
       const result: Record<string, unknown> = { ...(parentResponse ?? {}), breakpoints: merged };
