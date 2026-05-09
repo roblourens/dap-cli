@@ -3,6 +3,7 @@ import type { Command } from 'commander';
 import type { OutputWriter } from '../outputWriter.js';
 import { getDapGeneratedCommand } from '../../generated/dapCommandRegistry.js';
 import { parseIntegerOption, parseIntegerValues, parseRequiredIntegerOption, requireGeneratedCommand, sendGeneratedDapRequest } from './dapGenerated.js';
+import { createControllerClient } from '../../controller/client.js';
 
 interface NamedOptions {
   name?: string;
@@ -100,10 +101,14 @@ export function registerDapAliasCommands(program: Command, output: OutputWriter)
     }), options.name, 'source');
   });
 
-  program.command('evaluate').requiredOption('--expression <expr>', 'expression').option('--frame-id <number>', 'frame id').option('--context <context>', 'evaluation context').option('--name <name>', 'session name or id').description('Evaluate an expression').action(async (options: EvaluateOptions) => {
+  program.command('evaluate').requiredOption('--expression <expr>', 'expression').option('--frame-id <number>', 'frame id (auto-resolved to topmost paused frame when omitted)').option('--context <context>', 'evaluation context').option('--name <name>', 'session name or id').description('Evaluate an expression (auto-uses topmost frame of most-recently-stopped thread when paused)').action(async (options: EvaluateOptions) => {
+    let frameId = parseIntegerOption(options.frameId, 'frame-id');
+    if (frameId === undefined) {
+      frameId = await resolveAutoFrameId(output, options.name);
+    }
     await sendAliasRequest(output, 'evaluate', compactObject({
       expression: options.expression,
-      frameId: parseIntegerOption(options.frameId, 'frame-id'),
+      frameId,
       context: options.context,
     }), options.name, 'evaluate');
   });
@@ -164,4 +169,98 @@ function compactObject(input: Record<string, unknown>): Record<string, unknown> 
   }
 
   return output;
+}
+
+interface SessionStatusForAutoFrame {
+  paused?: boolean;
+  stoppedThreadIds?: readonly number[];
+}
+
+interface ThreadsResponse {
+  threads?: ReadonlyArray<{ id?: unknown }>;
+}
+
+interface StackTraceResponse {
+  stackFrames?: ReadonlyArray<{ id?: unknown }>;
+}
+
+// Phase 11 plan 02 (PAUSED-02): when `--frame-id` is omitted, resolve it to
+// the topmost frame of the most-recently-stopped thread on a paused session.
+// Hints go to stderr; resolution failures fall through to a no-frame evaluate
+// so the user's request is never aborted by auto-frame plumbing.
+async function resolveAutoFrameId(output: OutputWriter, name: string | undefined): Promise<number | undefined> {
+  const hint = (message: string): void => output.warn(`evaluate: ${message}`);
+  let client;
+  try {
+    client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME });
+  } catch {
+    hint(`auto-frame failed (controller unavailable); sending evaluate without --frame-id`);
+    return undefined;
+  }
+
+  try {
+    let status: SessionStatusForAutoFrame;
+    try {
+      status = await client.request<SessionStatusForAutoFrame>('sessions.status', name === undefined ? undefined : { name });
+    } catch {
+      hint(`auto-frame failed (status lookup failed); sending evaluate without --frame-id`);
+      return undefined;
+    }
+
+    if (status.paused !== true) {
+      hint(`session not paused; sending evaluate without --frame-id (uses adapter REPL context)`);
+      return undefined;
+    }
+
+    let threadId: number | undefined;
+    const stoppedThreadIds = Array.isArray(status.stoppedThreadIds) ? status.stoppedThreadIds : [];
+    if (stoppedThreadIds.length > 0) {
+      threadId = stoppedThreadIds[0];
+      if (stoppedThreadIds.length > 1) {
+        hint(`auto-selected frame from thread ${threadId}; ${stoppedThreadIds.length} threads paused — pass --thread-id or --frame-id to disambiguate`);
+      }
+    } else {
+      let threadsResponse: ThreadsResponse;
+      try {
+        threadsResponse = await client.request<ThreadsResponse>('dap.request', { command: 'threads', args: {}, ...(name === undefined ? {} : { name }) });
+      } catch (error) {
+        hint(`auto-frame failed (threads request failed: ${describeError(error)}); sending evaluate without --frame-id`);
+        return undefined;
+      }
+      const firstThreadId = threadsResponse.threads?.[0]?.id;
+      if (typeof firstThreadId !== 'number' || !Number.isInteger(firstThreadId)) {
+        hint(`auto-frame failed (no threads reported); sending evaluate without --frame-id`);
+        return undefined;
+      }
+      threadId = firstThreadId;
+    }
+
+    let stackResponse: StackTraceResponse;
+    try {
+      stackResponse = await client.request<StackTraceResponse>('dap.request', {
+        command: 'stackTrace',
+        args: { threadId, startFrame: 0, levels: 1 },
+        ...(name === undefined ? {} : { name }),
+      });
+    } catch (error) {
+      hint(`auto-frame failed (stackTrace request failed: ${describeError(error)}); sending evaluate without --frame-id`);
+      return undefined;
+    }
+
+    const firstFrameId = stackResponse.stackFrames?.[0]?.id;
+    if (typeof firstFrameId !== 'number' || !Number.isInteger(firstFrameId)) {
+      hint(`auto-frame failed (empty stack trace); sending evaluate without --frame-id`);
+      return undefined;
+    }
+    return firstFrameId;
+  } finally {
+    await client.close();
+  }
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }

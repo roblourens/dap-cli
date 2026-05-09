@@ -311,6 +311,82 @@ describe('SessionManager', () => {
     });
   });
 
+  // Phase 11 plan 01 (PAUSED-01): the projected `status` field on
+  // SessionSummary/SessionStatus must honor the mirrored `paused` flag for
+  // non-terminal lifecycles. Closes the gap where js-debug parent sessions
+  // whose `stopped` events arrive on a child runtime mirror `paused: true`
+  // onto the parent record but kept reporting status: 'running'.
+  describe('paused-state status projection (Phase 11)', () => {
+    test('A: paused-from-child-mirror flips status to stopped without bumping lifecycle', async () => {
+      const manager = await SessionManager.create({ dapCliHome });
+      const session = await manager.create({ name: 'demo', lifecycle: 'running' });
+
+      const paused = await manager.updatePausedState(session.id, {
+        paused: true,
+        stoppedReason: 'breakpoint',
+        stoppedThreadIds: [1],
+      });
+
+      expect(paused.status).toBe('stopped');
+      expect(paused.paused).toBe(true);
+      expect(paused.lifecycle).toBe('running');
+    });
+
+    test('B: continued event clears status back to running', async () => {
+      const manager = await SessionManager.create({ dapCliHome });
+      const session = await manager.create({ name: 'demo', lifecycle: 'running' });
+
+      await manager.updatePausedState(session.id, {
+        paused: true,
+        stoppedReason: 'breakpoint',
+        stoppedThreadIds: [1],
+      });
+      const resumed = await manager.updatePausedState(session.id, { paused: false });
+
+      expect(resumed.status).toBe('running');
+      expect(resumed.paused).toBe(false);
+    });
+
+    test('C: terminal lifecycle wins over a stale paused: true', async () => {
+      const manager = await SessionManager.create({ dapCliHome });
+      const session = await manager.create({ name: 'demo', lifecycle: 'running' });
+
+      await manager.updatePausedState(session.id, {
+        paused: true,
+        stoppedReason: 'breakpoint',
+        stoppedThreadIds: [1],
+      });
+      const terminated = await manager.updateLifecycle(session.id, 'terminated');
+
+      expect(terminated.status).toBe('terminated');
+    });
+
+    test('D: undefined paused leaves lifecycle-derived status untouched', async () => {
+      const manager = await SessionManager.create({ dapCliHome });
+      const session = await manager.create({ name: 'demo', lifecycle: 'running' });
+      const status = manager.status(session.id);
+
+      expect(status.status).toBe('running');
+      expect(status.paused).toBeUndefined();
+    });
+
+    test('E: list projection reflects paused too', async () => {
+      const manager = await SessionManager.create({ dapCliHome });
+      const session = await manager.create({ name: 'demo', lifecycle: 'running' });
+
+      await manager.updatePausedState(session.id, {
+        paused: true,
+        stoppedReason: 'breakpoint',
+        stoppedThreadIds: [1],
+      });
+
+      const entries = manager.list();
+      const entry = entries.find(item => item.id === session.id);
+      expect(entry?.status).toBe('stopped');
+      expect(entry?.paused).toBe(true);
+    });
+  });
+
   // Plan 05-20 (gap H-4): cleanup MUST be honest. Hand-driven Sequence A
   // Step 8 evidence: `cleanup` reported `cleaned: [<id>]` but `sessions list`
   // still showed the session. The new envelope replaces the misleading

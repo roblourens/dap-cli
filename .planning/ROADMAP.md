@@ -336,13 +336,15 @@ Plans:
 
 ### Phase 11: Paused-state ergonomics — status reflects stopped/continued events, evaluate auto-uses topmost paused frame
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Make polling and inspection work without manual frame plumbing — `dap-cli status` reflects the most recent `stopped`/`continued` event for both single-process and multi-process (js-debug pwa-node/pwa-chrome) adapters, and `dap-cli evaluate` auto-resolves `--frame-id` to the topmost frame of the most-recently-stopped thread when omitted on a paused session.
+**Requirements**: PAUSED-01, PAUSED-02
 **Depends on:** Phase 10
-**Plans:** 0 plans
+**Plans:** 2 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 11 to break down)
+**Wave 1** *(parallel — disjoint files)*
+- [ ] 11-01-PLAN.md — `status` projection honors mirrored `paused` from child events (PAUSED-01)
+- [ ] 11-02-PLAN.md — `evaluate` auto-resolves `--frame-id` from session status when omitted on paused sessions (PAUSED-02)
 
 ### Phase 12: Breakpoint command surface — add breakpoints list, breakpoints clear, and richer verification diagnostics
 

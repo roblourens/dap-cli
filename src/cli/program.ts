@@ -14,13 +14,16 @@ const packageJson: unknown = require('../../package.json');
 
 export interface ProgramOptions {
   stdout?: JsonWritable;
+  stderr?: JsonWritable;
 }
 
 export function createProgram(options: ProgramOptions = {}): Command {
   const program = new Command();
   const stdout = options.stdout ?? process.stdout;
+  const stderr = options.stderr ?? process.stderr;
   const output = createOutputWriter({
     stream: stdout,
+    errorStream: stderr,
     resolveMode: () => resolveOutputMode({ cliHuman: getProgramHumanOption(program), env: process.env }),
   });
 

@@ -117,6 +117,104 @@ export function createFakeAdapterScript(name: string): FakeAdapterScript {
     };
   }
 
+  if (name === 'evaluate-auto-frame') {
+    // Phase 11 plan 02: paused with one stopped thread; the CLI evaluate
+    // handler resolves frameId via stackTrace then fires evaluate. Asserts
+    // the inbound evaluate carries arguments.frameId === 4242.
+    return {
+      name,
+      steps: [
+        { kind: 'expectRequest', command: 'initialize', respond: { seq: 1, type: 'response', request_seq: 0, success: true, command: 'initialize', body: { supportsConfigurationDoneRequest: true } } },
+        { kind: 'expectRequest', command: 'launch', respond: { seq: 2, type: 'response', request_seq: 0, success: true, command: 'launch' } },
+        { kind: 'sendEvent', event: { seq: 3, type: 'event', event: 'initialized' } },
+        { kind: 'expectRequest', command: 'configurationDone', respond: { seq: 4, type: 'response', request_seq: 0, success: true, command: 'configurationDone' } },
+        { kind: 'sendEvent', event: { seq: 5, type: 'event', event: 'stopped', body: { reason: 'breakpoint', threadId: 1 } } },
+        { kind: 'expectRequest', command: 'stackTrace', expectedArguments: { threadId: 1 }, respond: { seq: 6, type: 'response', request_seq: 0, success: true, command: 'stackTrace', body: { stackFrames: [{ id: 4242, name: 'f0', line: 1, column: 1 }, { id: 4243, name: 'f1', line: 2, column: 1 }], totalFrames: 2 } } },
+        { kind: 'expectRequest', command: 'evaluate', expectedArguments: { frameId: 4242, expression: 'x' }, respond: { seq: 7, type: 'response', request_seq: 0, success: true, command: 'evaluate', body: { result: 'auto', variablesReference: 0 } } },
+        { kind: 'expectRequest', command: 'disconnect', respond: { seq: 8, type: 'response', request_seq: 0, success: true, command: 'disconnect' } },
+        { kind: 'sendEvent', event: { seq: 9, type: 'event', event: 'terminated' } },
+      ],
+    };
+  }
+
+  if (name === 'evaluate-auto-frame-explicit') {
+    // Phase 11 plan 02: paused, but the user passes --frame-id explicitly,
+    // so NO stackTrace must be sent — the evaluate goes straight through
+    // with the verbatim frameId.
+    return {
+      name,
+      steps: [
+        { kind: 'expectRequest', command: 'initialize', respond: { seq: 1, type: 'response', request_seq: 0, success: true, command: 'initialize', body: { supportsConfigurationDoneRequest: true } } },
+        { kind: 'expectRequest', command: 'launch', respond: { seq: 2, type: 'response', request_seq: 0, success: true, command: 'launch' } },
+        { kind: 'sendEvent', event: { seq: 3, type: 'event', event: 'initialized' } },
+        { kind: 'expectRequest', command: 'configurationDone', respond: { seq: 4, type: 'response', request_seq: 0, success: true, command: 'configurationDone' } },
+        { kind: 'sendEvent', event: { seq: 5, type: 'event', event: 'stopped', body: { reason: 'breakpoint', threadId: 1 } } },
+        { kind: 'expectRequest', command: 'evaluate', expectedArguments: { frameId: 9999, expression: 'x' }, respond: { seq: 6, type: 'response', request_seq: 0, success: true, command: 'evaluate', body: { result: 'explicit', variablesReference: 0 } } },
+        { kind: 'expectRequest', command: 'disconnect', respond: { seq: 7, type: 'response', request_seq: 0, success: true, command: 'disconnect' } },
+        { kind: 'sendEvent', event: { seq: 8, type: 'event', event: 'terminated' } },
+      ],
+    };
+  }
+
+  if (name === 'evaluate-auto-frame-all-threads') {
+    // Phase 11 plan 02: paused with allThreadsStopped (no specific threadId
+    // in the stopped body), so stoppedThreadIds is empty and the CLI must
+    // fall back to threads → stackTrace → evaluate.
+    return {
+      name,
+      steps: [
+        { kind: 'expectRequest', command: 'initialize', respond: { seq: 1, type: 'response', request_seq: 0, success: true, command: 'initialize', body: { supportsConfigurationDoneRequest: true } } },
+        { kind: 'expectRequest', command: 'launch', respond: { seq: 2, type: 'response', request_seq: 0, success: true, command: 'launch' } },
+        { kind: 'sendEvent', event: { seq: 3, type: 'event', event: 'initialized' } },
+        { kind: 'expectRequest', command: 'configurationDone', respond: { seq: 4, type: 'response', request_seq: 0, success: true, command: 'configurationDone' } },
+        { kind: 'sendEvent', event: { seq: 5, type: 'event', event: 'stopped', body: { reason: 'pause', allThreadsStopped: true } } },
+        { kind: 'expectRequest', command: 'threads', respond: { seq: 6, type: 'response', request_seq: 0, success: true, command: 'threads', body: { threads: [{ id: 7, name: 'main' }] } } },
+        { kind: 'expectRequest', command: 'stackTrace', expectedArguments: { threadId: 7 }, respond: { seq: 7, type: 'response', request_seq: 0, success: true, command: 'stackTrace', body: { stackFrames: [{ id: 4242, name: 'f0', line: 1, column: 1 }], totalFrames: 1 } } },
+        { kind: 'expectRequest', command: 'evaluate', expectedArguments: { frameId: 4242, expression: 'x' }, respond: { seq: 8, type: 'response', request_seq: 0, success: true, command: 'evaluate', body: { result: 'all-threads', variablesReference: 0 } } },
+        { kind: 'expectRequest', command: 'disconnect', respond: { seq: 9, type: 'response', request_seq: 0, success: true, command: 'disconnect' } },
+        { kind: 'sendEvent', event: { seq: 10, type: 'event', event: 'terminated' } },
+      ],
+    };
+  }
+
+  if (name === 'evaluate-auto-frame-empty-threads') {
+    // Phase 11 plan 02: paused with allThreadsStopped, but threads request
+    // returns []. CLI must fall back to a no-frame evaluate and emit an
+    // auto-frame failed hint.
+    return {
+      name,
+      steps: [
+        { kind: 'expectRequest', command: 'initialize', respond: { seq: 1, type: 'response', request_seq: 0, success: true, command: 'initialize', body: { supportsConfigurationDoneRequest: true } } },
+        { kind: 'expectRequest', command: 'launch', respond: { seq: 2, type: 'response', request_seq: 0, success: true, command: 'launch' } },
+        { kind: 'sendEvent', event: { seq: 3, type: 'event', event: 'initialized' } },
+        { kind: 'expectRequest', command: 'configurationDone', respond: { seq: 4, type: 'response', request_seq: 0, success: true, command: 'configurationDone' } },
+        { kind: 'sendEvent', event: { seq: 5, type: 'event', event: 'stopped', body: { reason: 'pause', allThreadsStopped: true } } },
+        { kind: 'expectRequest', command: 'threads', respond: { seq: 6, type: 'response', request_seq: 0, success: true, command: 'threads', body: { threads: [] } } },
+        { kind: 'expectRequest', command: 'evaluate', expectedArguments: { expression: 'x' }, respond: { seq: 7, type: 'response', request_seq: 0, success: true, command: 'evaluate', body: { result: 'no-frame', variablesReference: 0 } } },
+        { kind: 'expectRequest', command: 'disconnect', respond: { seq: 8, type: 'response', request_seq: 0, success: true, command: 'disconnect' } },
+        { kind: 'sendEvent', event: { seq: 9, type: 'event', event: 'terminated' } },
+      ],
+    };
+  }
+
+  if (name === 'evaluate-auto-frame-not-paused') {
+    // Phase 11 plan 02: launch never emits a stopped event so paused stays
+    // undefined. Auto-frame must skip resolution and send evaluate with no
+    // frameId, emitting the "session not paused" hint.
+    return {
+      name,
+      steps: [
+        { kind: 'expectRequest', command: 'initialize', respond: { seq: 1, type: 'response', request_seq: 0, success: true, command: 'initialize', body: { supportsConfigurationDoneRequest: true } } },
+        { kind: 'expectRequest', command: 'launch', respond: { seq: 2, type: 'response', request_seq: 0, success: true, command: 'launch' } },
+        { kind: 'sendEvent', event: { seq: 3, type: 'event', event: 'initialized' } },
+        { kind: 'expectRequest', command: 'configurationDone', respond: { seq: 4, type: 'response', request_seq: 0, success: true, command: 'configurationDone' } },
+        { kind: 'expectRequest', command: 'evaluate', expectedArguments: { expression: 'x' }, respond: { seq: 5, type: 'response', request_seq: 0, success: true, command: 'evaluate', body: { result: 'no-frame', variablesReference: 0 } } },
+        { kind: 'expectRequest', command: 'disconnect', respond: { seq: 6, type: 'response', request_seq: 0, success: true, command: 'disconnect' } },
+        { kind: 'sendEvent', event: { seq: 7, type: 'event', event: 'terminated' } },
+      ],
+    };
+  }
+
   if (name === 'paused-then-continued') {
     // Stops with reason 'entry', waits for a `continue` request, then emits a
     // `continued` event. Used by the H-1 paused-projection JSON output test

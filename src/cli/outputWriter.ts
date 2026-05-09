@@ -7,15 +7,18 @@ import { renderHumanFailure, renderHumanSuccess } from './humanOutput.js';
 export interface OutputWriter {
   success<T>(data: T, meta: JsonMetaInput): void;
   failure(error: CliError, meta: JsonMetaInput): void;
+  warn(message: string): void;
 }
 
 export interface CreateOutputWriterOptions {
   stream?: JsonWritable;
+  errorStream?: JsonWritable;
   resolveMode: () => OutputMode;
 }
 
 export function createOutputWriter(options: CreateOutputWriterOptions): OutputWriter {
   const stream = options.stream ?? process.stdout;
+  const errorStream = options.errorStream ?? process.stderr;
 
   return {
     success<T>(data: T, meta: JsonMetaInput): void {
@@ -44,6 +47,9 @@ export function createOutputWriter(options: CreateOutputWriterOptions): OutputWr
       }
 
       writeJsonFailure(error, meta, stream);
+    },
+    warn(message: string): void {
+      errorStream.write(`${message}\n`);
     },
   };
 }

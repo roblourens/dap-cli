@@ -13,9 +13,10 @@ export interface CliStreams {
 
 export async function main(args: readonly string[], program: Command | undefined = undefined, streams: CliStreams = process): Promise<ExitCode> {
   const command = getCommandName(args);
-  const activeProgram = program ?? createProgram({ stdout: streams.stdout });
+  const activeProgram = program ?? createProgram({ stdout: streams.stdout, stderr: streams.stderr });
   const output = createOutputWriter({
     stream: streams.stdout,
+    errorStream: streams.stderr,
     resolveMode: () => resolveOutputMode({ cliHuman: getProgramHumanOption(activeProgram), env: process.env }),
   });
 

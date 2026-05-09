@@ -82,6 +82,76 @@ const scripts: Record<string, FakeStep[]> = {
 		{ stderr: 'fake adapter startup failure' },
 		{ close: true },
 	],
+	'evaluate-auto-frame': [
+		// Phase 11 plan 02: paused with one stopped thread; evaluate must
+		// auto-resolve frameId to 4242 via stackTrace before sending evaluate.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'breakpoint', threadId: 1 } },
+		{ command: 'stackTrace', expectedArguments: { threadId: 1 }, body: { stackFrames: [{ id: 4242, name: 'f0', line: 1, column: 1 }, { id: 4243, name: 'f1', line: 2, column: 1 }], totalFrames: 2 } },
+		{ command: 'evaluate', expectedArguments: { frameId: 4242, expression: 'x' }, body: { result: 'auto', variablesReference: 0 } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'evaluate-auto-frame-explicit': [
+		// Phase 11 plan 02: paused, but the user passes --frame-id 9999
+		// explicitly so NO stackTrace must be sent.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'breakpoint', threadId: 1 } },
+		{ command: 'evaluate', expectedArguments: { frameId: 9999, expression: 'x' }, body: { result: 'explicit', variablesReference: 0 } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'evaluate-auto-frame-all-threads': [
+		// Phase 11 plan 02: paused with allThreadsStopped (no threadId), so
+		// stoppedThreadIds is empty and the CLI must fall back to threads then
+		// stackTrace.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'pause', allThreadsStopped: true } },
+		{ command: 'threads', body: { threads: [{ id: 7, name: 'main' }] } },
+		{ command: 'stackTrace', expectedArguments: { threadId: 7 }, body: { stackFrames: [{ id: 4242, name: 'f0', line: 1, column: 1 }], totalFrames: 1 } },
+		{ command: 'evaluate', expectedArguments: { frameId: 4242, expression: 'x' }, body: { result: 'all-threads', variablesReference: 0 } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'evaluate-auto-frame-empty-threads': [
+		// Phase 11 plan 02: paused, but threads returns []. CLI must fall back
+		// to a no-frame evaluate and emit an "auto-frame failed" hint.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'pause', allThreadsStopped: true } },
+		{ command: 'threads', body: { threads: [] } },
+		{ command: 'evaluate', expectedArguments: { expression: 'x' }, body: { result: 'no-frame', variablesReference: 0 } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'evaluate-auto-frame-not-paused': [
+		// Phase 11 plan 02: never emits a stopped event so paused stays
+		// undefined. Auto-frame must skip resolution and emit the "session
+		// not paused" hint.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ command: 'evaluate', expectedArguments: { expression: 'x' }, body: { result: 'no-frame', variablesReference: 0 } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
 	'paused-then-continued': [
 		// Stops with reason 'entry' (NO allThreadsStopped — threadId is the
 		// only stopped thread), waits for `continue`, then emits `continued`.

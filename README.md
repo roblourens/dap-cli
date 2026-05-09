@@ -50,9 +50,11 @@ dap-cli cleanup
 
 ## Polling-Only v1 Model
 
-dap-cli v1 is intentionally polling-only. Use `status` to check lifecycle state and `events --after-cursor` to read bounded recent events. When execution is stopped, inspect in this order: `threads`, `stack`, `scopes`, `variables`, and `evaluate`.
+dap-cli v1 is intentionally polling-only. Use `status` to check lifecycle and paused state (it incorporates the most recent `stopped`/`continued` event, including child-mirrored stops on js-debug parent sessions) and `events --after-cursor` for bounded recent event history. When execution is stopped, inspect in this order: `threads`, `stack`, `scopes`, `variables`, and `evaluate`.
 
 DAP frame IDs and variable references are scoped to the current suspended state. After `continue`, `next`, `step-in`, or `step-out`, poll again and reacquire stack frames, scopes, and variable references before inspecting values.
+
+`evaluate` auto-resolves `--frame-id` to the topmost paused frame when omitted on a paused session, so `dap-cli evaluate --expression "user.email" --name demo` is the canonical short form. Pass `--frame-id <N>` explicitly when you need a specific non-top frame.
 
 See [docs/AGENT-WORKFLOWS.md](docs/AGENT-WORKFLOWS.md) for deeper agent loops.
 

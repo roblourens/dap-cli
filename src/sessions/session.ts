@@ -112,7 +112,7 @@ export function projectSessionSummary(session: SessionRecord): SessionSummary {
     name: session.name,
     adapter: session.adapter,
     lifecycle: session.lifecycle,
-    status: projectStatusState(session.lifecycle),
+    status: projectSummaryStatus(session),
     updatedAt: session.updatedAt,
   };
   let result = session.parent_session_id !== undefined
@@ -150,6 +150,20 @@ export function projectSessionStatus(session: SessionRecord): SessionStatus {
   }
 
   return status;
+}
+
+// Phase 11 plan 01: status reflects mirrored `paused` for non-terminal lifecycles
+// so child-event mirrors (js-debug pwa-node/pwa-chrome) project status: 'stopped'
+// even though parent lifecycle stays 'running'. Terminal lifecycles always win.
+function projectSummaryStatus(session: SessionRecord): SessionStatusState {
+  const fromLifecycle = projectStatusState(session.lifecycle);
+  if (fromLifecycle === 'failed' || fromLifecycle === 'terminated') {
+    return fromLifecycle;
+  }
+  if (session.paused === true) {
+    return 'stopped';
+  }
+  return fromLifecycle;
 }
 
 function projectStatusState(lifecycle: SessionLifecycle): SessionStatusState {

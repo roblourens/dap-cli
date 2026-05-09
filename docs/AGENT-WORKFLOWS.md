@@ -6,8 +6,8 @@ This guide is for agents that need a repeatable debug loop from shell commands. 
 
 Use the same loop for Node.js, Python, browser, and custom adapters:
 
-1. Poll `status --name <session>` to check whether the session is running, stopped, or terminated.
-2. Poll `events --name <session> --after-cursor <cursor> --limit 20` to read bounded recent events.
+1. Poll `status --name <session>` to check whether the session is running, stopped (paused), or terminated. `status` is the source of truth for paused-vs-running — it incorporates the most recent `stopped`/`continued` event for both single-process adapters (debugpy, fake) and multi-process adapters (js-debug pwa-node, pwa-chrome). For js-debug parent sessions, `status` reflects the child's most recent stop via the parent's mirrored `paused` projection — no need to walk child sessions.
+2. Poll `events --name <session> --after-cursor <cursor> --limit 20` for richer context (cursor, body, reason history). `events` is no longer required for stop detection.
 3. If stopped, inspect with `threads`, `stack --thread-id`, `scopes --frame-id`, and `variables --variables-reference`.
 4. Decide with `evaluate`, `continue`, `next`, `step-in`, or `step-out`.
 5. Repeat from `status` after every resume or step.
@@ -49,11 +49,14 @@ Use `breakpoints set` as replacement semantics for a source. If you need a diffe
 Evaluate expressions only while the target is stopped and use the JSON result to decide the next command.
 
 ```bash
+dap-cli evaluate --expression "value + 1" --name inspect
 dap-cli evaluate --expression "value > 10" --frame-id 10 --context repl --name inspect
 dap-cli next --thread-id 1 --name inspect
 dap-cli step-in --thread-id 1 --name inspect
 dap-cli step-out --thread-id 1 --name inspect
 ```
+
+`evaluate` auto-resolves `--frame-id` to the topmost frame of the most-recently-stopped thread when the session is paused and `--frame-id` is omitted. The four-command `threads → stack → grab frameId → evaluate` recipe still works (and is required when you want a specific non-top frame), but the short form `dap-cli evaluate --expression '...' --name <session>` is now sufficient for the common case. When multiple threads are paused or auto-resolution falls back, dap-cli prints a one-line stderr hint naming the auto-selected thread or failure reason.
 
 A common agent pattern is:
 
