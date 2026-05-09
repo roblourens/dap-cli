@@ -362,13 +362,13 @@ Plans:
 
 ### Phase 13: Auto-emit JSON when stdout is not a TTY regardless of DAP_CLI_HUMAN
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Piped/non-TTY `dap-cli` invocations always emit JSON regardless of `DAP_CLI_HUMAN`, so agents can drop the `--no-human` defensive workaround. Explicit `--human` / `--no-human` flags continue to override.
+**Requirements**: TTY-01
 **Depends on:** Phase 12
-**Plans:** 0 plans
+**Plans:** 1 plan
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 13 to break down)
+- [ ] 13-01-PLAN.md — Gate env-derived human output on `process.stdout.isTTY` in `resolveOutputMode` and wire both CLI bootstraps (TTY-01)
 
 ### Phase 14: Update agent workflow docs and dap-cli usage skill with lessons from external usage analysis
 

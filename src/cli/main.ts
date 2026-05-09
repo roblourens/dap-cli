@@ -17,7 +17,7 @@ export async function main(args: readonly string[], program: Command | undefined
   const output = createOutputWriter({
     stream: streams.stdout,
     errorStream: streams.stderr,
-    resolveMode: () => resolveOutputMode({ cliHuman: getProgramHumanOption(activeProgram), env: process.env }),
+    resolveMode: () => resolveOutputMode({ cliHuman: getProgramHumanOption(activeProgram), isStdoutTTY: streams.stdout.isTTY === true, env: process.env }),
   });
 
   activeProgram.configureOutput({
@@ -34,7 +34,7 @@ export async function main(args: readonly string[], program: Command | undefined
     }
 
     if (error instanceof CliError) {
-      const cliError = selectRenderableError(error, activeProgram);
+      const cliError = selectRenderableError(error, activeProgram, streams);
       output.failure(cliError, { command });
       return cliError.exitCode;
     }
@@ -43,7 +43,7 @@ export async function main(args: readonly string[], program: Command | undefined
       const cliError = selectRenderableError(usageError(error.message, {
         code: 'usage_error',
         diagnostics: [error.message],
-      }), activeProgram);
+      }), activeProgram, streams);
       output.failure(cliError, { command });
       return cliError.exitCode;
     }
@@ -51,15 +51,15 @@ export async function main(args: readonly string[], program: Command | undefined
     const cliError = selectRenderableError(internalError('Unexpected internal error', {
       code: 'internal_error',
       diagnostics: ['The command failed unexpectedly.'],
-    }), activeProgram);
+    }), activeProgram, streams);
     output.failure(cliError, { command });
     return cliError.exitCode;
   }
 }
 
-function selectRenderableError(error: CliError, program: Command): CliError {
+function selectRenderableError(error: CliError, program: Command, streams: CliStreams): CliError {
   try {
-    resolveOutputMode({ cliHuman: getProgramHumanOption(program), env: process.env });
+    resolveOutputMode({ cliHuman: getProgramHumanOption(program), isStdoutTTY: streams.stdout.isTTY === true, env: process.env });
     return error;
   } catch (modeError) {
     if (modeError instanceof CliError) {

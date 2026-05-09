@@ -20,29 +20,34 @@ afterEach(() => {
 
 describe('human output mode resolver', () => {
   test('explicit CLI selection wins over DAP_CLI_HUMAN', () => {
-    expect(resolveOutputMode({ cliHuman: true, env: { DAP_CLI_HUMAN: '0' } })).toBe('human');
-    expect(resolveOutputMode({ cliHuman: false, env: { DAP_CLI_HUMAN: '1' } })).toBe('json');
+    expect(resolveOutputMode({ cliHuman: true, isStdoutTTY: true, env: { DAP_CLI_HUMAN: '0' } })).toBe('human');
+    expect(resolveOutputMode({ cliHuman: false, isStdoutTTY: true, env: { DAP_CLI_HUMAN: '1' } })).toBe('json');
   });
 
-  test('DAP_CLI_HUMAN accepts explicit true and false values', () => {
+  test('explicit CLI selection wins even when stdout is not a TTY', () => {
+    expect(resolveOutputMode({ cliHuman: true, isStdoutTTY: false, env: { DAP_CLI_HUMAN: '0' } })).toBe('human');
+    expect(resolveOutputMode({ cliHuman: false, isStdoutTTY: false, env: { DAP_CLI_HUMAN: '1' } })).toBe('json');
+  });
+
+  test('DAP_CLI_HUMAN accepts explicit true and false values on a TTY', () => {
     for (const value of ['1', 'true', 'yes', 'on', 'human', ' TRUE ']) {
-      expect(resolveOutputMode({ cliHuman: undefined, env: { DAP_CLI_HUMAN: value } })).toBe('human');
+      expect(resolveOutputMode({ cliHuman: undefined, isStdoutTTY: true, env: { DAP_CLI_HUMAN: value } })).toBe('human');
     }
 
     for (const value of ['0', 'false', 'no', 'off', 'json', ' JSON ']) {
-      expect(resolveOutputMode({ cliHuman: undefined, env: { DAP_CLI_HUMAN: value } })).toBe('json');
+      expect(resolveOutputMode({ cliHuman: undefined, isStdoutTTY: true, env: { DAP_CLI_HUMAN: value } })).toBe('json');
     }
   });
 
-  test('DAP_CLI_HUMAN defaults to JSON when missing or blank', () => {
-    expect(resolveOutputMode({ cliHuman: undefined, env: {} })).toBe('json');
-    expect(resolveOutputMode({ cliHuman: undefined, env: { DAP_CLI_HUMAN: '   ' } })).toBe('json');
+  test('DAP_CLI_HUMAN defaults to JSON when missing or blank on a TTY', () => {
+    expect(resolveOutputMode({ cliHuman: undefined, isStdoutTTY: true, env: {} })).toBe('json');
+    expect(resolveOutputMode({ cliHuman: undefined, isStdoutTTY: true, env: { DAP_CLI_HUMAN: '   ' } })).toBe('json');
   });
 
-  test('invalid DAP_CLI_HUMAN values produce a handled usage error', () => {
+  test('invalid DAP_CLI_HUMAN values produce a handled usage error on a TTY', () => {
     let thrown: unknown;
     try {
-      resolveOutputMode({ cliHuman: undefined, env: { DAP_CLI_HUMAN: 'maybe' } });
+      resolveOutputMode({ cliHuman: undefined, isStdoutTTY: true, env: { DAP_CLI_HUMAN: 'maybe' } });
     } catch (error) {
       thrown = error;
     }
@@ -53,6 +58,18 @@ describe('human output mode resolver', () => {
     }
     expect(thrown.code).toBe('invalid_output_mode_env');
     expect(thrown.diagnostics).toContain('Use DAP_CLI_HUMAN=1 for human output or DAP_CLI_HUMAN=0 for JSON output.');
+  });
+
+  test('non-TTY stdout returns JSON regardless of DAP_CLI_HUMAN (the headline gate)', () => {
+    expect(resolveOutputMode({ cliHuman: undefined, isStdoutTTY: false, env: { DAP_CLI_HUMAN: '1' } })).toBe('json');
+    expect(resolveOutputMode({ cliHuman: undefined, isStdoutTTY: false, env: { DAP_CLI_HUMAN: 'human' } })).toBe('json');
+    expect(resolveOutputMode({ cliHuman: undefined, isStdoutTTY: false, env: {} })).toBe('json');
+    expect(resolveOutputMode({ cliHuman: undefined, isStdoutTTY: false, env: { DAP_CLI_HUMAN: '0' } })).toBe('json');
+  });
+
+  test('non-TTY stdout skips env parsing so invalid DAP_CLI_HUMAN does NOT throw (agent-pipeline safety net)', () => {
+    expect(() => resolveOutputMode({ cliHuman: undefined, isStdoutTTY: false, env: { DAP_CLI_HUMAN: 'maybe' } })).not.toThrow();
+    expect(resolveOutputMode({ cliHuman: undefined, isStdoutTTY: false, env: { DAP_CLI_HUMAN: 'maybe' } })).toBe('json');
   });
 });
 

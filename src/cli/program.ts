@@ -24,15 +24,15 @@ export function createProgram(options: ProgramOptions = {}): Command {
   const output = createOutputWriter({
     stream: stdout,
     errorStream: stderr,
-    resolveMode: () => resolveOutputMode({ cliHuman: getProgramHumanOption(program), env: process.env }),
+    resolveMode: () => resolveOutputMode({ cliHuman: getProgramHumanOption(program), isStdoutTTY: stdout.isTTY === true, env: process.env }),
   });
 
   program
     .name('dap-cli')
     .description('A Debug Adapter Protocol CLI for agents. Control debug sessions from shell commands.')
     .version(getPackageVersion(packageJson))
-    .option('--human', 'render human-readable output')
-    .option('--no-human', 'render machine-readable JSON output even if DAP_CLI_HUMAN is set')
+    .option('--human', 'render human-readable output (default when stdout is a TTY and DAP_CLI_HUMAN is set)')
+    .option('--no-human', 'render machine-readable JSON output even if DAP_CLI_HUMAN is set or stdout is a TTY')
     .showHelpAfterError()
     .exitOverride();
 

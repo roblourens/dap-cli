@@ -6,7 +6,7 @@ import { getDapCliHome, getDapCliLogDir, getDapCliStateDir } from '../../src/con
 import { toJsonString, writeJsonFailure, writeJsonSuccess } from '../../src/cli/output.js';
 import { usageError } from '../../src/cli/errors.js';
 import { startControllerServer, type ControllerServer } from '../../src/controller/server.js';
-import { createCliTestEnv, runCli, runCliHuman, type CliTestEnv } from '../helpers/runCli.js';
+import { createCliTestEnv, runCli, runCliHuman, runCliPiped, type CliTestEnv } from '../helpers/runCli.js';
 
 class MemoryStream {
   public readonly chunks: string[] = [];
@@ -158,13 +158,15 @@ describe('JSON output contract', () => {
     expect(json.envelope).toMatchObject({ ok: true, data: { stopped: false } });
   });
 
-  test('invalid DAP_CLI_HUMAN is a handled JSON failure unless explicitly overridden', async () => {
+  test('invalid DAP_CLI_HUMAN is a handled JSON failure on a TTY unless explicitly overridden', async () => {
     const invalidEnv = { ...process.env, DAP_CLI_HUMAN: 'maybe' };
 
-    const invalid = await runCli(['status'], { env: invalidEnv });
+    // runCliHuman simulates a TTY stdout, so env parsing runs and surfaces the env error.
+    const invalid = await runCliHuman(['status'], { env: invalidEnv });
     expect(invalid.exitCode).toBe(2);
     expect(invalid.stderr).toBe('');
-    expect(invalid.envelope).toMatchObject({ ok: false, error: { code: 'invalid_output_mode_env' } });
+    const invalidEnvelope = JSON.parse(invalid.stdout) as { ok: false; error: { code: string } };
+    expect(invalidEnvelope).toMatchObject({ ok: false, error: { code: 'invalid_output_mode_env' } });
 
     const overridden = await runCliHuman(['--human', 'status'], { env: invalidEnv });
     expect(overridden.exitCode).toBe(3);
@@ -172,6 +174,43 @@ describe('JSON output contract', () => {
     expect(overridden.stdout).toContain('Error: dap-cli controller is unavailable.');
     expect(overridden.stdout).toContain('Code: controller_unavailable');
     expect(overridden.stdout).not.toContain('invalid_output_mode_env');
+  });
+
+  test('non-TTY stdout emits JSON even when DAP_CLI_HUMAN=1 is inherited (Phase 13 headline)', async () => {
+    const result = await runCliPiped(['stop-controller'], {
+      env: { ...process.env, DAP_CLI_HUMAN: '1', DAP_CLI_HOME: path.join(tmpdir(), `dap-cli-piped-human-${Date.now()}`) },
+    });
+
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).not.toContain('Data:');
+    expect(result.stdout).not.toContain('stopped: false');
+    const envelope = JSON.parse(result.stdout) as { ok: true; data: { stopped: unknown } };
+    expect(envelope).toMatchObject({ ok: true });
+    expect(typeof envelope.data.stopped).toBe('boolean');
+  });
+
+  test('--human over a piped stdout still produces human output (explicit override)', async () => {
+    const result = await runCliPiped(['--human', 'stop-controller'], {
+      env: { ...process.env, DAP_CLI_HOME: path.join(tmpdir(), `dap-cli-piped-explicit-human-${Date.now()}`) },
+    });
+
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toContain('Data:');
+    expect(result.stdout).not.toContain('{"ok":true');
+  });
+
+  test('non-TTY stdout ignores invalid DAP_CLI_HUMAN values (agent-pipeline safety net)', async () => {
+    const result = await runCliPiped(['status'], {
+      env: { ...process.env, DAP_CLI_HUMAN: 'maybe', DAP_CLI_HOME: path.join(tmpdir(), `dap-cli-piped-invalid-env-${Date.now()}`) },
+    });
+
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr).toBe('');
+    const envelope = JSON.parse(result.stdout) as { ok: false; error: { code: string } };
+    expect(envelope).toMatchObject({ ok: false, error: { code: 'controller_unavailable' } });
+    expect(envelope.error.code).not.toBe('invalid_output_mode_env');
   });
 
   test('launch --json remains a payload parser, not an output-mode flag', async () => {

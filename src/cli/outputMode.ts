@@ -4,6 +4,7 @@ export type OutputMode = 'json' | 'human';
 
 export interface ResolveOutputModeInput {
   cliHuman: boolean | undefined;
+  isStdoutTTY: boolean;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -15,6 +16,9 @@ export function resolveOutputMode(input: ResolveOutputModeInput): OutputMode {
     return 'human';
   }
   if (input.cliHuman === false) {
+    return 'json';
+  }
+  if (input.isStdoutTTY === false) {
     return 'json';
   }
 

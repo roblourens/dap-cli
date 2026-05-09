@@ -45,6 +45,7 @@ export interface JsonMetaInput {
 
 export interface JsonWritable {
   write(chunk: string): boolean;
+  readonly isTTY?: boolean;
 }
 
 export function writeJsonSuccess<T>(data: T, meta: JsonMetaInput, stream: JsonWritable = process.stdout): void {
