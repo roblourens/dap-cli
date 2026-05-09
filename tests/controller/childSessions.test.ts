@@ -825,3 +825,92 @@ describe('ChildSessionCoordinator parent-name thread routing (H-3a)', () => {
     }
   });
 });
+
+/**
+ * Plan 15-01 (CHILD-VERIFY-01): renderer-side `output` events MUST reach the
+ * parent's event cache annotated with `child_session_id`. analysis2.md saw a
+ * pwa-chrome agent fail to observe any renderer logpoint output via
+ * `dap-cli events --name <parent>`. The mirror path
+ * (ChildSessionCoordinator.mirrorChildEvent) is the single chokepoint that
+ * makes the observation possible — these tests pin it as a regression guard.
+ */
+describe('ChildSessionCoordinator output-event mirroring (CHILD-VERIFY-01)', () => {
+  test('console-category output from a registered child appears in parent cache with child_session_id', async () => {
+    const manager = await SessionManager.create({ dapCliHome });
+    const parent = await manager.create({ name: 'pwa-parent', adapter: 'js-debug' });
+    const parentEndpoint = new FakeAdapterEndpoint('parent');
+    const parentClient = new DapClient(parentEndpoint);
+    const childEndpoint = new FakeAdapterEndpoint('child');
+    const parentEventCache = new DapEventCache();
+
+    const coordinator = new ChildSessionCoordinator({
+      parentSessionId: parent.id,
+      parentName: parent.name,
+      parentClient,
+      adapterId: 'js-debug',
+      ownedAdapter: { startedByDapCli: true, stderrTail: [] },
+      sessionManager: manager,
+      parentEventCache,
+      openChildTransport: () => Promise.resolve(childEndpoint),
+    });
+    coordinator.attach();
+
+    parentEndpoint.emitReverseRequest('startDebugging', {
+      request: 'launch',
+      configuration: { __pendingTargetId: 'tgt-renderer', type: 'pwa-chrome' },
+    });
+    await coordinator.awaitPendingChildren();
+    await tick(2);
+
+    // Discover the registered child id via the SessionManager — same path
+    // production resolveRuntime / sessions --show-children uses.
+    const children = manager.list({ includeChildren: true }).filter(s => s.parent_session_id === parent.id);
+    expect(children).toHaveLength(1);
+    const childId = children[0]!.id;
+
+    // Synthesize the renderer logpoint output the analysis2.md agent
+    // expected to see: a `console`-category output event.
+    childEndpoint.emitEvent('output', { category: 'console', output: 'hello\n' });
+    await tick(2);
+
+    const snapshot = parentEventCache.recent({});
+    const outputEvents = snapshot.events.filter(e => e.event === 'output');
+    expect(outputEvents).toHaveLength(1);
+    const mirrored = outputEvents[0] as { event: string; body?: Record<string, unknown> };
+    expect(mirrored.body?.child_session_id).toBe(childId);
+    // Mirror MUST preserve the original category and output payload — the
+    // analysis2.md agent failure mode would have been silently dropping or
+    // rewriting these fields.
+    expect(mirrored.body?.category).toBe('console');
+    expect(mirrored.body?.output).toBe('hello\n');
+
+    await coordinator.dispose();
+    await parentClient.close();
+  });
+
+  test('parent-direct cache append does NOT receive child_session_id annotation (negative guard)', async () => {
+    // Pins the mirror as a child-only concern: events appended to the parent
+    // cache through any non-mirror path (in production: the parent client's
+    // own onEvent → recorder pump in server.ts) keep their body untouched.
+    // Without this guard, a future change that moved annotation into
+    // DapEventCache.append() would silently inject child_session_id into
+    // genuine parent events.
+    const manager = await SessionManager.create({ dapCliHome });
+    const parent = await manager.create({ name: 'pwa-parent', adapter: 'js-debug' });
+    const parentEventCache = new DapEventCache();
+
+    const parentEvent: DapEventMessage = {
+      seq: 1,
+      type: 'event',
+      event: 'output',
+      body: { category: 'stdout', output: 'parent-direct\n' },
+    };
+    parentEventCache.append(parent.id, parentEvent);
+
+    const snapshot = parentEventCache.recent({});
+    expect(snapshot.events).toHaveLength(1);
+    const stored = snapshot.events[0] as { body?: Record<string, unknown> };
+    expect(stored.body).toEqual({ category: 'stdout', output: 'parent-direct\n' });
+    expect(stored.body && 'child_session_id' in stored.body).toBe(false);
+  });
+});

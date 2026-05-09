@@ -66,6 +66,33 @@ js-debug adapters (`pwa-node`, `pwa-chrome`) spin up a child session per runtime
 
 Use `sessions` only to confirm that a parent session exists; you do not target children individually.
 
+#### pwa-chrome multi-renderer recipe
+
+`pwa-chrome` attaches to the root browser target and spawns one child per renderer (page, worker, etc.). Every child event — including `output` from a logpoint — is mirrored into the parent's event stream with the originating child's id annotated as `body.child_session_id`. The supported workflow:
+
+1. **Discover children.** Children are hidden from `sessions` by default; opt them in with `--show-children`. The response includes `parent_session_id` and a 32-hex CDP target id appended to the parent name (e.g. `vsc#6FC14EEF…`):
+
+    ```bash
+    dap-cli sessions --show-children
+    ```
+
+2. **Read events from the parent.** All child events flow into the parent's cache. Do not poll children directly:
+
+    ```bash
+    dap-cli events --name <parent> --include output --after-cursor 0
+    ```
+
+3. **Filter by `child_session_id` on the consumer side.** Each mirrored event carries `body.child_session_id` set to the child's session id. Pick a renderer's id from step 1 and grep / `jq` on it:
+
+    ```bash
+    dap-cli events --name <parent> --after-cursor 0 \
+      | jq '.data.events[] | select(.body.child_session_id == "<child-id>")'
+    ```
+
+   Logpoint output from a renderer arrives as an `output` event with `body.category` set to whatever js-debug used for the source — typically `stdout` for `--log-message` payloads (NOT `console`). Filter on `child_session_id` rather than `category` to be category-agnostic.
+
+4. **Never target a child directly.** As covered above, `events --name <child>` (or `status`, `stack`, etc.) returns `child_session_not_targetable` with `error.data.parentSessionId` pointing back to the parent. The recovery is always to retry against the parent and filter.
+
 ## Breakpoint Workflow
 
 Set breakpoints before triggering the behavior you want to inspect. Then poll events and inspect the new stopped state.

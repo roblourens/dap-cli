@@ -416,6 +416,67 @@ describe('session CLI commands', () => {
       const continueEnvelope = parseJson(continueResult.stdout) as { ok: false; error: { code: string } };
       expect(continueEnvelope.error.code).toBe('child_session_not_targetable');
     });
+
+    // Plan 15-02 (CHILD-ERR-01): the events surface MUST route through the
+    // same child-session gate as the other public commands. analysis2.md
+    // observed `total: 0` for `events --name <child>`, which implied either
+    // a stale build or a bypass of `assertNotChildSession` on the events
+    // path. recentEvents already calls resolveRuntime → assertNotChildSession,
+    // so these tests primarily lock the behavior in place against future
+    // regressions; if any fail, the events.recent path needs to be re-routed
+    // through the gate.
+    test('events --name <child-id> returns child_session_not_targetable', async () => {
+      const manager = await SessionManager.create({ dapCliHome: testEnv.dapCliHome });
+      const parent = await manager.create({ name: 'pwa-parent', lifecycle: 'running' });
+      const child = await manager.registerChild({ parent_session_id: parent.id, name: 'pwa-parent#child', lifecycle: 'running' });
+      server = await startControllerServer({ dapCliHome: testEnv.dapCliHome });
+
+      const result = await runCli(['events', '--name', child.id], { env: testEnv.env });
+      expect(result.exitCode, JSON.stringify(result)).not.toBe(0);
+      const envelope = parseJson(result.stdout) as {
+        ok: false;
+        error: {
+          code: string;
+          category: string;
+          data?: { childSessionId?: string; parentSessionId?: string; parentName?: string };
+        };
+      };
+      expect(envelope.error.code).toBe('child_session_not_targetable');
+      expect(envelope.error.category).toBe('session');
+      expect(envelope.error.data).toMatchObject({
+        childSessionId: child.id,
+        parentSessionId: parent.id,
+        parentName: 'pwa-parent',
+      });
+    });
+
+    test('events --name <parent#hex> for events also returns child_session_not_targetable', async () => {
+      const manager = await SessionManager.create({ dapCliHome: testEnv.dapCliHome });
+      const parent = await manager.create({ name: 'pwa-parent', lifecycle: 'running' });
+      await manager.registerChild({ parent_session_id: parent.id, name: 'pwa-parent#abc123', lifecycle: 'running' });
+      server = await startControllerServer({ dapCliHome: testEnv.dapCliHome });
+
+      const result = await runCli(['events', '--name', 'pwa-parent#abc123'], { env: testEnv.env });
+      expect(result.exitCode, JSON.stringify(result)).not.toBe(0);
+      const envelope = parseJson(result.stdout) as {
+        ok: false;
+        error: { code: string; data?: { parentSessionId?: string } };
+      };
+      expect(envelope.error.code).toBe('child_session_not_targetable');
+      expect(envelope.error.data?.parentSessionId).toBe(parent.id);
+    });
+
+    test('events --name <unknown> still returns session_not_found', async () => {
+      const manager = await SessionManager.create({ dapCliHome: testEnv.dapCliHome });
+      const parent = await manager.create({ name: 'pwa-parent', lifecycle: 'running' });
+      await manager.registerChild({ parent_session_id: parent.id, name: 'pwa-parent#child', lifecycle: 'running' });
+      server = await startControllerServer({ dapCliHome: testEnv.dapCliHome });
+
+      const result = await runCli(['events', '--name', 'definitely-not-a-real-session'], { env: testEnv.env });
+      expect(result.exitCode).not.toBe(0);
+      const envelope = parseJson(result.stdout) as { ok: false; error: { code: string } };
+      expect(envelope.error.code).toBe('session_not_found');
+    });
   });
 
   test('every dap-cli suggestion in error diagnostics parses through commander', async () => {

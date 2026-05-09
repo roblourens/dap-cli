@@ -52,6 +52,8 @@ dap-cli cleanup
 
 dap-cli v1 is intentionally polling-only. Use `status` to check lifecycle and paused state (it incorporates the most recent `stopped`/`continued` event, including child-mirrored stops on js-debug parent sessions) and `events --after-cursor` for bounded recent event history. When execution is stopped, inspect in this order: `threads`, `stack`, `scopes`, `variables`, and `evaluate`.
 
+For multi-process js-debug parents (`pwa-chrome` renderers, `pwa-node` workers), discover children with `dap-cli sessions --show-children` and filter the parent's `events` stream by `body.child_session_id` to isolate one runtime — see [docs/AGENT-WORKFLOWS.md → pwa-chrome multi-renderer recipe](docs/AGENT-WORKFLOWS.md#pwa-chrome-multi-renderer-recipe) for the full workflow.
+
 DAP frame IDs and variable references are scoped to the current suspended state. After `continue`, `next`, `step-in`, or `step-out`, poll again and reacquire stack frames, scopes, and variable references before inspecting values.
 
 `evaluate` auto-resolves `--frame-id` to the topmost paused frame when omitted on a paused session, so `dap-cli evaluate --expression "user.email" --name demo` is the canonical short form. Pass `--frame-id <N>` explicitly when you need a specific non-top frame.

@@ -379,3 +379,28 @@ Plans:
 
 Plans:
 - [ ] 14-01-PLAN.md — Update `docs/AGENT-WORKFLOWS.md` + `README.md` and mirror into the user-level `~/.copilot/skills/dap-cli/` skill (AGNT-04, AGNT-05)
+
+### Phase 15: Verify and document existing child-session event mirroring for js-debug pwa-chrome
+
+**Goal:** Close the analysis2.md §2 gap *without* contradicting the 05-19 / H-3 design decision that child sessions are intentionally not directly targetable. The plumbing already exists: `dap-cli sessions --show-children` enumerates children, and `ChildSessionCoordinator.mirrorChildEvent` annotates every child event with `child_session_id` into the parent's event cache. Three concrete deliverables: (a) end-to-end repro against a pwa-chrome renderer that proves `console`-category `output` events from a verified logpoint reach the parent's event stream tagged with the renderer's `child_session_id` — and fix the mirror path if they don't; (b) verify `events --name <child_session_id>` returns the structured "target the parent" error we designed in 05-19, not the misleading `total: 0` the analysis reported (fix to throw the structured error if confirmed); (c) doc/skill update with the canonical pwa-chrome workflow ("`sessions --show-children` to discover, then filter parent's events by `child_session_id`"). Source: analysis2.md §2 — re-scoped down after code audit showed enumeration + mirroring already ship.
+**Requirements**: CHILD-VERIFY-01, CHILD-ERR-01, CHILD-DOC-01
+**Depends on:** Phase 14
+**Plans:** 3/3 plans complete
+
+Plans:
+**Wave 1** *(parallel — no file overlap)*
+- [x] 15-01-PLAN.md — Verify (and fix if needed) renderer logpoint `output` events reach the parent's event stream tagged with `child_session_id`; ship a unit test + hand-driven repro (CHILD-VERIFY-01)
+- [x] 15-02-PLAN.md — Verify (and fix if needed) `events --name <child>` returns the structured `child_session_not_targetable` error instead of the misleading `total: 0`; lock with regression tests (CHILD-ERR-01)
+
+**Wave 2** *(blocked on Wave 1 — docs describe verified behavior)*
+- [x] 15-03-PLAN.md — Document the canonical pwa-chrome workflow (`sessions --show-children` → `events --name <parent>` → filter by `body.child_session_id`) in `docs/AGENT-WORKFLOWS.md`, `README.md`, and the user-level `~/.copilot/skills/dap-cli/` pair (CHILD-DOC-01)
+
+### Phase 16: Python evaluate ergonomics + verb-selection docs — auto-wrap statements and clarify launch vs attach
+
+**Goal:** Stop forcing agents to know debugpy's `evaluate`-is-an-expression rule. Detect statement-shaped Python input (e.g. `import`, assignment, multi-statement separated by `;` or newlines) on `dap-cli evaluate` against a `debugpy` session and either auto-wrap with `exec("...")` (preferred, behind detection) or surface a structured `evaluate_requires_exec` diagnostic naming the exact `exec()` form to retry — instead of returning the raw `SyntaxError` from debugpy. Mirror the rule into `docs/AGENT-WORKFLOWS.md`, `README.md`, and the user-level `~/.copilot/skills/dap-cli/` `evaluate` examples. In the same docs/skill pass, add a short "use the right verb" note covering the analysis2.md §1 confusion: `dap-cli launch` and `dap-cli attach` are separate commands and select the DAP `request:` field; agents should not look for a `--request` flag (Phase 10 already auto-routes when a `--config` JSON disagrees with the verb). Also add a one-paragraph note to `docs/PLAYWRIGHT-INTEROP.md` covering the playwright-cli daemon-died / `not open, please run open first` failure mode and the kill-and-reattach recovery. Sources: analysis2.md §Python, §1, §3.
+**Requirements**: PYEVAL-01, PYEVAL-02, VERB-DOC-01, PWDOC-01
+**Depends on:** Phase 15
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 16 to break down)

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Completed 14-01-PLAN.md
-last_updated: "2026-05-09T18:00:00.000Z"
-last_activity: 2026-05-09 -- Phases 10-14 complete (autonomous run)
+stopped_at: Completed 06-02-PLAN.md
+last_updated: "2026-05-09T20:37:08.557Z"
+last_activity: 2026-05-09 -- Phase 15 marked complete
 progress:
-  total_phases: 16
-  completed_phases: 16
-  total_plans: 77
-  completed_plans: 81
+  total_phases: 18
+  completed_phases: 17
+  total_plans: 80
+  completed_plans: 84
   percent: 100
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** Agents can reliably control a DAP debug session from repeatable CLI commands and inspect paused application state without needing language-specific debugger knowledge.
-**Current focus:** Phases 10–14 — analysis.md follow-ups complete; milestone ready for audit/complete/cleanup.
+**Current focus:** Phase 15 — child-session-enumeration-and-event-routing-for-js-debug-pwa
 
 ## Current Position
 
-Phase: 14 — COMPLETE (all milestone phases done)
-Plan: 1 of 1
-Status: Milestone v1.0 ready for /gsd-audit-milestone → /gsd-complete-milestone → /gsd-cleanup
-Last activity: 2026-05-09 -- Phases 10-14 complete (autonomous run)
+Phase: 15 — COMPLETE
+Plan: 1 of 3
+Status: Phase 15 complete
+Last activity: 2026-05-09 -- Phase 15 marked complete
 
-Progress: [█████████░] 99%
+Progress: [█████████░] 89%
 
 ## Performance Metrics
 
@@ -87,6 +87,7 @@ Progress: [█████████░] 99%
 - Phase 08 complete: External project hardening expansion closed GAP-08-01 through GAP-08-03.
 - Phase 9 added: Infer adapter/type from --program file extension (make --type and --adapter optional, derive from --program / each other when possible).
 - Phases 10–14 added (source: analysis.md from external Code OSS debugging session): 10 — auto-route launch/attach by --config request field + --json-overrides + --resolve-source-maps + adapter-helper warning; 11 — paused-state ergonomics (status reflects stops, evaluate auto-frame); 12 — breakpoints list/clear + richer verification diagnostics; 13 — auto-JSON when stdout is not a TTY; 14 — agent workflow doc/skill updates capturing the lessons.
+- Phases 15–16 added (source: analysis2.md from second external Code OSS debugging session + Python agent feedback): 15 — verify and document existing child-session event mirroring for js-debug pwa-chrome (analysis2.md §2; rescoped down after audit confirmed enumeration via `--show-children` and `mirrorChildEvent` already ship and the 05-19 / H-3 decision intentionally keeps child sessions non-targetable — work is now repro+fix-if-broken for renderer logpoint output, fix `events --name <child>` to return the structured "not targetable" error instead of `total: 0`, and doc the `--show-children` + `child_session_id` filter workflow); 16 — Python evaluate auto-wrap of statement-shaped input + docs/skill mirror, plus a "use the right verb" doc note (analysis2.md §1 — originally proposed as a separate `--request` flag phase but determined to be agent confusion since `launch`/`attach` are separate verbs) and a docs note on the playwright-cli daemon-died failure mode (analysis2.md §3).
 
 ### Decisions
 
