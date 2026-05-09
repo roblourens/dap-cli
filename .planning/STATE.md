@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: ready
-stopped_at: Phase 8 external hardening expansion and gap closure completed
-last_updated: "2026-05-09T02:22:16.620Z"
-last_activity: 2026-05-08 -- closed Phase 8 gaps for debugpy launch type mapping, running-thread diagnostics, and JS breakpoint guidance
+status: completed
+stopped_at: Completed 06-02-PLAN.md
+last_updated: "2026-05-09T16:21:58.942Z"
+last_activity: 2026-05-09 -- Phase 09 marked complete
 progress:
-  total_phases: 10
-  completed_phases: 9
-  total_plans: 67
-  completed_plans: 67
-  percent: 99
+  total_phases: 11
+  completed_phases: 11
+  total_plans: 68
+  completed_plans: 72
+  percent: 100
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** Agents can reliably control a DAP debug session from repeatable CLI commands and inspect paused application state without needing language-specific debugger knowledge.
-**Current focus:** Phase 08 — external project hardening expansion complete
+**Current focus:** Phase 09 — infer-adapter-type-from-program-file-extension
 
 ## Current Position
 
-Phase: 08 (external-project-hardening-expansion)
-Plan: 2 of 2
-Status: Complete — external repo expansion executed and Phase 8 gaps closed
-Last activity: 2026-05-08 -- closed GAP-08-01 through GAP-08-03
+Phase: 09 — COMPLETE
+Plan: 1 of 1
+Status: Phase 09 complete
+Last activity: 2026-05-09 -- Phase 09 marked complete
 
 Progress: [█████████░] 99%
 
@@ -85,6 +85,7 @@ Progress: [█████████░] 99%
 - Phase 05.1 inserted after Phase 05: A mode for the CLI where it produces human-readable nicely formatted output instead of JSON. (URGENT)
 - Phase 07 completed: Hardening bug discovery and exploratory smoke testing.
 - Phase 08 complete: External project hardening expansion closed GAP-08-01 through GAP-08-03.
+- Phase 9 added: Infer adapter/type from --program file extension (make --type and --adapter optional, derive from --program / each other when possible).
 
 ### Decisions
 

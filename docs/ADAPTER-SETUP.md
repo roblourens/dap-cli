@@ -110,6 +110,30 @@ Attach to a running socket adapter:
 dap-cli attach --adapter socket-debugger --name socket-demo
 ```
 
+## Inference rules
+
+`--adapter` and `--type` are optional on `dap-cli launch` and `dap-cli attach`. When omitted, dap-cli infers the missing pieces from `--program` (extension) and from each other (`--type` → adapter via `launchConfigTypeMap`; `--adapter` → default DAP type). Explicit flags always win — passing `--adapter` AND/OR `--type` skips inference for that field, with no validation that the two agree.
+
+Extension table (matched against `path.extname(program).toLowerCase()`):
+
+| Extension | Inferred adapter | Inferred DAP type |
+| --- | --- | --- |
+| `.py` | `debugpy` | `python` |
+| `.js`, `.mjs`, `.cjs` | `js-debug` | `pwa-node` |
+| `.ts`, `.mts`, `.cts` | `js-debug` | `pwa-node` |
+| `.html`, `.htm` | `js-debug` | `pwa-chrome` |
+
+Adapter-only defaults (used when only `--adapter` is given):
+
+| Adapter | Default type when only --adapter is given |
+| --- | --- |
+| `js-debug` | `pwa-node` (`pwa-chrome` if `--program` ends in `.html`/`.htm`) |
+| `debugpy` | `python` |
+| any custom adapter | no default — pass `--type` explicitly |
+
+- An unsupported program extension (or a program with no extension) produces a `usage_error` with code `adapter_inference_failed`. The error names the extension and asks you to pass `--adapter` or `--type` explicitly.
+- When `--adapter`, `--type`, `--program`, and `--config` are all absent, dap-cli falls back to the built-in `fake` adapter — preserving the legacy test/sandbox behavior.
+
 ## Launch Config Type Mapping
 
 Use `launchConfigTypeMap` when `.vscode/launch.json` uses a custom `type` value and dap-cli needs to map it to an adapter id.

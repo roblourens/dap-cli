@@ -17,6 +17,7 @@ import {
   resolveLaunchConfigEntry,
   resolveLaunchConfigurationConfig,
 } from '../../config/launchConfig.js';
+import { inferAdapterAndType } from '../../config/programInference.js';
 import type { OutputWriter } from '../outputWriter.js';
 import { parseJsonOption } from './jsonOptions.js';
 
@@ -64,7 +65,7 @@ export function registerDapCoreCommands(program: Command, output: OutputWriter):
   program
     .command('launch')
     .description('Start a DAP launch session using an adapter id, named launch config, or fake adapter')
-    .option('--adapter <adapter>', 'adapter id')
+    .option('--adapter <adapter>', 'adapter id (inferred from --type or --program when omitted)')
     .option('--config <name>', 'named .vscode/launch.json configuration')
     .option('--workspace <path>', 'workspace root for .vscode/launch.json discovery and variable substitution')
     .option('--list-configs', 'list VS Code launch configurations and compounds without starting a session')
@@ -78,7 +79,7 @@ export function registerDapCoreCommands(program: Command, output: OutputWriter):
     .option('--url <url>', 'URL override for browser adapters')
     .option('--port <port>', 'debug port override')
     .option('--python <path>', 'Python executable override')
-    .option('--type <type>', 'adapter-native debug type override')
+    .option('--type <type>', 'adapter-native debug type (inferred from --adapter or --program when omitted)')
     .option('--args <arg...>', 'program argument overrides')
     .option('--source-maps <boolean>', 'source map enablement override')
     .option('--out-files <pattern...>', 'source map output file patterns')
@@ -91,7 +92,7 @@ export function registerDapCoreCommands(program: Command, output: OutputWriter):
   program
     .command('attach')
     .description('Start a DAP attach session using an adapter id, named launch config, or fake adapter')
-    .option('--adapter <adapter>', 'adapter id')
+    .option('--adapter <adapter>', 'adapter id (inferred from --type or --program when omitted)')
     .option('--config <name>', 'named .vscode/launch.json configuration')
     .option('--workspace <path>', 'workspace root for .vscode/launch.json discovery and variable substitution')
     .option('--list-configs', 'list VS Code launch configurations and compounds without starting a session')
@@ -105,7 +106,7 @@ export function registerDapCoreCommands(program: Command, output: OutputWriter):
     .option('--url <url>', 'URL override for browser adapters')
     .option('--port <port>', 'debug port override')
     .option('--python <path>', 'Python executable override')
-    .option('--type <type>', 'adapter-native debug type override')
+    .option('--type <type>', 'adapter-native debug type (inferred from --adapter or --program when omitted)')
     .option('--args <arg...>', 'program argument overrides')
     .option('--source-maps <boolean>', 'source map enablement override')
     .option('--out-files <pattern...>', 'source map output file patterns')
@@ -206,8 +207,8 @@ async function startDap(output: OutputWriter, mode: 'launch' | 'attach', options
   }
 
   const namedConfig = namedEntry?.configuration;
-  const adapterId = resolveAdapterId(options.adapter, namedConfig, adapterConfig.launchConfigTypeMap);
-  const adapterFlags = mapFlagsForAdapter(adapterId, collectFlagOverrides(options));
+  const { adapterId, inferredType } = resolveAdapterAndType(options, namedConfig, adapterConfig.launchConfigTypeMap);
+  const adapterFlags = mapFlagsForAdapter(adapterId, collectFlagOverrides(options, inferredType));
   const adapterDefaults = getAdapterDefaults(adapterConfig, adapterId, mode);
   const config = {
     ...await mapConfigForAdapter(adapterId, resolveLaunchConfig({ namedConfig: { ...adapterDefaults, ...namedConfig }, jsonConfig, flags: adapterFlags }), workspace),
@@ -237,8 +238,8 @@ async function createCompoundStartMember(
 ): Promise<{ memberName: string; mode: 'launch' | 'attach'; descriptor: AdapterDescriptor; config: Record<string, unknown> }> {
   const resolvedConfig = resolveLaunchConfigurationConfig(configuration, { workspaceFolder });
   const memberMode = resolvedConfig.request === 'attach' ? 'attach' : resolvedConfig.request === 'launch' ? 'launch' : commandMode;
-  const adapterId = resolveAdapterId(options.adapter, resolvedConfig, adapterConfig.launchConfigTypeMap);
-  const adapterFlags = mapFlagsForAdapter(adapterId, collectFlagOverrides(options));
+  const { adapterId, inferredType } = resolveAdapterAndType(options, resolvedConfig, adapterConfig.launchConfigTypeMap);
+  const adapterFlags = mapFlagsForAdapter(adapterId, collectFlagOverrides(options, inferredType));
   const adapterDefaults = getAdapterDefaults(adapterConfig, adapterId, memberMode);
   const config = {
     ...await mapConfigForAdapter(adapterId, resolveLaunchConfig({ namedConfig: { ...adapterDefaults, ...resolvedConfig }, jsonConfig, flags: adapterFlags }), workspaceFolder),
@@ -275,24 +276,33 @@ async function resolveNamedEntry(name: string | undefined, workspace: string): P
   return { kind: 'configuration', configuration: resolveLaunchConfigurationConfig(entry.configuration, { workspaceFolder: workspace }) };
 }
 
-function resolveAdapterId(adapter: string | undefined, namedConfig: Record<string, unknown> | undefined, customTypeMap: Record<string, string> | undefined): string {
-  if (adapter !== undefined) {
-    return adapter;
-  }
-
+function resolveAdapterAndType(
+  options: DapStartCommandOptions,
+  namedConfig: Record<string, unknown> | undefined,
+  customTypeMap: Record<string, string> | undefined,
+): { adapterId: string; inferredType: string | undefined } {
   if (namedConfig !== undefined) {
+    if (options.adapter !== undefined) {
+      return { adapterId: options.adapter, inferredType: undefined };
+    }
     const type = namedConfig.type;
     if (typeof type !== 'string') {
       throw usageError('Named launch configuration is missing a string type.', { code: 'unknown_launch_type' });
     }
-
-    return resolveAdapterIdFromType(type, customTypeMap);
+    return { adapterId: resolveAdapterIdFromType(type, customTypeMap), inferredType: undefined };
   }
 
-  return 'fake';
+  const result = inferAdapterAndType({
+    adapter: options.adapter,
+    type: options.type,
+    program: options.program,
+    customTypeMap,
+  });
+  const inferredType = result.inferred.type && result.type !== undefined ? result.type : undefined;
+  return { adapterId: result.adapterId, inferredType };
 }
 
-function collectFlagOverrides(options: DapStartCommandOptions): Record<string, unknown> {
+function collectFlagOverrides(options: DapStartCommandOptions, inferredType?: string): Record<string, unknown> {
   const flags: Record<string, unknown> = {};
   setIfDefined(flags, 'program', options.program);
   setIfDefined(flags, 'cwd', options.cwd);
@@ -301,6 +311,9 @@ function collectFlagOverrides(options: DapStartCommandOptions): Record<string, u
   setIfDefined(flags, 'url', options.url);
   setIfDefined(flags, 'python', options.python);
   setIfDefined(flags, 'type', options.type);
+  if (options.type === undefined && inferredType !== undefined) {
+    flags.type = inferredType;
+  }
   setIfDefined(flags, 'args', options.args);
   setIfDefined(flags, 'outFiles', options.outFiles);
   setIfDefined(flags, 'stopOnEntry', options.stopOnEntry);

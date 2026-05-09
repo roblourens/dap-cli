@@ -20,6 +20,8 @@ Start the controller, launch a Node.js target with `--stop-on-entry` (so the pro
 ```bash
 dap-cli start
 dap-cli launch --adapter js-debug --type node --program tests/fixtures/simple-node-app/index.js --args run --stop-on-entry --name demo
+# Equivalent — adapter and type are inferred from the .js extension:
+dap-cli launch --program tests/fixtures/simple-node-app/index.js --args run --stop-on-entry --name demo
 dap-cli breakpoints set --source tests/fixtures/simple-node-app/index.js --line 9 --name demo
 dap-cli continue --thread-id 1 --name demo
 dap-cli status --name demo
@@ -37,6 +39,8 @@ Python follows the same loop with the `debugpy` adapter:
 ```bash
 dap-cli start
 dap-cli launch --adapter debugpy --type python --program tests/fixtures/simple-python-app/main.py --name py-demo
+# Equivalent — adapter and type are inferred from the .py extension:
+dap-cli launch --program tests/fixtures/simple-python-app/main.py --name py-demo
 dap-cli status --name py-demo
 dap-cli events --name py-demo --limit 10
 dap-cli threads --name py-demo

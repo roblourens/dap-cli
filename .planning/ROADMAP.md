@@ -302,3 +302,13 @@ Plans:
 Plans:
 - [x] 08-01-PLAN.md — External project hardening expansion sample, UAT ledger, and gap filing
 - [x] 08-02-PLAN.md — Gap closure for debugpy launch type, running-thread diagnostics, and JS breakpoint guidance
+
+### Phase 9: Infer adapter/type from --program file extension
+
+**Goal:** Make `--type` and `--adapter` optional on session-start commands. When `--program` is supplied, infer the adapter (and DAP `type`) from the file extension where unambiguous (e.g. `.py` → debugpy, `.js`/`.mjs`/`.cjs`/`.ts` → js-debug node, etc.). When only `--type` is given, derive `--adapter` from the registry; when only `--adapter` is given, derive a sensible default `type`. Keep explicit flags as override and preserve current error behavior when inference is ambiguous or the file type is unsupported.
+**Requirements**: [INFER-01]
+**Depends on:** Phase 8
+**Plans:** 1 plan
+
+Plans:
+- [x] 09-01-PLAN.md — Pure inference module + dapCore wiring + README/ADAPTER-SETUP docs
