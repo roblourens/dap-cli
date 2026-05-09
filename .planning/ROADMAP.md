@@ -400,7 +400,12 @@ Plans:
 **Goal:** Stop forcing agents to know debugpy's `evaluate`-is-an-expression rule. Detect statement-shaped Python input (e.g. `import`, assignment, multi-statement separated by `;` or newlines) on `dap-cli evaluate` against a `debugpy` session and either auto-wrap with `exec("...")` (preferred, behind detection) or surface a structured `evaluate_requires_exec` diagnostic naming the exact `exec()` form to retry — instead of returning the raw `SyntaxError` from debugpy. Mirror the rule into `docs/AGENT-WORKFLOWS.md`, `README.md`, and the user-level `~/.copilot/skills/dap-cli/` `evaluate` examples. In the same docs/skill pass, add a short "use the right verb" note covering the analysis2.md §1 confusion: `dap-cli launch` and `dap-cli attach` are separate commands and select the DAP `request:` field; agents should not look for a `--request` flag (Phase 10 already auto-routes when a `--config` JSON disagrees with the verb). Also add a one-paragraph note to `docs/PLAYWRIGHT-INTEROP.md` covering the playwright-cli daemon-died / `not open, please run open first` failure mode and the kill-and-reattach recovery. Sources: analysis2.md §Python, §1, §3.
 **Requirements**: PYEVAL-01, PYEVAL-02, VERB-DOC-01, PWDOC-01
 **Depends on:** Phase 15
-**Plans:** 0 plans
+**Plans:** 2/2 plans complete
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 16 to break down)
+
+**Wave 1**
+- [x] 16-01-PLAN.md — Heuristic Python statement detector + controller-side auto-wrap on debugpy `evaluate` + structured `evaluate_requires_exec` fallback envelope when detection misses (PYEVAL-01)
+
+**Wave 2** *(blocked on Wave 1 — docs describe verified behavior)*
+- [x] 16-02-PLAN.md — Mirror the auto-wrap rule, the launch-vs-attach verb-selection note, and the playwright-cli daemon-died recovery recipe across `docs/AGENT-WORKFLOWS.md`, `README.md`, `docs/PLAYWRIGHT-INTEROP.md`, and the user-level `~/.copilot/skills/dap-cli/` pair, with new `docsValidation.test.ts` grep gates pinning all three (PYEVAL-02, VERB-DOC-01, PWDOC-01)

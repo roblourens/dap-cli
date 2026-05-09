@@ -58,6 +58,8 @@ DAP frame IDs and variable references are scoped to the current suspended state.
 
 `evaluate` auto-resolves `--frame-id` to the topmost paused frame when omitted on a paused session, so `dap-cli evaluate --expression "user.email" --name demo` is the canonical short form. Pass `--frame-id <N>` explicitly when you need a specific non-top frame.
 
+On debugpy (Python) sessions, `evaluate` auto-wraps statement-shaped payloads with `exec("…")` before forwarding (debugpy is expression-only). Pure expressions are passed through unchanged. See [docs/AGENT-WORKFLOWS.md → Python (debugpy) evaluate](docs/AGENT-WORKFLOWS.md#python-debugpy-evaluate) for the wrap rule, the request-args opt-out (`args.context = 'no-auto-wrap'`), and the `evaluate_requires_exec` fallback envelope.
+
 `breakpoints` has three subcommands. `set` (above) is the only one that talks to the adapter directly; `list` and `clear` read or clear the controller's in-memory tracking map for the session:
 
 ```bash

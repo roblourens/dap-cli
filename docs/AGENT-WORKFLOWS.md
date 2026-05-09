@@ -8,6 +8,7 @@ Picking the wrong verb for an attach-shaped `launch.json` config is the highest-
 
 Rule:
 
+- `dap-cli launch` and `dap-cli attach` are two separate top-level commands and they directly select the DAP `request:` field. There is no `--request` flag — do not search for one.
 - If the resolved `.vscode/launch.json` configuration has `request: "attach"`, use `dap-cli attach`.
 - With `--config <name>`, the controller auto-routes a verb mismatch to the matching DAP request and emits a `warnings` entry plus an `autoRouted: { from, to }` field on the success payload (Phase 10). `--config` invocations are safe by default.
 - With raw `--json` payloads or CLI-flag-only invocations (`--adapter`, `--type`, `--program`, `--port` etc.), the verb is authoritative — there is no auto-route. Pick `launch` vs `attach` deliberately.
@@ -177,6 +178,41 @@ dap-cli step-out --thread-id 1 --name inspect
 ```
 
 `evaluate` auto-resolves `--frame-id` to the topmost frame of the most-recently-stopped thread when the session is paused and `--frame-id` is omitted. The four-command `threads → stack → grab frameId → evaluate` recipe still works (and is required when you want a specific non-top frame), but the short form `dap-cli evaluate --expression '...' --name <session>` is now sufficient for the common case. When multiple threads are paused or auto-resolution falls back, dap-cli prints a one-line stderr hint naming the auto-selected thread or failure reason.
+
+### Python (debugpy) evaluate
+
+debugpy implements DAP `evaluate` as a Python *expression*. A raw multi-statement payload (`import …`, `x = 1`, multi-line) would normally raise `SyntaxError: invalid syntax`. As of Phase 16, dap-cli detects statement-shaped Python on debugpy sessions and auto-wraps `args.expression` with `exec("…")` before forwarding. Pure expressions are passed through unchanged.
+
+```bash
+# All three of these work end-to-end on a paused debugpy session:
+dap-cli evaluate --expression 'import os'                # auto-wrapped to exec("import os")
+dap-cli evaluate --expression 'x = 1; x + 1'             # auto-wrapped to exec("x = 1; x + 1")
+dap-cli evaluate --expression '1 + 1'                    # forwarded raw — pure expression
+```
+
+The wrap is invisible on the success path (the DAP response shape is unchanged). It only fires when `runtime.adapterId === 'debugpy'`; non-Python adapters (js-debug, etc.) always receive the expression verbatim.
+
+**Opt-out (request-args level).** If you want to send a raw expression even when the heuristic would classify it as a statement, set `args.context = 'no-auto-wrap'` on the underlying DAP request. dap-cli strips the `'no-auto-wrap'` token before forwarding so debugpy doesn't reject an unknown context value. (No CLI flag is exposed for this in Phase 16; the request-args opt-out is the contract.)
+
+**Fallback envelope when the heuristic misses.** If the heuristic mis-classifies a statement as an expression and debugpy returns its SyntaxError, dap-cli upgrades the controller error envelope to:
+
+```
+{ ok: false, error: {
+    code: 'evaluate_requires_exec',
+    category: 'dap',
+    message: '`evaluate` requires `exec(...)` for Python statements (debugpy is expression-only).',
+    diagnostics: [
+      'Re-send with `args.expression` wrapped as: exec("…")',
+      "Or set `args.context = 'no-auto-wrap'` to bypass auto-wrap if you intentionally want the raw expression.",
+    ],
+    data: {
+      exec_form: 'exec("…the original expression…")',
+      original_expression: '…',
+    },
+}}
+```
+
+Agents should read `error.data.exec_form` and re-send verbatim instead of re-deriving the wrap. The `exec_form` reflects the caller's original input (not any prior wrap), so re-sending it once is always correct.
 
 A common agent pattern is:
 

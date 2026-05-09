@@ -20,6 +20,7 @@ import { controllerRequestSchema, type ControllerFailureResponse, type Controlle
 import { createControllerServerSocket, removeControllerDiscovery, writeControllerDiscovery, type ControllerDiscovery, type ControllerEndpoint } from './ipc.js';
 import { computeBuildId } from './buildId.js';
 import { threadNotPaused } from './diagnostics.js';
+import { looksLikePythonStatement, wrapForExec } from './pythonExpressionDetector.js';
 
 export interface StartControllerServerOptions {
   dapCliHome?: string | undefined;
@@ -615,7 +616,31 @@ export class ControllerServer {
     const runtime = this.resolveRuntime(requestParams.name);
     this.assertSupportedDapRequest(runtime, requestParams.command);
     this.assertThreadPausedIfRequired(runtime, requestParams.command);
+    const evaluateRewrite = maybePythonEvaluateRewrite(runtime.adapterId, requestParams);
+    const forwardArgs = evaluateRewrite?.forwardArgs ?? requestParams.args;
     const wrapDapError = (error: unknown): never => {
+      // Phase 16-01 (PYEVAL-01): a debugpy `evaluate` that comes back with a
+      // SyntaxError shape is upgraded to a structured `evaluate_requires_exec`
+      // envelope carrying the exact `exec(...)` recipe so callers can retry
+      // verbatim instead of guessing the wrap.
+      if (
+        evaluateRewrite !== undefined
+        && error instanceof DapResponseError
+        && /syntaxerror|invalid syntax/i.test(error.message)
+      ) {
+        const execForm = wrapForExec(evaluateRewrite.originalExpression);
+        throw dapError('`evaluate` requires `exec(...)` for Python statements (debugpy is expression-only).', {
+          code: 'evaluate_requires_exec',
+          diagnostics: [
+            `Re-send with \`args.expression\` wrapped as: ${execForm}`,
+            'Or set `args.context = \'no-auto-wrap\'` to bypass auto-wrap if you intentionally want the raw expression.',
+          ],
+          data: { exec_form: execForm, original_expression: evaluateRewrite.originalExpression },
+          sessionId: runtime.sessionId,
+          request: { command: 'evaluate' },
+          adapter: getAdapterContext(runtime.adapterId, runtime.adapter),
+        });
+      }
       let staleStatus: string | undefined;
       try {
         staleStatus = this.requireSessionManager().status(requestParams.name).status;
@@ -634,7 +659,7 @@ export class ControllerServer {
     if (runtime.children !== undefined) {
       let childResult;
       try {
-        childResult = await runtime.children.maybeIntercept(requestParams.command, requestParams.args);
+        childResult = await runtime.children.maybeIntercept(requestParams.command, forwardArgs);
       } catch (error) {
         wrapDapError(error);
       }
@@ -645,7 +670,7 @@ export class ControllerServer {
     }
     if (!intercepted) {
       try {
-        responseBody = await runtime.client.request(requestParams.command, requestParams.args);
+        responseBody = await runtime.client.request(requestParams.command, forwardArgs);
       } catch (error) {
         wrapDapError(error);
       }
@@ -1524,6 +1549,44 @@ function getRequiredStringParam(params: unknown, key: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+/**
+ * Phase 16-01 (PYEVAL-01): on a debugpy `evaluate`, detect statement-shaped
+ * Python and rewrite `args.expression` to `exec("…")` so the call doesn't
+ * trip debugpy's expression-only `evaluate` rule. Honors a request-level
+ * opt-out via `args.context === 'no-auto-wrap'` (the token is stripped
+ * from the forwarded args so debugpy doesn't reject an unknown context).
+ *
+ * Returns `undefined` for any non-debugpy / non-evaluate / malformed-args
+ * path so the caller falls through to the original args. When this returns
+ * a value, `originalExpression` is the caller's untouched expression so
+ * the SyntaxError-fallback path can recover the recipe regardless of
+ * whether we wrapped.
+ */
+function maybePythonEvaluateRewrite(
+  adapterId: string,
+  requestParams: { command: string; args?: unknown },
+): { forwardArgs: Record<string, unknown>; originalExpression: string } | undefined {
+  if (requestParams.command !== 'evaluate' || adapterId !== 'debugpy') {
+    return undefined;
+  }
+  if (!isRecord(requestParams.args)) {
+    return undefined;
+  }
+  const expression = requestParams.args.expression;
+  if (typeof expression !== 'string' || expression.length === 0) {
+    return undefined;
+  }
+  const forwardArgs: Record<string, unknown> = { ...requestParams.args };
+  if (requestParams.args.context === 'no-auto-wrap') {
+    forwardArgs.context = undefined;
+    return { forwardArgs, originalExpression: expression };
+  }
+  if (looksLikePythonStatement(expression)) {
+    forwardArgs.expression = wrapForExec(expression);
+  }
+  return { forwardArgs, originalExpression: expression };
 }
 
 function hasTruthyCapability(capabilities: unknown, capability: string): boolean {

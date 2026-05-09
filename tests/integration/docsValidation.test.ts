@@ -29,6 +29,28 @@ describe('documentation command examples', () => {
   });
 });
 
+describe('Phase 16 docs (PYEVAL-02 / VERB-DOC-01 / PWDOC-01)', () => {
+  test('AGENT-WORKFLOWS.md documents Python evaluate auto-wrap', async () => {
+    const content = await fs.readFile(path.join(process.cwd(), 'docs/AGENT-WORKFLOWS.md'), 'utf8');
+    expect(content).toContain('evaluate_requires_exec');
+    expect(content).toContain('exec(');
+    expect(content).toContain('debugpy');
+  });
+
+  test('AGENT-WORKFLOWS.md documents launch-vs-attach verb selection', async () => {
+    const content = await fs.readFile(path.join(process.cwd(), 'docs/AGENT-WORKFLOWS.md'), 'utf8');
+    expect(content).toContain('dap-cli launch');
+    expect(content).toContain('dap-cli attach');
+    expect(content).toMatch(/no .{0,15}--request.{0,15}flag/i);
+  });
+
+  test('PLAYWRIGHT-INTEROP.md documents daemon-died recovery', async () => {
+    const content = await fs.readFile(path.join(process.cwd(), 'docs/PLAYWRIGHT-INTEROP.md'), 'utf8');
+    expect(content).toContain('not open, please run open first');
+    expect(content).toMatch(/pkill|kill .*playwright|killing/i);
+  });
+});
+
 function collectCommandPaths(): Set<string> {
   const program = createProgram();
   const paths = new Set<string>();

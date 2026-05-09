@@ -282,6 +282,75 @@ const scripts: Record<string, FakeStep[]> = {
 		{ event: 'terminated' },
 		{ close: true },
 	],
+	'py-evaluate-wrap-import': [
+		// Phase 16-01 (PYEVAL-01): asserts the controller wraps a statement-shaped
+		// expression on a debugpy-id session. Inbound `evaluate` MUST carry
+		// `expression: 'exec("import os")'`.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
+		{ command: 'evaluate', expectedArguments: { expression: 'exec("import os")' }, body: { result: 'wrapped-ok', variablesReference: 0 } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'py-evaluate-passthrough-expression': [
+		// Phase 16-01: pure expression must NOT be wrapped on debugpy.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
+		{ command: 'evaluate', expectedArguments: { expression: 'x + 1' }, body: { result: 'passthrough-ok', variablesReference: 0 } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'py-evaluate-jsdebug-untouched': [
+		// Phase 16-01: the wrap path is gated on adapterId === 'debugpy';
+		// js-debug must receive the statement verbatim.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
+		{ command: 'evaluate', expectedArguments: { expression: 'import os' }, body: { result: 'jsdebug-untouched', variablesReference: 0 } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'py-evaluate-optout': [
+		// Phase 16-01: `context: 'no-auto-wrap'` opts out of the wrap AND the
+		// token is stripped before forwarding (debugpy would otherwise reject
+		// an unknown `context` value).
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
+		{ command: 'evaluate', expectedArguments: { expression: 'import os', context: undefined }, body: { result: 'optout-ok', variablesReference: 0 } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'py-evaluate-syntax-error-fallback': [
+		// Phase 16-01: a debugpy `evaluate` returning the SyntaxError shape
+		// must be upgraded to the structured `evaluate_requires_exec` envelope
+		// by the controller. The expression here is one the heuristic does NOT
+		// classify as a statement, so the controller forwards it raw and the
+		// adapter rejects with the SyntaxError message.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
+		{ command: 'evaluate', expectedArguments: { expression: '@@@ not python @@@' }, success: false, message: 'SyntaxError: invalid syntax' },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
 };
 
 const script = scripts[scriptName];

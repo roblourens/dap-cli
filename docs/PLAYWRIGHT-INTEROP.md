@@ -187,6 +187,17 @@ The default automated interop test uses Vitest to orchestrate Playwright (`@play
 
 ## Troubleshooting
 
+### Recovering from a dead playwright-cli daemon
+
+If any `playwright-cli` command (`navigate`, `click`, `eval`, `screenshot`, …) returns `not open, please run open first` even though you previously ran `playwright-cli open <url>`, the daemon process has died (machine sleep, OS upgrade, OOM kill, etc.) but its socket lock file is still around. The fix is to kill any leftover daemon and re-open:
+
+```bash
+pkill -f playwright-cli            # kill any stale daemon
+playwright-cli open <url>          # start a fresh daemon
+```
+
+After `open` succeeds, retry the original command. If `pkill` reports no matching process, the lock file alone is stale — just rerun `playwright-cli open <url>`. This recovery is the only intended remediation; do not attempt to delete the daemon's socket files by hand.
+
 - **No `stopped` event after the click.** Inspect `npx dap-cli threads`. An empty thread list after Chrome attach means js-debug did not select a browser page target. If threads exist, inspect the `breakpoints set` response; an unbound breakpoint means the source path, URL mapping, or `webRoot` shape still does not match the browser-loaded script.
 - **`playwright-cli attach` fails with `connection refused`.** The launch in Terminal 1 did not include `--remote-debugging-port=9222` in `runtimeArgs`, or Chromium is still starting up. Wait a second and retry.
 - **`playwright-cli click` hangs.** That is correct behavior — the page is paused at your breakpoint. Either resume from Terminal 1 (`npx dap-cli continue --thread-id 0`) or use `playwright-cli eval` instead of `click` to dispatch the DOM event without auto-wait.
