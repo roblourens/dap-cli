@@ -70,6 +70,29 @@ describe('controller discovery and IPC', () => {
     socket.server.close();
   });
 
+  // Round 6 R6-A regression: when the controller half-closes the connection
+  // mid-request without sending a payload, the client used to wait for the
+  // per-request timeout (up to 60s for `launch`). With the close/end
+  // listeners wired in sendRequest, it must reject promptly with a
+  // structured controller-disconnected envelope.
+  test('controller client rejects promptly when controller closes connection without responding', async () => {
+    const socket = await createControllerServerSocket(clientSocket => {
+      // Close the connection immediately, simulating a stop-controller race
+      // where the controller tears down while the client request is in flight.
+      clientSocket.end();
+    }, { dapCliHome });
+    const discovery = createDiscovery({ dapCliHome, endpointPath: socket.endpoint.kind === 'ipc' ? socket.endpoint.path : '' });
+    // Use a long timeout so the test fails fast (rejecting in <100ms) only
+    // when the close/end listeners actually wire up the rejection path.
+    const client = await createControllerClient({ discovery, timeoutMs: 30_000 });
+
+    const start = Date.now();
+    await expect(client.request('controller.status')).rejects.toMatchObject({ code: 'controller_unavailable' });
+    expect(Date.now() - start).toBeLessThan(2_000);
+
+    socket.server.close();
+  });
+
   test('server status and shutdown work across separate controller clients', async () => {
     const server = await startControllerServer({ dapCliHome });
     const firstClient = await createControllerClient({ dapCliHome });

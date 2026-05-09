@@ -126,7 +126,11 @@ export async function loadVSCodeLaunchJson(cwd: string): Promise<LaunchJsonDocum
     }
 
     const raw = await fs.readFile(launchJsonPath, 'utf8');
-    const parsed = launchJsonSchema.parse(parseJsonc(raw));
+    // Round 6 R6-I: VS Code tolerates UTF-8 BOM in launch.json (and editors
+    // on Windows often save with BOM). Strip a leading BOM before handing
+    // the buffer to the JSONC parser so copies of real workspaces parse.
+    const normalized = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;
+    const parsed = launchJsonSchema.parse(parseJsonc(normalized));
     return {
       workspaceFolder,
       configurations: parsed.configurations ?? [],
@@ -135,6 +139,19 @@ export async function loadVSCodeLaunchJson(cwd: string): Promise<LaunchJsonDocum
   } catch (error) {
     if (isNodeError(error) && error.code === 'ENOENT') {
       return { workspaceFolder, configurations: [], compounds: [] };
+    }
+
+    // Round 6 R6-H: pointing --workspace at a regular file (instead of a
+    // directory) caused fs.stat on `<file>/.vscode/launch.json` to reject
+    // with ENOTDIR; only ENOENT was mapped, so the error leaked as a generic
+    // internal_error/exit-70. Map the common filesystem-shape errors to a
+    // structured invalid_workspace usage error that names the offending path.
+    if (isNodeError(error) && (error.code === 'ENOTDIR' || error.code === 'EACCES' || error.code === 'ELOOP' || error.code === 'ENAMETOOLONG')) {
+      throw usageError('Invalid workspace path.', {
+        code: 'invalid_workspace',
+        diagnostics: [`Cannot read '${launchJsonPath}': ${error.code}.`, 'Pass --workspace <directory> pointing at a real workspace folder.'],
+        data: { workspaceFolder, errno: error.code },
+      });
     }
 
     if (error instanceof SyntaxError || error instanceof z.ZodError) {

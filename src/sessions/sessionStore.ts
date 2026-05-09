@@ -83,6 +83,26 @@ export class SessionStore {
         return { sessions: [] };
       }
 
+      // Round 6 R6-F: a corrupt or junk sessions.json (truncated write,
+      // hand-edited, partial disk failure) previously crashed
+      // `serve-controller` with an opaque internal_error/exit-70 and the
+      // parent `start` then timed out with `controller_unavailable` — the
+      // user had no idea their state file was the cause. Rename the bad
+      // file out of the way and continue with empty state so the user is
+      // self-healing; emit a one-line warning to stderr so the move is
+      // discoverable.
+      if (error instanceof SyntaxError || error instanceof z.ZodError) {
+        const backupPath = `${this.storePath}.corrupt.${new Date().toISOString().replace(/[:.]/g, '-')}.bak`;
+        try {
+          await fs.rename(this.storePath, backupPath);
+          process.stderr.write(`dap-cli: sessions.json was unparseable; moved to ${backupPath} and continuing with empty state.\n`);
+        } catch {
+          // If rename fails (e.g. permissions), still return empty so the
+          // controller can come up; the next write will overwrite.
+        }
+        return { sessions: [] };
+      }
+
       throw error;
     }
   }

@@ -106,6 +106,18 @@ export class ControllerServer {
     this.stopped = true;
     await removeControllerDiscovery(this.options);
 
+    // Persist session-store cleanup BEFORE the slow runtime teardown so a
+    // racing `dap-cli start` (the CLI returns from `controller.shutdown`
+    // as soon as the response is written, not when stop() completes)
+    // sees an empty store. Without this, the next controller inherits
+    // ghost `running` records pointing at adapters this controller is
+    // still in the middle of killing — `events`/`status` then return
+    // `session_unavailable` and relaunching with the same name fails as
+    // `session_name_in_use`.
+    for (const sessionId of [...this.runtimes.keys()]) {
+      await this.sessionManager?.closeSession(sessionId).catch(() => undefined);
+    }
+
     for (const runtime of this.runtimes.values()) {
       // Plan 05-23 (gap H-8): controller shutdown converges on the same
       // teardown path as `sessions.close` and `cleanup --purge` so behavior

@@ -237,6 +237,37 @@ describe('launch config resolution', () => {
     await expect(loadVSCodeLaunchConfig(tempDir)).rejects.toMatchObject({ code: 'invalid_launch_json' });
   });
 
+  // Round 6 R6-I regression: VS Code tolerates UTF-8 BOM in launch.json,
+  // and copies of real workspaces frequently include one. The loader used
+  // to reject these files as `Invalid JSONC at offset 0`. Strip the BOM
+  // before handing the buffer to the JSONC parser.
+  test('tolerates a UTF-8 BOM at the start of launch.json', async () => {
+    await fs.mkdir(path.join(tempDir, '.vscode'));
+    await fs.writeFile(
+      path.join(tempDir, '.vscode', 'launch.json'),
+      '\uFEFF' + JSON.stringify({ configurations: [{ type: 'node', request: 'launch', name: 'BOM run', program: 'app.js' }] }),
+      'utf8',
+    );
+
+    const document = await loadVSCodeLaunchJson(tempDir);
+    expect(document.configurations).toHaveLength(1);
+    expect(document.configurations[0]?.name).toBe('BOM run');
+  });
+
+  // Round 6 R6-H regression: pointing --workspace at a regular file (rather
+  // than a directory) used to bubble up an uncaught ENOTDIR as
+  // `internal_error`/exit-70. Map common filesystem-shape errors to a
+  // structured `invalid_workspace` usage error.
+  test('reports invalid_workspace when the workspace path is a regular file', async () => {
+    const filePath = path.join(tempDir, 'not-a-dir');
+    await fs.writeFile(filePath, 'hello', 'utf8');
+
+    await expect(loadVSCodeLaunchJson(filePath)).rejects.toMatchObject({
+      code: 'invalid_workspace',
+      category: 'usage',
+    });
+  });
+
   test('maps js-debug flags to native config fields', () => {
     expect(mapJsDebugFlags({ type: 'node', program: 'app.ts', cwd: '/repo', runtimeExecutable: 'node', url: 'http://localhost:3000', port: 9229 })).toEqual({
       type: 'pwa-node',

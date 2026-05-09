@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, symlink } from 'node:fs/promises';
+import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
@@ -75,6 +75,12 @@ describe('self-hosting integration', () => {
   });
 
   test('reports actionable diagnostics for persisted js-debug sessions without an attached runtime', async () => {
+    // Round 5 stress regression: clean controller shutdown now reaps
+    // session-store records for runtimes it tears down. To preserve the
+    // crash-recovery diagnostic path (record-on-disk but no runtime in
+    // memory — what happens when a controller crashes mid-session), we
+    // simulate it by snapshotting the persisted record, letting stop()
+    // clean up, then writing the snapshot back before restarting.
     const fixture = path.join(process.cwd(), 'tests', 'fixtures', 'simple-node-app', 'index.js');
     const name = 'stale-js-debug';
     const launch = await runCli(['launch', '--adapter', 'js-debug', '--name', name, '--json', JSON.stringify({
@@ -89,7 +95,13 @@ describe('self-hosting integration', () => {
     expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
     const sessionId = readStringField(launch.envelope, 'sessionId');
 
+    const sessionStorePath = path.join(testEnv.dapCliHome, 'state', 'sessions.json');
+    const snapshot = await readFile(sessionStorePath, 'utf8');
+
     await server?.stop();
+    // Re-write the pre-stop snapshot to simulate a crashed controller
+    // that left ghost `running` records behind.
+    await writeFile(sessionStorePath, snapshot, 'utf8');
     server = await startControllerServer({ dapCliHome: testEnv.dapCliHome });
 
     const threads = await runCli(['threads', '--name', name], { env: testEnv.env });

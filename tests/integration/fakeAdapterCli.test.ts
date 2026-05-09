@@ -399,6 +399,39 @@ describe('fake adapter controller integration', () => {
     expect(sessionsEnvelope.data).toEqual([expect.objectContaining({ name: 'Independent Compound/Client' })]);
   });
 
+  test('controller stop reaps session-store records for runtimes it tears down', async () => {
+    // Round 5 stress regression: before the fix, controller.shutdown
+    // killed adapter pids in `terminateRuntime` but never removed the
+    // matching session-store records. The next `dap-cli start` then
+    // inherited ghost `running` records, blocking same-name relaunches
+    // with `session_name_in_use` and surfacing dead adapter logs via
+    // `events`/`status` / `session_unavailable`. The fix persists
+    // closeSession() calls BEFORE the slow runtime teardown so a racing
+    // CLI restart sees an empty store.
+    const launch = await runCli(['launch', '--adapter', 'fake', '--script', 'stopped-on-entry', '--name', 'reap-demo'], { env: testEnv.env });
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+
+    const beforeSessions = await runCli(['sessions'], { env: testEnv.env });
+    expect((beforeSessions.envelope as JsonEnvelope<Array<{ name: string }>>).data)
+      .toContainEqual(expect.objectContaining({ name: 'reap-demo' }));
+
+    // Call server.stop() directly so we deterministically exercise the
+    // shutdown path without racing the IPC client.
+    await server?.stop();
+    server = undefined;
+
+    const sessionStorePath = path.join(testEnv.dapCliHome, 'state', 'sessions.json');
+    const persisted = JSON.parse(await fs.readFile(sessionStorePath, 'utf8')) as { sessions: unknown[] };
+    expect(persisted.sessions).toEqual([]);
+
+    server = await startControllerServer({ dapCliHome: testEnv.dapCliHome });
+    const afterSessions = await runCli(['sessions'], { env: testEnv.env });
+    expect((afterSessions.envelope as JsonEnvelope<unknown[]>).data).toEqual([]);
+
+    const relaunch = await runCli(['launch', '--adapter', 'fake', '--script', 'stopped-on-entry', '--name', 'reap-demo'], { env: testEnv.env });
+    expect(relaunch.exitCode, JSON.stringify(relaunch)).toBe(0);
+  });
+
   test('launch --workspace --list-configs lists configurations and compounds without controller IPC', async () => {
     await server?.stop();
     server = undefined;

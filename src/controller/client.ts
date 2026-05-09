@@ -83,7 +83,12 @@ class JsonControllerClient implements ControllerClient {
   private async sendRequest(socket: net.Socket, id: string, method: ControllerRequestMethod, params: unknown): Promise<string> {
     return new Promise((resolve, reject) => {
       let buffer = '';
+      let settled = false;
       const timeout = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         cleanup();
         reject(controllerRequestTimeout());
       }, this.timeoutMs);
@@ -91,6 +96,8 @@ class JsonControllerClient implements ControllerClient {
         clearTimeout(timeout);
         socket.off('data', onData);
         socket.off('error', onError);
+        socket.off('close', onClose);
+        socket.off('end', onEnd);
       };
       const onData = (chunk: Buffer): void => {
         buffer += chunk.toString('utf8');
@@ -99,16 +106,46 @@ class JsonControllerClient implements ControllerClient {
           return;
         }
 
+        if (settled) {
+          return;
+        }
+        settled = true;
         cleanup();
         resolve(buffer.slice(0, newlineIndex));
       };
       const onError = (error: Error): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         cleanup();
         reject(error);
+      };
+      // Round 6 R6-A: if the controller socket closes mid-request without
+      // emitting a payload, neither 'data' nor 'error' fires and the request
+      // would hang until the per-call timeout (up to 60s for `launch`).
+      // Reject promptly with a structured controller-disconnected error so
+      // racing `stop-controller` + RPC produces an actionable envelope.
+      const onClose = (): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        // If we got partial data, treat as malformed; otherwise the controller
+        // closed before responding.
+        reject(controllerUnavailable(buffer.length === 0
+          ? 'dap-cli controller closed the connection before responding.'
+          : 'dap-cli controller closed the connection mid-response.'));
+      };
+      const onEnd = (): void => {
+        onClose();
       };
 
       socket.on('data', onData);
       socket.on('error', onError);
+      socket.on('close', onClose);
+      socket.on('end', onEnd);
       socket.write(`${JSON.stringify({ id, method, params })}\n`);
     });
   }
