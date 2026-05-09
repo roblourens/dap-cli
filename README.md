@@ -125,7 +125,7 @@ DAP_CLI_HUMAN=1 dap-cli status --name demo --no-human
 dap-cli request stackTrace --json '{"threadId":1}' --human
 ```
 
-Set `DAP_CLI_HUMAN=1` in a shell to make human output the default when no explicit mode flag is present. Add `--no-human` to force machine-readable JSON when that environment variable is inherited. Human output is for reading, not a stable machine-parsing contract.
+Set `DAP_CLI_HUMAN=1` in a shell to make human output the default when no explicit mode flag is present. Agent pipelines (non-TTY stdout) automatically receive JSON regardless of `DAP_CLI_HUMAN` (Phase 13), so `--no-human` is no longer required in scripts. `--no-human` is only needed on a TTY where a developer wants JSON despite their shell setting `DAP_CLI_HUMAN=1`. Human output is for reading, not a stable machine-parsing contract.
 
 Command-level `--json <json>` options are still request payload or launch/attach configuration input. They are not output-format switches; use `--human` and `--no-human` for output mode.
 
@@ -141,6 +141,8 @@ dap-cli cleanup
 ```
 
 ## VS Code `launch.json` Workspaces
+
+If your launch.json configuration has `request: "attach"`, prefer `dap-cli attach --config …` for clarity; `dap-cli launch --config …` will auto-route (Phase 10) but emits a `warnings` entry. Raw `--json` and CLI-flag-only invocations do NOT auto-route — pick the verb deliberately. See [docs/AGENT-WORKFLOWS.md](docs/AGENT-WORKFLOWS.md#choosing-launch-vs-attach) for the full rule and the post-attach wrong-process smoke test.
 
 `launch` and `attach` can discover VS Code-style `.vscode/launch.json` files from a workspace. Use `--list-configs` to inspect available configurations and compounds without contacting the controller:
 

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Completed 06-02-PLAN.md
-last_updated: "2026-05-09T16:21:58.942Z"
-last_activity: 2026-05-09 -- Phase 09 marked complete
+stopped_at: Completed 14-01-PLAN.md
+last_updated: "2026-05-09T18:00:00.000Z"
+last_activity: 2026-05-09 -- Phases 10-14 complete (autonomous run)
 progress:
-  total_phases: 11
-  completed_phases: 11
-  total_plans: 68
-  completed_plans: 72
+  total_phases: 16
+  completed_phases: 16
+  total_plans: 77
+  completed_plans: 81
   percent: 100
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** Agents can reliably control a DAP debug session from repeatable CLI commands and inspect paused application state without needing language-specific debugger knowledge.
-**Current focus:** Phase 09 — infer-adapter-type-from-program-file-extension
+**Current focus:** Phases 10–14 — analysis.md follow-ups complete; milestone ready for audit/complete/cleanup.
 
 ## Current Position
 
-Phase: 09 — COMPLETE
+Phase: 14 — COMPLETE (all milestone phases done)
 Plan: 1 of 1
-Status: Phase 09 complete
-Last activity: 2026-05-09 -- Phase 09 marked complete
+Status: Milestone v1.0 ready for /gsd-audit-milestone → /gsd-complete-milestone → /gsd-cleanup
+Last activity: 2026-05-09 -- Phases 10-14 complete (autonomous run)
 
 Progress: [█████████░] 99%
 
@@ -86,6 +86,7 @@ Progress: [█████████░] 99%
 - Phase 07 completed: Hardening bug discovery and exploratory smoke testing.
 - Phase 08 complete: External project hardening expansion closed GAP-08-01 through GAP-08-03.
 - Phase 9 added: Infer adapter/type from --program file extension (make --type and --adapter optional, derive from --program / each other when possible).
+- Phases 10–14 added (source: analysis.md from external Code OSS debugging session): 10 — auto-route launch/attach by --config request field + --json-overrides + --resolve-source-maps + adapter-helper warning; 11 — paused-state ergonomics (status reflects stops, evaluate auto-frame); 12 — breakpoints list/clear + richer verification diagnostics; 13 — auto-JSON when stdout is not a TTY; 14 — agent workflow doc/skill updates capturing the lessons.
 
 ### Decisions
 

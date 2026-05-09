@@ -2,7 +2,38 @@
 
 This guide is for agents that need a repeatable debug loop from shell commands. dap-cli keeps debugger state in the controller; each command polls, inspects, or advances that state.
 
+## Choosing launch vs attach
+
+Picking the wrong verb for an attach-shaped `launch.json` config is the highest-impact agent footgun. Symptom: an adapter helper process spawns, every `breakpoints set` returns `verified: false`, and `dap loaded-sources` returns `[]` — looks identical to a source-map bug, but the real problem is that nothing of the user's code ever loaded into the process you talked to.
+
+Rule:
+
+- If the resolved `.vscode/launch.json` configuration has `request: "attach"`, use `dap-cli attach`.
+- With `--config <name>`, the controller auto-routes a verb mismatch to the matching DAP request and emits a `warnings` entry plus an `autoRouted: { from, to }` field on the success payload (Phase 10). `--config` invocations are safe by default.
+- With raw `--json` payloads or CLI-flag-only invocations (`--adapter`, `--type`, `--program`, `--port` etc.), the verb is authoritative — there is no auto-route. Pick `launch` vs `attach` deliberately.
+
+After the request lands, prove you hit the right runtime with the wrong-process smoke test below before doing anything else.
+
+The user-level `~/.copilot/skills/dap-cli/SKILL.md` mirrors this guidance and is updated alongside this file.
+
+## Wrong-process smoke test (post-attach)
+
+Run this immediately after an `attach` (or after a `launch` that auto-routed to `attach`):
+
+```bash
+# 1. Ask the debuggee for its PID. evaluate auto-resolves --frame-id on a paused
+#    session (Phase 11); on a non-paused session evaluate runs in the REPL global.
+dap-cli evaluate --expression "process.pid" --name <session>
+
+# 2. Compare against the inspector target listening on the port you attached to.
+lsof -i :<port> | grep LISTEN
+```
+
+If the two PIDs differ, you attached to the wrong process — typically a js-debug helper instead of the user's runtime. The synthetic `dapCli.helperProcessWarning` event (see "Wrong-process smoke test" further down) catches this automatically for js-debug attach via raw `--json` / scripted attach. The Phase 10 `--config` auto-route covers the named-config case. The smoke test above is the manual fallback that always works.
+
 ## Poll-Then-Inspect Loop
+
+Multi-process js-debug adapters (`pwa-node`, `pwa-chrome`) spawn child sessions for each runtime they instrument. Child sessions are NOT targetable — see the "Child sessions" subsection below. Set breakpoints on the parent session name; the parent's `status.paused` mirrors child stops via the parent's event stream.
 
 Use the same loop for Node.js, Python, browser, and custom adapters:
 
@@ -24,6 +55,16 @@ dap-cli continue --thread-id 1 --name demo
 ```
 
 DAP object references are valid only for the current suspended state. After `continue`, `next`, `step-in`, or `step-out`, do not reuse old `frame-id` or `variables-reference` values. Poll again and reacquire `threads`, `stack`, `scopes`, and `variables` on the next stop.
+
+### Child sessions (multi-process adapters)
+
+js-debug adapters (`pwa-node`, `pwa-chrome`) spin up a child session per runtime they attach to (one per worker, browser tab, child process, etc.). Child sessions are not directly targetable — passing a child name to `--name` returns `child_session_not_targetable`. The controller's projection rules:
+
+- **Set breakpoints on the parent session name.** The parent forwards `setBreakpoints` to the relevant children.
+- **Child stops show up in the parent's event stream.** `events --name <parent>` is the source of stop events.
+- **`status --name <parent>` mirrors the most recent child stop** in `paused` (Phase 11), so the standard poll-then-inspect loop works without enumerating children.
+
+Use `sessions` only to confirm that a parent session exists; you do not target children individually.
 
 ## Breakpoint Workflow
 
@@ -171,12 +212,26 @@ The detector is a no-op for non-attach sessions, non-`js-debug` adapters, and no
 
 ## Output Modes
 
-JSON remains the default output mode for agents and scripts. Humans can opt into readable terminal output with `--human`, or set `DAP_CLI_HUMAN=1` in their shell for a human default. Use `--no-human` to force JSON when `DAP_CLI_HUMAN=1` is inherited. Human output is for reading, not a stable machine-parsing contract.
+Agent pipelines do not need `--no-human`. When stdout is not a TTY (piped, redirected, captured), `dap-cli` emits JSON regardless of `DAP_CLI_HUMAN` (Phase 13). The `--no-human` flag is only needed on a TTY where a developer wants JSON despite their shell exporting `DAP_CLI_HUMAN=1`.
 
 ```bash
-dap-cli sessions --human
-DAP_CLI_HUMAN=1 dap-cli status --name demo
-DAP_CLI_HUMAN=1 dap-cli status --name demo --no-human
+dap-cli sessions --human                              # explicit human (TTY or pipe)
+DAP_CLI_HUMAN=1 dap-cli status --name demo            # TTY: human; pipe: still JSON
+DAP_CLI_HUMAN=1 dap-cli status --name demo --no-human # TTY override: force JSON
 ```
+
+Resolver precedence (Phase 13, canonical):
+
+| `--human` / `--no-human` | stdout is TTY | `DAP_CLI_HUMAN` | Resolved | Notes                                            |
+| ------------------------ | ------------- | --------------- | -------- | ------------------------------------------------ |
+| `--human`                | any           | any             | `human`  | explicit flag wins, even when piped              |
+| `--no-human`             | any           | any             | `json`   | explicit flag wins                               |
+| (none)                   | `false`       | `'1'`           | `json`   | non-TTY ignores env (the headline change)        |
+| (none)                   | `false`       | `undefined`     | `json`   | unchanged default                                |
+| (none)                   | `false`       | `'maybe'`       | `json`   | env parsing skipped — no `usageError` thrown     |
+| (none)                   | `true`        | `'1'`           | `human`  | TTY + truthy env → human                         |
+| (none)                   | `true`        | `'0'`           | `json`   | TTY + falsy env → json                           |
+| (none)                   | `true`        | `undefined`     | `json`   | TTY + no env → json (default)                    |
+| (none)                   | `true`        | `'maybe'`       | throws   | invalid env still throws ON A TTY                |
 
 The command-level `--json <json>` option remains payload/config input for commands such as `launch`, `attach`, `request`, and generated `dap` requests. It is not an output-format switch.

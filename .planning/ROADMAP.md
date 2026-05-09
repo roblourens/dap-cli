@@ -17,17 +17,17 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Built-in and Custom Adapter Support** - Add JavaScript, Python, and user-defined adapter flows through descriptor/config/process/transport boundaries, including JS source maps and E2E smoke tests.
 - [x] **Phase 4: Agent Workflow, Documentation, and Self-Hosting Verification** - Polish the agent experience with README/user docs, Playwright interop examples, self-hosting, smoke verification, and agentic exploratory tests.
 - [x] **Phase 5: Stabilize real Chrome/js-debug Playwright same-browser handoff** - Prove or explicitly gate a same-browser Playwright plus real Chrome/js-debug handoff where dap-cli inspects the browser target Playwright controls.
-- [ ] **Phase 5.1: A mode for the CLI where it produces human-readable nicely formatted output instead of JSON.** *(INSERTED)* - Urgent work to add a non-JSON, human-readable output mode to the CLI.
-- [ ] **Phase 5.2: Execute VS Code launch.json configurations and compounds** *(INSERTED)* - Faithfully resolve a `.vscode/launch.json` configuration (variable substitution, platform overrides, full field passthrough) and execute compound configurations as a single coordinated multi-session debug run; preLaunchTask explicitly out of scope.
+- [x] **Phase 5.1: A mode for the CLI where it produces human-readable nicely formatted output instead of JSON.** *(INSERTED)* - Urgent work to add a non-JSON, human-readable output mode to the CLI.
+- [x] **Phase 5.2: Execute VS Code launch.json configurations and compounds** *(INSERTED)* - Faithfully resolve a `.vscode/launch.json` configuration (variable substitution, platform overrides, full field passthrough) and execute compound configurations as a single coordinated multi-session debug run; preLaunchTask explicitly out of scope.
 - [x] **Phase 6: Add conditional breakpoint Playwright interop coverage** (completed 2010-05-06)
 - [x] **Phase 7: Hardening bug discovery and exploratory smoke testing** - Run a broad post-feature hardening campaign that hammers published dap-cli workflows across adapters, output modes, launch.json, lifecycle, error, cleanup, and Playwright interop scenarios; file every discovered bug as GSD UAT gaps before planning fixes. (completed 2010-05-08)
 - [x] **Phase 8: External project hardening expansion** - Expanded external launch.json hardening with a larger real-repo sample; screened at least 10 candidates, attempted at least 5 new repos, and closed the discovered dap-cli gaps. (completed 2010-05-08)
 - [x] **Phase 9: Infer adapter/type from --program file extension** - Make `--type` and `--adapter` optional on session-start commands by inferring from `--program` extension or from each other.
-- [ ] **Phase 10: Auto-route launch/attach by --config request field, add --json-overrides and --resolve-source-maps** - Stop silent verb/config mismatches and add config-merge escape hatches (analysis.md).
-- [ ] **Phase 11: Paused-state ergonomics — status reflects stopped/continued events, evaluate auto-uses topmost paused frame** - Make polling and inspection work without manual frame plumbing (analysis.md).
-- [ ] **Phase 12: Breakpoint command surface — add breakpoints list, breakpoints clear, and richer verification diagnostics** - Close obvious gaps in the breakpoint surface and surface loaded-sources hints on verification failure (analysis.md).
-- [ ] **Phase 13: Auto-emit JSON when stdout is not a TTY regardless of DAP_CLI_HUMAN** - Drop the `--no-human` workaround for agent pipelines (analysis.md).
-- [ ] **Phase 14: Update agent workflow docs and dap-cli usage skill with lessons from external usage analysis** - Capture launch-vs-attach rule, wrong-process smoke test, didn't-bind recipe, and stop-detection guidance (analysis.md).
+- [x] **Phase 10: Auto-route launch/attach by --config request field, add --json-overrides and --resolve-source-maps** - Stop silent verb/config mismatches and add config-merge escape hatches (analysis.md).
+- [x] **Phase 11: Paused-state ergonomics — status reflects stopped/continued events, evaluate auto-uses topmost paused frame** - Make polling and inspection work without manual frame plumbing (analysis.md).
+- [x] **Phase 12: Breakpoint command surface — add breakpoints list, breakpoints clear, and richer verification diagnostics** - Close obvious gaps in the breakpoint surface and surface loaded-sources hints on verification failure (analysis.md).
+- [x] **Phase 13: Auto-emit JSON when stdout is not a TTY regardless of DAP_CLI_HUMAN** - Drop the `--no-human` workaround for agent pipelines (analysis.md).
+- [x] **Phase 14: Update agent workflow docs and dap-cli usage skill with lessons from external usage analysis** - Capture launch-vs-attach rule, wrong-process smoke test, didn't-bind recipe, and stop-detection guidance (analysis.md).
 
 ## Phase Details
 
@@ -372,10 +372,10 @@ Plans:
 
 ### Phase 14: Update agent workflow docs and dap-cli usage skill with lessons from external usage analysis
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Agents reading the in-repo docs (`docs/AGENT-WORKFLOWS.md`, `README.md`) and the user-level `~/.copilot/skills/dap-cli/` skill from a cold start avoid the analysis.md footguns: they pick the right verb (or trust `--config` auto-route) for attach-shaped launch.json configs, run a wrong-process smoke check after attach, read `verificationDiagnostic` for unbound breakpoints, treat `status` as the source of truth for stop detection, know child sessions are not targetable, and stop threading `--no-human` through every command now that Phase 13 ships TTY auto-detection.
+**Requirements**: AGNT-04, AGNT-05
 **Depends on:** Phase 13
-**Plans:** 0 plans
+**Plans:** 1 plan
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 14 to break down)
+- [ ] 14-01-PLAN.md — Update `docs/AGENT-WORKFLOWS.md` + `README.md` and mirror into the user-level `~/.copilot/skills/dap-cli/` skill (AGNT-04, AGNT-05)
