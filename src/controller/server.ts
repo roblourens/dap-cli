@@ -1,4 +1,5 @@
 import type net from 'node:net';
+import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { parseAdapterDescriptor, type AdapterDescriptor } from '../adapters/descriptor.js';
 import { startProcessAdapter, type StartedProcessAdapter } from '../adapters/processAdapter.js';
@@ -407,6 +408,12 @@ export class ControllerServer {
     if (request.method === 'dap.capabilities') {
       return this.reportDapCapabilities(request.params);
     }
+    if (request.method === 'sessions.breakpoints.list') {
+      return this.handleListBreakpoints(request.params);
+    }
+    if (request.method === 'sessions.breakpoints.clear') {
+      return this.handleClearBreakpoints(request.params);
+    }
     if (request.method === 'events.recent' || request.method === 'events.list') {
       return this.recentEvents(request.params);
     }
@@ -622,22 +629,132 @@ export class ControllerServer {
         staleSession: { sessionRef: runtime.sessionId, ...(staleStatus !== undefined ? { status: staleStatus } : {}) },
       });
     };
+    let responseBody: unknown;
+    let intercepted = false;
     if (runtime.children !== undefined) {
-      let intercepted;
+      let childResult;
       try {
-        intercepted = await runtime.children.maybeIntercept(requestParams.command, requestParams.args);
+        childResult = await runtime.children.maybeIntercept(requestParams.command, requestParams.args);
       } catch (error) {
         wrapDapError(error);
       }
-      if (intercepted !== undefined) {
-        return intercepted.value;
+      if (childResult !== undefined) {
+        responseBody = childResult.value;
+        intercepted = true;
       }
     }
-    try {
-      return await runtime.client.request(requestParams.command, requestParams.args);
-    } catch (error) {
-      wrapDapError(error);
+    if (!intercepted) {
+      try {
+        responseBody = await runtime.client.request(requestParams.command, requestParams.args);
+      } catch (error) {
+        wrapDapError(error);
+      }
     }
+    this.maybeTrackBreakpoints(runtime, requestParams, responseBody);
+    return responseBody;
+  }
+
+  /**
+   * Phase 12 plan 01 (BPCMD-01/02): post-success hook on routeDapRequest.
+   * Best-effort — any tracking failure is swallowed so the user's primary
+   * request is never poisoned by bookkeeping. Empty `args.breakpoints`
+   * deletes the tracked entry (DAP setBreakpoints "clear" semantics).
+   */
+  private maybeTrackBreakpoints(runtime: DapSessionRuntime, requestParams: { command: string; args?: unknown }, responseBody: unknown): void {
+    if (requestParams.command !== 'setBreakpoints') {
+      return;
+    }
+    try {
+      if (!isRecord(requestParams.args)) {
+        return;
+      }
+      const sourceArg = requestParams.args.source;
+      if (!isRecord(sourceArg) || typeof sourceArg.path !== 'string') {
+        return;
+      }
+      const sourcePath = sourceArg.path;
+      const requested = Array.isArray(requestParams.args.breakpoints) ? requestParams.args.breakpoints as readonly unknown[] : [];
+      if (requested.length === 0) {
+        runtime.breakpoints?.delete(sourcePath);
+        return;
+      }
+      const responseBreakpoints = isRecord(responseBody) && Array.isArray(responseBody.breakpoints)
+        ? responseBody.breakpoints as readonly unknown[]
+        : [];
+      const map = runtime.breakpoints ?? new Map<string, TrackedBreakpointSource>();
+      map.set(sourcePath, { source: sourceArg as { path: string; [key: string]: unknown }, requested, response: responseBreakpoints });
+      runtime.breakpoints = map;
+    } catch {
+      // best-effort tracking
+    }
+  }
+
+  private async handleListBreakpoints(params: unknown): Promise<{ sources: Array<{ source: unknown; breakpoints: readonly unknown[]; requested: readonly unknown[] }> }> {
+    const target = getOptionalStringParam(params, 'name');
+    const source = getOptionalStringParam(params, 'source');
+    const runtime = this.resolveRuntime(target);
+    const map = runtime.breakpoints;
+    if (map === undefined) {
+      return { sources: [] };
+    }
+    if (source !== undefined) {
+      const entry = map.get(path.resolve(source));
+      return entry === undefined
+        ? { sources: [] }
+        : { sources: [{ source: entry.source, breakpoints: entry.response, requested: entry.requested }] };
+    }
+    return {
+      sources: Array.from(map.values(), entry => ({ source: entry.source, breakpoints: entry.response, requested: entry.requested })),
+    };
+  }
+
+  private async handleClearBreakpoints(params: unknown): Promise<{ cleared: Array<{ source: unknown; requested: number }> }> {
+    const target = getOptionalStringParam(params, 'name');
+    const source = getOptionalStringParam(params, 'source');
+    const runtime = this.resolveRuntime(target);
+    this.assertSupportedDapRequest(runtime, 'setBreakpoints');
+    const map = runtime.breakpoints;
+    if (map === undefined || map.size === 0) {
+      return { cleared: [] };
+    }
+    const wrapDapError = (error: unknown): never => {
+      throw toDapCliError(error, {
+        sessionId: runtime.sessionId,
+        adapter: getAdapterContext(runtime.adapterId, runtime.adapter),
+        request: runtime.client.lastRequest ?? { command: 'setBreakpoints' },
+      });
+    };
+    const cleared: Array<{ source: unknown; requested: number }> = [];
+    if (source !== undefined) {
+      const key = path.resolve(source);
+      const entry = map.get(key);
+      if (entry === undefined) {
+        return { cleared: [] };
+      }
+      try {
+        await runtime.client.request('setBreakpoints', { source: entry.source, breakpoints: [], lines: [] });
+      } catch (error) {
+        wrapDapError(error);
+      }
+      map.delete(key);
+      cleared.push({ source: entry.source, requested: 0 });
+      return { cleared };
+    }
+    const keys = Array.from(map.keys());
+    for (const key of keys) {
+      const entry = map.get(key);
+      if (entry === undefined) {
+        continue;
+      }
+      try {
+        await runtime.client.request('setBreakpoints', { source: entry.source, breakpoints: [], lines: [] });
+      } catch (error) {
+        wrapDapError(error);
+      }
+      map.delete(key);
+      cleared.push({ source: entry.source, requested: 0 });
+    }
+    return { cleared };
   }
 
   private reportDapCapabilities(params: unknown): DapCapabilitiesResult {
@@ -982,6 +1099,12 @@ function createInitializeArgs(adapterId: string): Record<string, unknown> {  ret
 
 type AdapterRuntime = (StartedProcessAdapter | ConnectedSocketAdapter | StartedServerSocketAdapter) & { transport: DapTransport };
 
+interface TrackedBreakpointSource {
+  source: { path: string; [key: string]: unknown };
+  requested: readonly unknown[];
+  response: readonly unknown[];
+}
+
 interface DapSessionRuntime {
   sessionId: string;
   name: string;
@@ -992,6 +1115,12 @@ interface DapSessionRuntime {
   adapter: AdapterRuntime;
   capabilities: unknown;
   children?: ChildSessionCoordinator;
+  // Phase 12 plan 01 (BPCMD-01/02): in-memory tracking of every successful
+  // setBreakpoints the controller has observed for this session, keyed by
+  // resolved source.path. Lazy-initialized on first successful set.
+  // Initial breakpoints sent during dap.start handshake are NOT tracked
+  // here — only requests routed through routeDapRequest are observed.
+  breakpoints?: Map<string, TrackedBreakpointSource>;
 }
 
 interface DapStartResult {
@@ -1402,7 +1531,7 @@ function hasTruthyCapability(capabilities: unknown, capability: string): boolean
 }
 
 function isImplementedDapRequestMethod(method: string): boolean {
-  return method === 'dap.start' || method === 'dap.startCompound' || method === 'dap.request' || method === 'dap.capabilities' || method === 'events.recent' || method === 'events.list';
+  return method === 'dap.start' || method === 'dap.startCompound' || method === 'dap.request' || method === 'dap.capabilities' || method === 'events.recent' || method === 'events.list' || method === 'sessions.breakpoints.list' || method === 'sessions.breakpoints.clear';
 }
 
 export async function startControllerServer(options: StartControllerServerOptions = {}): Promise<ControllerServer> {

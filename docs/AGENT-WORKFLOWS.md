@@ -44,6 +44,58 @@ dap-cli cleanup
 
 Use `breakpoints set` as replacement semantics for a source. If you need a different set of lines, call it again with the complete desired set.
 
+### Inspecting and clearing breakpoints
+
+`breakpoints list` returns every source the controller has observed go through `setBreakpoints` for the session, with the adapter's response (including `verified` flags). `breakpoints clear` issues `setBreakpoints` with an empty list (DAP "clear" semantics) for one source or for every tracked source.
+
+```bash
+dap-cli breakpoints list --name inspect
+# {
+#   "ok": true,
+#   "data": {
+#     "sources": [
+#       {
+#         "source": { "path": "/abs/app.ts" },
+#         "breakpoints": [{ "id": 1, "verified": true, "line": 5 }],
+#         "requested": [{ "line": 5 }]
+#       }
+#     ]
+#   }
+# }
+
+dap-cli breakpoints list --name inspect --source app.ts        # filter to one source
+dap-cli breakpoints clear --name inspect --source app.ts       # clear one source (idempotent on unknown sources)
+dap-cli breakpoints clear --name inspect                       # clear every tracked source
+```
+
+Tracking is in-memory on the controller and is dropped on session close or controller restart. Initial breakpoints injected via `dap launch --json '{ ..., __dapCliInitialBreakpoints: ... }'` are NOT tracked until they are re-set with `breakpoints set`.
+
+### Diagnosing unverified breakpoints
+
+When `breakpoints set` returns any breakpoint with `verified: false`, the CLI follows up with `loadedSources` and attaches a structured `verificationDiagnostic` object to the success payload. The diagnostic is informational — exit code is unchanged from today's behavior.
+
+```typescript
+interface VerificationDiagnostic {
+  unverifiedCount: number;        // count of breakpoints with verified === false
+  totalCount: number;             // total breakpoints in the response
+  loadedSourcesCount: number;     // length of loadedSources response, or -1 on lookup failure
+  matchingLoadedSources: Array<{ path: string; name?: string }>;
+  hint: string;                   // one-line human/grep-friendly summary
+  recipe: string;                 // literal command an agent should run next
+}
+```
+
+The `hint` text distinguishes four failure modes:
+
+| Condition | Hint phrase |
+|-----------|-------------|
+| `loadedSourcesCount === 0` | `wrong process` |
+| `loadedSourcesCount > 0 && matchingLoadedSources.length === 0` | `none match …. Check source maps / outFiles` |
+| `loadedSourcesCount > 0 && matchingLoadedSources.length > 0` | `Check breakpoint line numbers` |
+| Adapter does not advertise `supportsLoadedSourcesRequest` | `does not support loadedSources` |
+
+The `wrong process` phrase exists specifically so an agent grep can find it. Per `analysis.md` §3, "After the wrong attach, every dap-cli breakpoints set returned `verified: false`" — that failure mode now surfaces in-band instead of looking identical to a source-map mismatch. The `recipe` field is always the literal `dap-cli dap loaded-sources [--name <session>]` so the next-step is one read away.
+
 ## Evaluation and Branching Decisions
 
 Evaluate expressions only while the target is stopped and use the JSON result to decide the next command.

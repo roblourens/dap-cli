@@ -169,6 +169,119 @@ const scripts: Record<string, FakeStep[]> = {
 		{ event: 'terminated' },
 		{ close: true },
 	],
+	'bp-tracking-failure': [
+		// Phase 12 plan 01 controller unit test: success then failure.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
+		{ command: 'setBreakpoints', body: { breakpoints: [{ id: 1, verified: true, line: 10 }] } },
+		{ command: 'setBreakpoints', success: false, message: 'simulated failure' },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'bp-tracking-empty': [
+		// Phase 12 plan 01 controller unit test: set then clear via empty list.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
+		{ command: 'setBreakpoints', body: { breakpoints: [{ id: 1, verified: true, line: 5 }] } },
+		{ command: 'setBreakpoints', body: { breakpoints: [] } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'bp-list-clear': [
+		// Phase 12 plan 01: drives setBreakpoints in two sources, then list/clear.
+		// Sequence:
+		//   1. setBreakpoints A (lines [10, 20])
+		//   2. setBreakpoints B (line [30])
+		//   3. setBreakpoints (clear A — empty list)
+		//   4. setBreakpoints (clear B — empty list, from clear-all)
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
+		{ command: 'setBreakpoints', body: { breakpoints: [{ id: 1, verified: true, line: 10 }, { id: 2, verified: true, line: 20 }] } },
+		{ command: 'setBreakpoints', body: { breakpoints: [{ id: 3, verified: true, line: 30 }] } },
+		{ command: 'setBreakpoints', body: { breakpoints: [] } },
+		{ command: 'setBreakpoints', body: { breakpoints: [] } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'bp-verify-all': [
+		// Phase 12 plan 02: all breakpoints verified — no diagnostic.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true, supportsLoadedSourcesRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
+		{ command: 'setBreakpoints', body: { breakpoints: [{ id: 1, verified: true, line: 10 }] } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'bp-verify-unverified-zero-sources': [
+		// Phase 12 plan 02: unverified bp + 0 loaded sources → wrong-process hint.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true, supportsLoadedSourcesRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
+		{ command: 'setBreakpoints', body: { breakpoints: [{ id: 1, verified: false, line: 10, message: 'no source loaded' }] } },
+		{ command: 'loadedSources', body: { sources: [] } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'bp-verify-unverified-no-match': [
+		// Phase 12 plan 02: unverified bp + loaded sources but none match → source-maps hint.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true, supportsLoadedSourcesRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
+		{ command: 'setBreakpoints', body: { breakpoints: [{ id: 1, verified: false, line: 10 }] } },
+		{ command: 'loadedSources', body: { sources: [{ path: '/some/other/file.js', name: 'other.js' }] } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'bp-verify-unverified-match': [
+		// Phase 12 plan 02: unverified bp + loaded source whose basename matches → line-numbers hint.
+		// The loadedSources response echoes a sentinel basename that matches `bp-verify-source.js`,
+		// the integration test will pass --source ending in that basename.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true, supportsLoadedSourcesRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
+		{ command: 'setBreakpoints', body: { breakpoints: [{ id: 1, verified: false, line: 10 }] } },
+		{ command: 'loadedSources', body: { sources: [{ path: '/loaded/path/bp-verify-source.js', name: 'bp-verify-source.js' }] } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'bp-verify-no-loaded-sources-cap': [
+		// Phase 12 plan 02: adapter does NOT advertise supportsLoadedSourcesRequest.
+		// The CLI must short-circuit the loadedSources probe — the script declares
+		// no loadedSources step so an unexpected request would crash the script.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
+		{ command: 'setBreakpoints', body: { breakpoints: [{ id: 1, verified: false, line: 10 }] } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
 };
 
 const script = scripts[scriptName];

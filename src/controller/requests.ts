@@ -27,6 +27,8 @@ export const controllerRequestMethods = [
   'dap.setBreakpoints',
   'events.list',
   'events.recent',
+  'sessions.breakpoints.list',
+  'sessions.breakpoints.clear',
 ] as const;
 
 export type ControllerRequestMethod = (typeof controllerRequestMethods)[number];

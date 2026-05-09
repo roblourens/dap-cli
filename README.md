@@ -56,6 +56,40 @@ DAP frame IDs and variable references are scoped to the current suspended state.
 
 `evaluate` auto-resolves `--frame-id` to the topmost paused frame when omitted on a paused session, so `dap-cli evaluate --expression "user.email" --name demo` is the canonical short form. Pass `--frame-id <N>` explicitly when you need a specific non-top frame.
 
+`breakpoints` has three subcommands. `set` (above) is the only one that talks to the adapter directly; `list` and `clear` read or clear the controller's in-memory tracking map for the session:
+
+```bash
+dap-cli breakpoints list --name demo                        # all sources tracked for the session
+dap-cli breakpoints list --name demo --source path/to/x.js  # filter to one source
+dap-cli breakpoints clear --name demo --source path/to/x.js # DAP setBreakpoints empty-list semantics for one source
+dap-cli breakpoints clear --name demo                       # clear every tracked source for the session
+```
+
+Tracking is in-memory on the controller and is dropped on session close or controller restart. Initial breakpoints injected at `dap launch` time are NOT tracked until re-set via `breakpoints set`.
+
+When `breakpoints set` returns any unverified breakpoint, the CLI automatically follows up with `loadedSources` and attaches a structured `verificationDiagnostic` object to the success payload (and a one-line stderr hint). The diagnostic's `recipe` field is the literal next command an agent should run; the `hint` distinguishes three failure modes:
+
+- 0 sources loaded → likely attached to the wrong process (`wrong process` substring).
+- Loaded but no path/basename match → check source maps / outFiles.
+- Matching loaded source → check breakpoint line numbers.
+
+```json
+{
+  "ok": true,
+  "data": {
+    "breakpoints": [{ "id": 1, "verified": false, "line": 10 }],
+    "verificationDiagnostic": {
+      "unverifiedCount": 1,
+      "totalCount": 1,
+      "loadedSourcesCount": 0,
+      "matchingLoadedSources": [],
+      "hint": "1 of 1 breakpoints unverified; debuggee has loaded 0 sources — likely attached to the wrong process. Run: dap-cli dap loaded-sources --name demo",
+      "recipe": "dap-cli dap loaded-sources --name demo"
+    }
+  }
+}
+```
+
 See [docs/AGENT-WORKFLOWS.md](docs/AGENT-WORKFLOWS.md) for deeper agent loops.
 
 ## JSON Output

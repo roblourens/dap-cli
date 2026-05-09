@@ -348,13 +348,17 @@ Plans:
 
 ### Phase 12: Breakpoint command surface — add breakpoints list, breakpoints clear, and richer verification diagnostics
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Close the obvious gaps in the `dap-cli breakpoints` surface called out in analysis.md §3: add `breakpoints list` and `breakpoints clear` (with controller-side tracking of the current breakpoints-per-source state, since DAP has no `getBreakpoints`), and replace the misleading generic "verification timed out / check source maps" diagnostic with a structured `verificationDiagnostic` object that automatically follows up `setBreakpoints` with `loadedSources` and surfaces a precise hint (wrong process / source maps / line numbers) plus the literal recipe an agent should run next.
+**Requirements**: BPCMD-01, BPCMD-02, BPCMD-03
 **Depends on:** Phase 11
-**Plans:** 0 plans
+**Plans:** 2 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 12 to break down)
+**Wave 1**
+- [ ] 12-01-PLAN.md — Controller-side breakpoint tracking + `breakpoints list` and `breakpoints clear` CLI subcommands (BPCMD-01, BPCMD-02)
+
+**Wave 2** *(depends on 12-01 — shared dapAliases.ts)*
+- [ ] 12-02-PLAN.md — Richer verification diagnostics in `breakpoints set` (auto loadedSources follow-up + structured `verificationDiagnostic` payload) (BPCMD-03)
 
 ### Phase 13: Auto-emit JSON when stdout is not a TTY regardless of DAP_CLI_HUMAN
 

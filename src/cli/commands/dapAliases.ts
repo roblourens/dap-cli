@@ -3,7 +3,7 @@ import type { Command } from 'commander';
 import type { OutputWriter } from '../outputWriter.js';
 import { getDapGeneratedCommand } from '../../generated/dapCommandRegistry.js';
 import { parseIntegerOption, parseIntegerValues, parseRequiredIntegerOption, requireGeneratedCommand, sendGeneratedDapRequest } from './dapGenerated.js';
-import { createControllerClient } from '../../controller/client.js';
+import { createControllerClient, type ControllerClient } from '../../controller/client.js';
 
 interface NamedOptions {
   name?: string;
@@ -15,6 +15,14 @@ interface BreakpointsSetOptions extends NamedOptions {
   condition?: string;
   hitCondition?: string;
   logMessage?: string;
+}
+
+interface BreakpointsListOptions extends NamedOptions {
+  source?: string;
+}
+
+interface BreakpointsClearOptions extends NamedOptions {
+  source?: string;
 }
 
 interface StackOptions extends NamedOptions {
@@ -48,6 +56,38 @@ interface ThreadControlOptions extends NamedOptions {
   targetId?: string;
 }
 
+interface SetBreakpointsResponseBreakpoint {
+  id?: number;
+  verified?: boolean;
+  message?: string;
+  line?: number;
+  column?: number;
+  source?: { path?: string; name?: string; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+interface SetBreakpointsResponse {
+  breakpoints?: ReadonlyArray<SetBreakpointsResponseBreakpoint>;
+  [key: string]: unknown;
+}
+
+interface CapabilitiesResponse {
+  capabilities?: { supportsLoadedSourcesRequest?: boolean; [key: string]: unknown };
+}
+
+interface LoadedSourcesResponse {
+  sources?: ReadonlyArray<{ path?: string; name?: string; [key: string]: unknown }>;
+}
+
+interface VerificationDiagnostic {
+  unverifiedCount: number;
+  totalCount: number;
+  loadedSourcesCount: number;
+  matchingLoadedSources: ReadonlyArray<{ path: string; name?: string }>;
+  hint: string;
+  recipe: string;
+}
+
 export function registerDapAliasCommands(program: Command, output: OutputWriter): void {
   const breakpoints = program.command('breakpoints').description('Manage source breakpoints');
   breakpoints
@@ -61,7 +101,7 @@ export function registerDapAliasCommands(program: Command, output: OutputWriter)
     .description('Set breakpoints at source file line numbers')
     .action(async (options: BreakpointsSetOptions) => {
       const lines = parseIntegerValues(options.line, 'line');
-      await sendAliasRequest(output, 'setBreakpoints', {
+      const args = {
         source: { path: path.resolve(options.source) },
         breakpoints: lines.map(line => compactObject({
           line,
@@ -70,7 +110,65 @@ export function registerDapAliasCommands(program: Command, output: OutputWriter)
           logMessage: options.logMessage,
         })),
         lines,
-      }, options.name, 'breakpoints set');
+      };
+      const client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME });
+      try {
+        const requestPayload = compactObject({
+          command: 'setBreakpoints',
+          args,
+          name: options.name,
+        });
+        const response = await client.request<SetBreakpointsResponse>('dap.request', requestPayload);
+        const breakpointsResponse = response.breakpoints ?? [];
+        const unverifiedCount = breakpointsResponse.filter(b => b.verified === false).length;
+        if (unverifiedCount === 0) {
+          output.success(response, { command: 'breakpoints set' });
+          return;
+        }
+        const diagnostic = await buildVerificationDiagnostic(client, args.source.path, breakpointsResponse, options.name);
+        output.warn(`breakpoints set: ${diagnostic.hint}`);
+        output.success({ ...response, verificationDiagnostic: diagnostic }, { command: 'breakpoints set' });
+      } finally {
+        await client.close();
+      }
+    });
+
+  breakpoints
+    .command('list')
+    .option('--source <path>', 'filter to a single source path')
+    .option('--name <name>', 'session name or id')
+    .description('List breakpoints currently tracked for a session (per source, with verified state)')
+    .action(async (options: BreakpointsListOptions) => {
+      const params = compactObject({
+        name: options.name,
+        source: options.source === undefined ? undefined : path.resolve(options.source),
+      });
+      const client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME });
+      try {
+        const result = await client.request('sessions.breakpoints.list', params);
+        output.success(result, { command: 'breakpoints list' });
+      } finally {
+        await client.close();
+      }
+    });
+
+  breakpoints
+    .command('clear')
+    .option('--source <path>', 'clear only the named source (otherwise: clear all tracked sources)')
+    .option('--name <name>', 'session name or id')
+    .description('Clear breakpoints in a source (DAP setBreakpoints empty-list semantics)')
+    .action(async (options: BreakpointsClearOptions) => {
+      const params = compactObject({
+        name: options.name,
+        source: options.source === undefined ? undefined : path.resolve(options.source),
+      });
+      const client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME });
+      try {
+        const result = await client.request('sessions.breakpoints.clear', params);
+        output.success(result, { command: 'breakpoints clear' });
+      } finally {
+        await client.close();
+      }
     });
 
   program.command('threads').option('--name <name>', 'session name or id').description('List active threads in a paused session').addHelpText('after', workflowHelp()).action(async (options: NamedOptions) => {
@@ -263,4 +361,85 @@ function describeError(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+// Phase 12 plan 02 (BPCMD-03): when `breakpoints set` returns any unverified
+// breakpoint, automatically follow up with a loadedSources probe and attach
+// a structured `verificationDiagnostic` to the success payload. The primary
+// `setBreakpoints` request is never failed by a follow-up error — the worst
+// case is `loadedSourcesCount: -1` plus a degraded hint.
+async function buildVerificationDiagnostic(
+  client: ControllerClient,
+  requestedPath: string,
+  breakpointsResponse: ReadonlyArray<SetBreakpointsResponseBreakpoint>,
+  name: string | undefined,
+): Promise<VerificationDiagnostic> {
+  const totalCount = breakpointsResponse.length;
+  const unverifiedCount = breakpointsResponse.filter(b => b.verified === false).length;
+  const recipe = `dap-cli dap loaded-sources${name === undefined ? '' : ` --name ${name}`}`;
+  const baseHint = `${unverifiedCount} of ${totalCount} breakpoints unverified`;
+
+  let supportsLoadedSources = false;
+  try {
+    const caps = await client.request<CapabilitiesResponse>('dap.capabilities', name === undefined ? undefined : { name });
+    supportsLoadedSources = caps?.capabilities?.supportsLoadedSourcesRequest === true;
+    if (!supportsLoadedSources) {
+      return {
+        unverifiedCount,
+        totalCount,
+        loadedSourcesCount: -1,
+        matchingLoadedSources: [],
+        hint: `${baseHint}; loadedSources lookup failed (adapter does not support loadedSources). Try running: ${recipe}`,
+        recipe,
+      };
+    }
+  } catch (err) {
+    return {
+      unverifiedCount,
+      totalCount,
+      loadedSourcesCount: -1,
+      matchingLoadedSources: [],
+      hint: `${baseHint}; loadedSources lookup failed (capabilities probe failed: ${describeError(err)}). Try running: ${recipe}`,
+      recipe,
+    };
+  }
+
+  let loaded: LoadedSourcesResponse;
+  try {
+    const loadedRequest = compactObject({ command: 'loadedSources', args: {}, name });
+    loaded = await client.request<LoadedSourcesResponse>('dap.request', loadedRequest);
+  } catch (err) {
+    return {
+      unverifiedCount,
+      totalCount,
+      loadedSourcesCount: -1,
+      matchingLoadedSources: [],
+      hint: `${baseHint}; loadedSources lookup failed (${describeError(err)}). Try running: ${recipe}`,
+      recipe,
+    };
+  }
+
+  const sources = loaded.sources ?? [];
+  const loadedSourcesCount = sources.length;
+  const wantBasename = path.basename(requestedPath);
+  const cmp: (a: string, b: string) => boolean = process.platform === 'win32'
+    ? (a, b) => a.toLowerCase() === b.toLowerCase()
+    : (a, b) => a === b;
+  const matchingLoadedSources = sources
+    .filter(s => typeof s.path === 'string' && (cmp(s.path, requestedPath) || cmp(path.basename(s.path), wantBasename)))
+    .map(s => {
+      const sourcePath = s.path as string;
+      return typeof s.name === 'string' ? { path: sourcePath, name: s.name } : { path: sourcePath };
+    });
+
+  let hint: string;
+  if (loadedSourcesCount === 0) {
+    hint = `${baseHint}; debuggee has loaded 0 sources — likely attached to the wrong process. Run: ${recipe}`;
+  } else if (matchingLoadedSources.length === 0) {
+    hint = `${baseHint}; ${loadedSourcesCount} sources loaded but none match ${wantBasename}. Check source maps / outFiles. Run: ${recipe}`;
+  } else {
+    hint = `${baseHint} despite ${matchingLoadedSources.length} matching loaded source(s). Check breakpoint line numbers. Run: ${recipe}`;
+  }
+
+  return { unverifiedCount, totalCount, loadedSourcesCount, matchingLoadedSources, hint, recipe };
 }
