@@ -1450,7 +1450,11 @@ describe('ChildSessionCoordinator', () => {
     expect(result.warnings).toEqual([{
       sessionId: parent.id,
       message: 'verification_timeout',
-      diagnostics: ['Breakpoint verification timed out. Check the js-debug trace log for source-map resolution details.'],
+      diagnostics: [
+        'Breakpoint verification timed out. Check the js-debug trace log for source-map resolution details.',
+        'For JavaScript source breakpoints, confirm the source path is the file actually loaded by the debuggee. Use `dap-cli stack` after a stopped event to compare reported frame source paths with the requested breakpoint path.',
+        'If the process exits quickly or the module is loaded after launch, retry with `stopOnEntry: true` or set the breakpoint after the child session appears in `dap-cli sessions --show-children`.',
+      ],
     }]);
 
     await coordinator.dispose();

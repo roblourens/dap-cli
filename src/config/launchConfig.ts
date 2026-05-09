@@ -51,6 +51,7 @@ export const launchConfigTypeMap: Record<string, string> = {
   chrome: 'js-debug',
   'pwa-chrome': 'js-debug',
   python: 'debugpy',
+  debugpy: 'debugpy',
 };
 
 const maxLaunchJsonBytes = 256 * 1024;

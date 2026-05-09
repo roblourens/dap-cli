@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: complete
-stopped_at: Phase 7 hardening verified complete
-last_updated: "2026-05-08T15:18:03.648Z"
-last_activity: 2026-05-08 -- completed Phase 7 hardening discovery, gap closure, final tests, and hand-driven smoke
+status: ready
+stopped_at: Phase 8 external hardening expansion and gap closure completed
+last_updated: "2026-05-09T02:22:16.620Z"
+last_activity: 2026-05-08 -- closed Phase 8 gaps for debugpy launch type mapping, running-thread diagnostics, and JS breakpoint guidance
 progress:
-  total_phases: 9
+  total_phases: 10
   completed_phases: 9
-  total_plans: 65
-  completed_plans: 65
-  percent: 100
+  total_plans: 67
+  completed_plans: 67
+  percent: 99
 ---
 
 # Project State
@@ -21,22 +21,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** Agents can reliably control a DAP debug session from repeatable CLI commands and inspect paused application state without needing language-specific debugger knowledge.
-**Current focus:** Phase 07 complete — hardening bug discovery and exploratory smoke testing
+**Current focus:** Phase 08 — external project hardening expansion complete
 
 ## Current Position
 
-Phase: 07 (hardening-bug-discovery-and-exploratory-smoke-testing)
-Plan: 4 of 4
-Status: Complete — discovery, gap closure, final full test suite, and hand-driven smoke passed
-Last activity: 2026-05-08 -- completed Phase 7 hardening discovery and exploratory smoke testing
+Phase: 08 (external-project-hardening-expansion)
+Plan: 2 of 2
+Status: Complete — external repo expansion executed and Phase 8 gaps closed
+Last activity: 2026-05-08 -- closed GAP-08-01 through GAP-08-03
 
-Progress: [██████████] 100%
+Progress: [█████████░] 99%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 65
+- Total plans completed: 67
 - Average duration: n/a
 - Total execution time: 0.0 hours
 
@@ -53,11 +53,12 @@ Progress: [██████████] 100%
 | Phase 05.2 | 6/6 complete | n/a | n/a |
 | Phase 06 | 3/3 complete | n/a | n/a |
 | Phase 07 | 4/4 complete | n/a | n/a |
+| Phase 08 | 2/2 complete | n/a | n/a |
 
 **Recent Trend:**
 
-- Last 5 plans: 06-03, 07-01, 07-02, 07-03, 07-04
-- Trend: Phase 7 hardening discovery and gap closure verified complete.
+- Last 5 plans: 07-02, 07-03, 07-04, 08-01, 08-02
+- Trend: Phase 8 external repo expansion gaps are closed.
 
 *Updated after each plan completion*
 | Phase 05 P10 | 20 minutes | 2 tasks | 7 files |
@@ -83,6 +84,7 @@ Progress: [██████████] 100%
 
 - Phase 05.1 inserted after Phase 05: A mode for the CLI where it produces human-readable nicely formatted output instead of JSON. (URGENT)
 - Phase 07 completed: Hardening bug discovery and exploratory smoke testing.
+- Phase 08 complete: External project hardening expansion closed GAP-08-01 through GAP-08-03.
 
 ### Decisions
 
@@ -96,7 +98,7 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-- None.
+- Pick the next milestone item or revisit deferred Phase 5.2 launch.json compound execution.
 
 ### Blockers/Concerns
 

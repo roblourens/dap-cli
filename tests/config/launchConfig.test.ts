@@ -40,6 +40,7 @@ describe('launch config resolution', () => {
     expect(launchConfigTypeMap.node).toBe('js-debug');
     expect(resolveAdapterIdFromType('pwa-chrome')).toBe('js-debug');
     expect(resolveAdapterIdFromType('python')).toBe('debugpy');
+    expect(resolveAdapterIdFromType('debugpy')).toBe('debugpy');
     expect(resolveAdapterIdFromType('go', { go: 'delve' })).toBe('delve');
   });
 

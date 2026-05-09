@@ -1,5 +1,5 @@
 import type { DapEventCache } from '../protocol/eventCache.js';
-import { breakpointBindingGuidance } from './diagnostics.js';
+import { breakpointBindingGuidance, threadNotPaused } from './diagnostics.js';
 import type { DapEventMessage } from '../protocol/dapMessages.js';
 import type { DapTransport } from '../protocol/transport.js';
 import { DapClient, type ReverseRequestResult } from '../protocol/dapClient.js';
@@ -69,6 +69,12 @@ interface ChildRuntime {
   resolveReady: () => void;
   rejectReady: (error: unknown) => void;
 }
+
+const pausedRequiredRoutedCommands: ReadonlySet<string> = new Set([
+  'stackTrace',
+  'scopes',
+  'variables',
+]);
 
 interface InterceptedRequest {
   value: unknown;
@@ -805,7 +811,12 @@ export class ChildSessionCoordinator {
       });
     }
     // Real child thread id forwarded unchanged — no remap.
-    const response = await child.client.request<unknown>(command, args);
+    let response: unknown;
+    try {
+      response = await child.client.request<unknown>(command, args);
+    } catch (error) {
+      this.normalizeChildRequestError(command, error);
+    }
     if (recordFrames && isRecord(response)) {
       const frames = Array.isArray(response.stackFrames) ? response.stackFrames : [];
       for (const frame of frames) {
@@ -829,7 +840,12 @@ export class ChildSessionCoordinator {
     if (child === undefined) {
       throw new Error(`No child session owns frame ${frameId}.`);
     }
-    const response = await child.client.request<unknown>(command, args);
+    let response: unknown;
+    try {
+      response = await child.client.request<unknown>(command, args);
+    } catch (error) {
+      this.normalizeChildRequestError(command, error);
+    }
     if (isRecord(response)) {
       const scopes = Array.isArray(response.scopes) ? response.scopes : [];
       for (const scope of scopes) {
@@ -872,7 +888,12 @@ export class ChildSessionCoordinator {
     if (child === undefined) {
       throw new Error(`No child session owns ${command} target.`);
     }
-    const response = await child.client.request<unknown>(command, args);
+    let response: unknown;
+    try {
+      response = await child.client.request<unknown>(command, args);
+    } catch (error) {
+      this.normalizeChildRequestError(command, error);
+    }
     if (isRecord(response)) {
       const variables = Array.isArray(response.variables) ? response.variables : [];
       for (const variable of variables) {
@@ -882,6 +903,13 @@ export class ChildSessionCoordinator {
       }
     }
     return response;
+  }
+
+  private normalizeChildRequestError(command: string, error: unknown): never {
+    if (pausedRequiredRoutedCommands.has(command) && error instanceof Error && /not paused/i.test(error.message)) {
+      throw threadNotPaused({ sessionId: this.options.parentSessionId, sessionName: this.options.parentName, command });
+    }
+    throw error;
   }
 
   private async routeBySourceReference(command: string, args: unknown): Promise<unknown> {

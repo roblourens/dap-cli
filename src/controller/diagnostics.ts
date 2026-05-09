@@ -60,7 +60,10 @@ export function breakpointBindingGuidance(options: { sourcePath?: string | undef
   const diagnostics = [
     'Breakpoint verification timed out. Check the js-debug trace log for source-map resolution details.',
   ];
-  if (options.sourcePath?.endsWith('.ts') === true || options.sourcePath?.endsWith('.tsx') === true) {
+  if (options.sourcePath?.endsWith('.js') === true || options.sourcePath?.endsWith('.mjs') === true || options.sourcePath?.endsWith('.cjs') === true) {
+    diagnostics.push('For JavaScript source breakpoints, confirm the source path is the file actually loaded by the debuggee. Use `dap-cli stack` after a stopped event to compare reported frame source paths with the requested breakpoint path.');
+    diagnostics.push('If the process exits quickly or the module is loaded after launch, retry with `stopOnEntry: true` or set the breakpoint after the child session appears in `dap-cli sessions --show-children`.');
+  } else if (options.sourcePath?.endsWith('.ts') === true || options.sourcePath?.endsWith('.tsx') === true) {
     diagnostics.push('TypeScript source breakpoints usually require `sourceMaps: true` and an `outFiles` glob that matches emitted JavaScript, for example `"outFiles": ["${workspaceFolder}/dist/**/*.js"]`.');
     diagnostics.push('If the launch uses ts-node, make sure source maps are enabled for the runtime; if it uses Jest, prefer `--runInBand --no-coverage` while debugging.');
   }

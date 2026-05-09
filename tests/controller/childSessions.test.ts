@@ -67,6 +67,7 @@ class FakeAdapterEndpoint implements DapTransport {
    * deterministic `threads` lists for individual children.
    */
   public readonly responders = new Map<string, (request: DapRequestMessage) => unknown>();
+  public readonly failures = new Map<string, string>();
   private readonly parser = new DapMessageParser();
   private serverSeq = 1000;
   private closed = false;
@@ -118,6 +119,11 @@ class FakeAdapterEndpoint implements DapTransport {
     const seq = this.serverSeq;
     this.serverSeq += 1;
     const responder = this.responders.get(request.command);
+    const failureMessage = this.failures.get(request.command);
+    if (failureMessage !== undefined) {
+      this.emit({ seq, type: 'response', request_seq: request.seq, success: false, command: request.command, message: failureMessage });
+      return;
+    }
     const body = responder?.(request);
     const response: DapResponseMessage = body === undefined
       ? { seq, type: 'response', request_seq: request.seq, success: true, command: request.command }
@@ -405,6 +411,71 @@ describe('ChildSessionCoordinator parent-name thread routing (H-3a)', () => {
       // And NOT child A.
       const childA = harness.childEndpoints[0]!;
       expect(childA.receivedRequests.find(r => r.command === 'continue')).toBeUndefined();
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('routeByThreadId maps child not-paused stackTrace failures to thread_not_paused', async () => {
+    const harness = await createMultiChildHarness([
+      [{ id: 7, name: 'main' }],
+    ]);
+    try {
+      await harness.coordinator.maybeIntercept('threads', {});
+      const child = harness.childEndpoints[0]!;
+      child.failures.set('stackTrace', 'Thread is not paused');
+
+      let captured: unknown;
+      try {
+        await harness.coordinator.maybeIntercept('stackTrace', { threadId: 7 });
+      } catch (error) {
+        captured = error;
+      }
+
+      expect(captured).toBeInstanceOf(CliError);
+      expect(captured).toMatchObject({
+        code: 'thread_not_paused',
+        category: 'dap',
+        message: 'Thread is not paused.',
+      });
+      expect((captured as CliError).diagnostics).toEqual([
+        'Poll `dap-cli events --name pwa-parent --include stopped` until a stopped event appears, then retry. Use --stop-on-entry on launch to pause immediately.',
+      ]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('child scopes and variables not-paused failures map to thread_not_paused', async () => {
+    const harness = await createMultiChildHarness([
+      [{ id: 7, name: 'main' }],
+    ]);
+    try {
+      await harness.coordinator.maybeIntercept('threads', {});
+      const child = harness.childEndpoints[0]!;
+      child.responders.set('stackTrace', () => ({ stackFrames: [{ id: 200, name: 'main', line: 1, column: 1 }] }));
+      child.responders.set('scopes', () => ({ scopes: [{ name: 'Locals', variablesReference: 300, expensive: false }] }));
+
+      await harness.coordinator.maybeIntercept('stackTrace', { threadId: 7 });
+      await harness.coordinator.maybeIntercept('scopes', { frameId: 200 });
+
+      child.failures.set('scopes', 'Thread is not paused');
+      let scopesCaptured: unknown;
+      try {
+        await harness.coordinator.maybeIntercept('scopes', { frameId: 200 });
+      } catch (error) {
+        scopesCaptured = error;
+      }
+      expect(scopesCaptured).toMatchObject({ code: 'thread_not_paused', category: 'dap', message: 'Thread is not paused.' });
+
+      child.failures.set('variables', 'Thread is not paused');
+      let variablesCaptured: unknown;
+      try {
+        await harness.coordinator.maybeIntercept('variables', { variablesReference: 300 });
+      } catch (error) {
+        variablesCaptured = error;
+      }
+      expect(variablesCaptured).toMatchObject({ code: 'thread_not_paused', category: 'dap', message: 'Thread is not paused.' });
     } finally {
       await harness.cleanup();
     }

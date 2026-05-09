@@ -21,6 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 5.2: Execute VS Code launch.json configurations and compounds** *(INSERTED)* - Faithfully resolve a `.vscode/launch.json` configuration (variable substitution, platform overrides, full field passthrough) and execute compound configurations as a single coordinated multi-session debug run; preLaunchTask explicitly out of scope.
 - [x] **Phase 6: Add conditional breakpoint Playwright interop coverage** (completed 2026-05-06)
 - [x] **Phase 7: Hardening bug discovery and exploratory smoke testing** - Run a broad post-feature hardening campaign that hammers published dap-cli workflows across adapters, output modes, launch.json, lifecycle, error, cleanup, and Playwright interop scenarios; file every discovered bug as GSD UAT gaps before planning fixes. (completed 2026-05-08)
+- [x] **Phase 8: External project hardening expansion** - Expanded external launch.json hardening with a larger real-repo sample; screened at least 10 candidates, attempted at least 5 new repos, and closed the discovered dap-cli gaps. (completed 2026-05-08)
 
 ## Phase Details
 
@@ -139,7 +140,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 5.1 -> 5.2 -> 6 -> 7
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 5.1 -> 5.2 -> 6 -> 7 -> 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -152,6 +153,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 5.1 -> 5.2 -> 6 -> 7
 | 5.2. Execute VS Code launch.json configurations and compounds *(INSERTED)* | 0/0 | Not started | - |
 | 6. Add conditional breakpoint Playwright interop coverage | 3/3 | Complete   | 2026-05-06 |
 | 7. Hardening bug discovery and exploratory smoke testing | 4/4 | Complete | 2026-05-08 |
+| 8. External project hardening expansion | 2/2 | Complete | 2026-05-08 |
 
 ### Phase 5: Stabilize real Chrome/js-debug Playwright same-browser handoff
 
@@ -289,3 +291,14 @@ Plans:
 Plans:
 **Wave 1**
 - [ ] 07-01-PLAN.md — Hardening scenario matrix, published CLI smoke sweep, and UAT bug ledger
+
+### Phase 8: External project hardening expansion
+
+**Goal:** Expand external launch.json hardening beyond Phase 7's two full external attempts with a broader real-repo sample across Node, Python/debugpy, browser, attach, and current-file launch shapes.
+**Requirements**: AGNT-02, AGNT-03, TEST-05, TEST-07
+**Depends on:** Phase 7
+**Plans:** 2 plans
+
+Plans:
+- [x] 08-01-PLAN.md — External project hardening expansion sample, UAT ledger, and gap filing
+- [x] 08-02-PLAN.md — Gap closure for debugpy launch type, running-thread diagnostics, and JS breakpoint guidance

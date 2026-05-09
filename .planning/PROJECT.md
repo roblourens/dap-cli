@@ -32,7 +32,7 @@ Agents can reliably control a DAP debug session from repeatable CLI commands and
 
 ### Active
 
-- None. v1 hardening is verified complete.
+- [x] Close Phase 8 external project hardening gaps: `type: debugpy` launch config mapping, running-thread inspection diagnostics, and JS pwa-node breakpoint binding guidance.
 
 ### Out of Scope
 
@@ -95,4 +95,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-08 after Phase 7 hardening verification*
+*Last updated: 2026-05-08 after Phase 8 gap closure*
