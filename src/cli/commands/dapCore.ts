@@ -19,7 +19,7 @@ import {
 } from '../../config/launchConfig.js';
 import { inferAdapterAndType } from '../../config/programInference.js';
 import type { OutputWriter } from '../outputWriter.js';
-import { parseJsonOption } from './jsonOptions.js';
+import { parseJsonOption, parseJsonRecordOption } from './jsonOptions.js';
 
 interface DapStartCommandOptions {
   adapter?: string;
@@ -41,6 +41,8 @@ interface DapStartCommandOptions {
   args?: string[];
   sourceMaps?: string;
   outFiles?: string[];
+  resolveSourceMaps?: string[];
+  jsonOverrides?: string;
   stopOnEntry?: boolean;
 }
 
@@ -70,7 +72,7 @@ export function registerDapCoreCommands(program: Command, output: OutputWriter):
     .option('--workspace <path>', 'workspace root for .vscode/launch.json discovery and variable substitution')
     .option('--list-configs', 'list VS Code launch configurations and compounds without starting a session')
     .option('--json <json>', 'raw adapter-native launch configuration JSON', '{}')
-    .option('--script <script>', 'fake adapter script', 'stopped-on-entry')
+    .option('--script <script>', 'fake adapter script')
     .option('--name <name>', 'session name', 'default')
     .option('--program <path>', 'program path override')
     .option('--cwd <path>', 'working directory override')
@@ -83,6 +85,8 @@ export function registerDapCoreCommands(program: Command, output: OutputWriter):
     .option('--args <arg...>', 'program argument overrides')
     .option('--source-maps <boolean>', 'source map enablement override')
     .option('--out-files <pattern...>', 'source map output file patterns')
+    .option('--resolve-source-maps <pattern...>', 'set resolveSourceMapLocations on the resolved config (variadic; mirrors --out-files)')
+    .option('--json-overrides <json>', 'extra JSON object merged on top of --config (between named-config and --json layers)')
     .option('--stop-on-entry', 'halt at the first program statement (adapter must support stopOnEntry)')
     .option('--no-use', 'do not make the new session active')
     .action(async (options: DapStartCommandOptions) => {
@@ -97,7 +101,7 @@ export function registerDapCoreCommands(program: Command, output: OutputWriter):
     .option('--workspace <path>', 'workspace root for .vscode/launch.json discovery and variable substitution')
     .option('--list-configs', 'list VS Code launch configurations and compounds without starting a session')
     .option('--json <json>', 'raw adapter-native attach configuration JSON', '{}')
-    .option('--script <script>', 'fake adapter script', 'attach-stopped')
+    .option('--script <script>', 'fake adapter script')
     .option('--name <name>', 'session name', 'default')
     .option('--program <path>', 'program path override')
     .option('--cwd <path>', 'working directory override')
@@ -110,6 +114,8 @@ export function registerDapCoreCommands(program: Command, output: OutputWriter):
     .option('--args <arg...>', 'program argument overrides')
     .option('--source-maps <boolean>', 'source map enablement override')
     .option('--out-files <pattern...>', 'source map output file patterns')
+    .option('--resolve-source-maps <pattern...>', 'set resolveSourceMapLocations on the resolved config (variadic; mirrors --out-files)')
+    .option('--json-overrides <json>', 'extra JSON object merged on top of --config (between named-config and --json layers)')
     .option('--stop-on-entry', 'halt at the first program statement (adapter must support stopOnEntry)')
     .option('--no-use', 'do not make the new session active')
     .action(async (options: DapStartCommandOptions) => {
@@ -178,6 +184,10 @@ async function startDap(output: OutputWriter, mode: 'launch' | 'attach', options
 
   const namedEntry = await resolveNamedEntry(options.config, workspace);
   const jsonConfig = parseJsonRecordOption(options.json ?? '{}');
+  // Phase 10 plan 02 (OVRD-01): additive override layer between named-config and --json.
+  const jsonOverrides = options.jsonOverrides !== undefined
+    ? parseJsonRecordOption(options.jsonOverrides)
+    : undefined;
   const adapterConfig = await loadAdapterConfig(process.env.DAP_CLI_HOME);
   if (namedEntry?.kind === 'compound') {
     for (const memberName of namedEntry.compound.configurations) {
@@ -194,7 +204,7 @@ async function startDap(output: OutputWriter, mode: 'launch' | 'attach', options
       if (memberConfig === undefined) {
         throw new Error(`Preflight missed compound member '${memberName}'.`);
       }
-      return createCompoundStartMember(memberConfig, memberName, namedEntry.document.workspaceFolder, mode, options, jsonConfig, adapterConfig);
+      return createCompoundStartMember(memberConfig, memberName, namedEntry.document.workspaceFolder, mode, options, jsonConfig, jsonOverrides, adapterConfig);
     }));
 
     await withController(output, mode, async client => client.request('dap.startCompound', {
@@ -207,24 +217,48 @@ async function startDap(output: OutputWriter, mode: 'launch' | 'attach', options
   }
 
   const namedConfig = namedEntry?.configuration;
+  // Phase 10 plan 01 (AUTOROUTE-01): when --config resolves to a launch.json
+  // entry whose `request:` field disagrees with the CLI verb, the launch.json
+  // is the source of truth — auto-route to the matching DAP request and
+  // surface a warning. Mirrors the per-member logic in
+  // createCompoundStartMember below. The auto-route ONLY fires when --config
+  // is used; CLI-flag-only and --json-only paths stay verb-driven.
+  const effectiveMode: 'launch' | 'attach' =
+    namedConfig?.request === 'attach' ? 'attach'
+    : namedConfig?.request === 'launch' ? 'launch'
+    : mode;
+  const autoRouted = effectiveMode !== mode;
   const { adapterId, inferredType } = resolveAdapterAndType(options, namedConfig, adapterConfig.launchConfigTypeMap);
   const adapterFlags = mapFlagsForAdapter(adapterId, collectFlagOverrides(options, inferredType));
-  const adapterDefaults = getAdapterDefaults(adapterConfig, adapterId, mode);
+  const adapterDefaults = getAdapterDefaults(adapterConfig, adapterId, effectiveMode);
   const config = {
-    ...await mapConfigForAdapter(adapterId, resolveLaunchConfig({ namedConfig: { ...adapterDefaults, ...namedConfig }, jsonConfig, flags: adapterFlags }), workspace),
-    request: mode,
+    ...await mapConfigForAdapter(adapterId, resolveLaunchConfig({ namedConfig: { ...adapterDefaults, ...namedConfig }, jsonOverrides, jsonConfig, flags: adapterFlags }), workspace),
+    request: effectiveMode,
   };
   const descriptor = adapterId === 'fake'
-    ? createFakeDescriptor(options.script ?? (mode === 'attach' ? 'attach-stopped' : 'stopped-on-entry'), mode)
+    ? createFakeDescriptor(options.script ?? (effectiveMode === 'attach' ? 'attach-stopped' : 'stopped-on-entry'), effectiveMode)
     : new AdapterRegistry({ config: adapterConfig }).resolve(adapterId);
 
-  await withController(output, mode, async client => client.request('dap.start', {
-    mode,
-    name: options.name ?? 'default',
-    use: options.use !== false,
-    descriptor,
-    config,
-  }), { timeoutMs: startControllerRequestTimeoutMs });
+  const client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME, timeoutMs: startControllerRequestTimeoutMs });
+  try {
+    const response = await client.request('dap.start', {
+      mode: effectiveMode,
+      name: options.name ?? 'default',
+      use: options.use !== false,
+      descriptor,
+      config,
+    });
+    const payload = autoRouted
+      ? {
+          ...(response as Record<string, unknown>),
+          warnings: [`auto_routed_to: '${options.config ?? ''}' has request:'${effectiveMode}'; CLI verb '${mode}' was overridden`],
+          autoRouted: { code: 'auto_routed_to', from: mode, to: effectiveMode, configName: options.config ?? null },
+        }
+      : response;
+    output.success(payload, { command: effectiveMode });
+  } finally {
+    await client.close();
+  }
 }
 
 async function createCompoundStartMember(
@@ -234,6 +268,7 @@ async function createCompoundStartMember(
   commandMode: 'launch' | 'attach',
   options: DapStartCommandOptions,
   jsonConfig: Record<string, unknown>,
+  jsonOverrides: Record<string, unknown> | undefined,
   adapterConfig: Awaited<ReturnType<typeof loadAdapterConfig>>,
 ): Promise<{ memberName: string; mode: 'launch' | 'attach'; descriptor: AdapterDescriptor; config: Record<string, unknown> }> {
   const resolvedConfig = resolveLaunchConfigurationConfig(configuration, { workspaceFolder });
@@ -242,7 +277,7 @@ async function createCompoundStartMember(
   const adapterFlags = mapFlagsForAdapter(adapterId, collectFlagOverrides(options, inferredType));
   const adapterDefaults = getAdapterDefaults(adapterConfig, adapterId, memberMode);
   const config = {
-    ...await mapConfigForAdapter(adapterId, resolveLaunchConfig({ namedConfig: { ...adapterDefaults, ...resolvedConfig }, jsonConfig, flags: adapterFlags }), workspaceFolder),
+    ...await mapConfigForAdapter(adapterId, resolveLaunchConfig({ namedConfig: { ...adapterDefaults, ...resolvedConfig }, jsonOverrides, jsonConfig, flags: adapterFlags }), workspaceFolder),
     request: memberMode,
   };
   const descriptor = adapterId === 'fake'
@@ -316,6 +351,7 @@ function collectFlagOverrides(options: DapStartCommandOptions, inferredType?: st
   }
   setIfDefined(flags, 'args', options.args);
   setIfDefined(flags, 'outFiles', options.outFiles);
+  setIfDefined(flags, 'resolveSourceMapLocations', options.resolveSourceMaps);
   setIfDefined(flags, 'stopOnEntry', options.stopOnEntry);
   if (options.sourceMaps !== undefined) {
     flags.sourceMaps = parseBooleanOption(options.sourceMaps, 'source-maps');
@@ -376,15 +412,6 @@ function createFakeDescriptor(script: string, mode: 'launch' | 'attach'): Adapte
       args: ['--experimental-strip-types', path.join(process.cwd(), 'tests', 'fixtures', 'fake-adapter-entry.ts'), '--script', script, '--mode', mode],
     },
   };
-}
-
-function parseJsonRecordOption(value: string): Record<string, unknown> {
-  const parsed = parseJsonOption(value);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw usageError('JSON argument must be an object.', { code: 'invalid_json' });
-  }
-
-  return parsed as Record<string, unknown>;
 }
 
 function parseOptionalInteger(value: string | undefined, optionName: string): number | undefined {

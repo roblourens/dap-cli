@@ -88,6 +88,32 @@ dap-cli events --name inspect --limit 20
 
 If a request fails because the target resumed, start the loop again at `status` and reacquire references after the next stop.
 
+## Wrong-process smoke test
+
+When attaching with `js-debug` the controller emits a synthetic event named `dapCli.helperProcessWarning` if a `process` event arrives whose system process is the js-debug helper itself (its parent pid equals the adapter's pid). This usually means the request reached the wrong runtime — for example, asking js-debug to attach when the launch shape was meant. Phase 10 plan 01's auto-route by `--config request` prevents this for `--config` flows; the warning catches the residual cases (raw `--json` payloads, scripted attaches without `--config`, custom helpers).
+
+Poll for it during attach smoke tests:
+
+```bash
+dap-cli events --name <session> --include dapCli.helperProcessWarning --limit 5
+```
+
+Warning event body shape:
+
+```json
+{
+  "code": "helper_process_detected",
+  "message": "Attached to a js-debug helper process. Verify the request type and target.",
+  "helperPid": 12345,
+  "adapterPid": 12300,
+  "adapterId": "js-debug",
+  "sessionId": "...",
+  "sessionName": "..."
+}
+```
+
+The detector is a no-op for non-attach sessions, non-`js-debug` adapters, and non-Unix platforms (Windows skips the `ps` lookup).
+
 ## Output Modes
 
 JSON remains the default output mode for agents and scripts. Humans can opt into readable terminal output with `--human`, or set `DAP_CLI_HUMAN=1` in their shell for a human default. Use `--no-human` to force JSON when `DAP_CLI_HUMAN=1` is inherited. Human output is for reading, not a stable machine-parsing contract.

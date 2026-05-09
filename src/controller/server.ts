@@ -13,6 +13,7 @@ import type { DapTransport } from '../protocol/transport.js';
 import { SessionManager } from '../sessions/sessionManager.js';
 import type { CompoundSessionMetadata, OwnedAdapterMetadata, SessionStatus } from '../sessions/session.js';
 import { ChildSessionCoordinator } from './childSessions.js';
+import { createHelperProcessDetector } from '../sessions/helperProcessDetection.js';
 import { derivePausedStateFromStopped } from './pausedState.js';
 import { controllerRequestSchema, type ControllerFailureResponse, type ControllerRequest, type ControllerResponse } from './requests.js';
 import { createControllerServerSocket, removeControllerDiscovery, writeControllerDiscovery, type ControllerDiscovery, type ControllerEndpoint } from './ipc.js';
@@ -66,6 +67,15 @@ export class ControllerServer {
   private buildId: string = '';
   private readonly signalProcess: (target: number, signal: NodeJS.Signals) => void;
   private readonly isProcessAlive: (pid: number) => boolean;
+  // Phase 10 plan 03 (DIAG-01): test-only seam. Production callers leave
+  // this undefined and the detector falls back to spawning `ps`. In-process
+  // integration tests call `setHelperProcessLookupPpid` to inject a stub.
+  // The stub receives BOTH the helper pid and the adapter pid so tests can
+  // deterministically force a match (return adapterPid) or a miss (return
+  // adapterPid + 1) without having to discover the spawned-adapter pid out
+  // of band. The seam is on the server (not the JSON-RPC start params)
+  // because functions cannot survive JSON serialization.
+  private helperProcessLookupPpid: ((helperPid: number, adapterPid: number) => Promise<number | undefined>) | undefined;
 
   public constructor(private readonly options: StartControllerServerOptions = {}) {
     this.signalProcess = options.signalProcess ?? ((target, signal) => process.kill(target, signal));
@@ -73,6 +83,16 @@ export class ControllerServer {
     this.closedPromise = new Promise(resolve => {
       this.resolveClosed = resolve;
     });
+  }
+
+  /**
+   * Phase 10 plan 03 (DIAG-01): test-only. Inject a stub `ps` ppid lookup
+   * for the helper-process detector. The stub receives both the helper pid
+   * (from the DAP `process` event) and the adapter pid; returning the
+   * adapter pid forces a match.
+   */
+  public setHelperProcessLookupPpid(lookupPpid: ((helperPid: number, adapterPid: number) => Promise<number | undefined>) | undefined): void {
+    this.helperProcessLookupPpid = lookupPpid;
   }
 
   public get closed(): Promise<void> {
@@ -498,6 +518,29 @@ export class ControllerServer {
         void manager.updatePausedState(session.id, { paused: false }).catch(() => undefined);
       }
     });
+
+    // Phase 10 plan 03 (DIAG-01): helper-process detector. Only js-debug
+    // attach sessions can produce the helper-process false-positive cascade
+    // documented in analysis.md, so the detector is gated to that case.
+    if (descriptor.id === 'js-debug' && startParams.mode === 'attach') {
+      const adapterPid = getOwnedAdapter(adapter).pid;
+      const detectorOptions: Parameters<typeof createHelperProcessDetector>[0] = {
+        sessionId: session.id,
+        adapterId: descriptor.id,
+        adapterPid,
+        mode: startParams.mode,
+        eventCache,
+      };
+      if (this.helperProcessLookupPpid !== undefined) {
+        const stub = this.helperProcessLookupPpid;
+        const pinnedAdapterPid = adapterPid;
+        if (pinnedAdapterPid !== undefined) {
+          detectorOptions.lookupPpid = (helperPid: number) => stub(helperPid, pinnedAdapterPid);
+        }
+      }
+      const detector = createHelperProcessDetector(detectorOptions);
+      client.onEvent(event => detector.handleEvent(event));
+    }
 
     let children: ChildSessionCoordinator | undefined;
     const adapterOpenChildTransport = 'openChildTransport' in adapter && typeof adapter.openChildTransport === 'function'

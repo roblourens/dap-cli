@@ -33,6 +33,9 @@ export type ResolvedLaunchConfigEntry =
 
 export interface LaunchConfigSources {
   namedConfig?: Record<string, unknown> | undefined;
+  // Phase 10 plan 02 (OVRD-01): additive layer for `--json-overrides`.
+  // Shallow merge — nested objects are replaced wholesale, not deep-merged.
+  jsonOverrides?: Record<string, unknown> | undefined;
   jsonConfig?: Record<string, unknown> | undefined;
   flags?: Record<string, unknown> | undefined;
 }
@@ -74,6 +77,7 @@ const launchJsonSchema = z.object({
 export function resolveLaunchConfig(sources: LaunchConfigSources): Record<string, unknown> {
   return {
     ...sources.namedConfig,
+    ...sources.jsonOverrides,
     ...sources.jsonConfig,
     ...sources.flags,
   };

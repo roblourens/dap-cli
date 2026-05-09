@@ -120,6 +120,28 @@ dap-cli launch --workspace /path/to/workspace --config "Launch App"
 dap-cli attach --workspace /path/to/workspace --config "Attach Worker"
 ```
 
+When `--config <name>` is used, the launch.json configuration's `request:` field is the source of truth. If it differs from the CLI verb, dap-cli auto-routes to the matching DAP request and emits a `warnings` entry plus a structured `autoRouted` field on the success payload. CLI-flag-only and `--json`-only invocations are unchanged — the auto-route only triggers with `--config`.
+
+```bash
+# Before: silently sent DAP `launch` (wrong); spawned a helper node process.
+# After:  detects request:'attach', routes to DAP `attach`, prints a warning.
+dap-cli launch --workspace /path/to/workspace --config "Attach to Agent Host Process"
+```
+
+### Layering extra fields onto `--config`
+
+Use `--json-overrides <json>` to merge an extra object onto a `--config`-resolved configuration without abandoning `--config`. Use `--resolve-source-maps <pattern...>` to set `resolveSourceMapLocations` directly from the command line (variadic, mirrors `--out-files`). Both flags work on `launch` and `attach`.
+
+```bash
+dap-cli launch --workspace . --config "Attach to Agent Host Process" \
+  --json-overrides '{"sourceMaps":true,"resolveSourceMapLocations":["**","!**/node_modules/**"]}'
+
+dap-cli launch --workspace . --config "Attach to Agent Host Process" \
+  --resolve-source-maps '**' '!**/node_modules/**'
+```
+
+Precedence (highest wins): `flags > --json > --json-overrides > --config (named-config) > adapter defaults`. So `--resolve-source-maps` always wins over `resolveSourceMapLocations` written via `--json-overrides`. The merge is shallow — nested objects (such as `env`) are replaced wholesale, not deep-merged. `--json-overrides` cannot bypass the `--config` auto-route: a malicious `--json-overrides '{"request":"launch"}'` is silently overwritten by the auto-routed `request:` field.
+
 Compounds start every referenced member as a coordinated group. Member session names are derived as `<compound>/<member>`, so DAP requests target the member by that derived name:
 
 ```bash

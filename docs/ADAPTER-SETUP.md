@@ -152,6 +152,79 @@ Then launch by configuration name:
 dap-cli launch --config "Debug App" --name app
 ```
 
+## Auto-routing `launch` vs `attach` by `--config`
+
+When `--config <name>` is used, the launch.json configuration's `request:` field is the source of truth. If it differs from the CLI verb, dap-cli auto-routes to the matching DAP request and emits a structured warning. The verb is a fallback when the config has no `request:` field.
+
+This catches the original failure mode where `dap-cli launch --config "Attach to Agent Host Process"` silently sent a DAP `launch` request to js-debug, which then spawned a bare `node` helper process and reported it as the debuggee — the real attach target was never touched.
+
+| CLI verb | `config.request` | dap-cli action |
+|----------|------------------|----------------|
+| `launch` | `attach`         | Routes to DAP `attach`, emits `autoRouted` warning. |
+| `attach` | `launch`         | Routes to DAP `launch`, emits `autoRouted` warning. |
+| `launch` | `launch`         | Sends DAP `launch`. Silent (no warning). |
+| `attach` | `attach`         | Sends DAP `attach`. Silent (no warning). |
+| either   | (missing)        | Uses the verb. Silent (back-compat). |
+
+When auto-routing fires, the `dap.start` success payload carries:
+
+```json
+{
+  "warnings": ["auto_routed_to: 'Attach to Agent Host Process' has request:'attach'; CLI verb 'launch' was overridden"],
+  "autoRouted": {
+    "code": "auto_routed_to",
+    "from": "launch",
+    "to": "attach",
+    "configName": "Attach to Agent Host Process"
+  }
+}
+```
+
+JSON consumers should read `autoRouted` for machine-readable detection; the `warnings` string is for humans. Compound members continue to honor each member's `request:` field (this auto-route extends the same logic to non-compound `--config` usage).
+
+## Layering extra fields onto `--config`
+
+Real-world launch.json configurations often miss fields you need for a one-off debug session. The vscode repo's `Attach to Agent Host Process` config, for example, sets only `outFiles`; getting js-debug to bind compiled-JS breakpoints reliably also wants `sourceMaps:true` and `resolveSourceMapLocations`. Dropping `--config` and rebuilding the entire payload with `--json` is heavyweight. `--json-overrides <json>` and `--resolve-source-maps <pattern...>` let you layer on top instead.
+
+### Precedence stack
+
+From highest precedence (always wins) to lowest (defaults):
+
+1. **CLI flags** — `--program`, `--cwd`, `--out-files`, `--resolve-source-maps`, `--source-maps`, etc.
+2. **`--json <json>`** — adapter-native config object.
+3. **`--json-overrides <json>`** — extra fields layered on top of the named config.
+4. **`--config <name>` named-config** — the resolved entry from `.vscode/launch.json`.
+5. **Adapter defaults** — `launchDefaults` / `attachDefaults` from `.dap-cli/adapter-config.json`.
+
+The merge is **shallow**. Nested objects (such as `env: { ... }`) are replaced wholesale, not deep-merged. If you need to extend a nested object, supply the full merged value via `--json-overrides`.
+
+### Worked example
+
+The vscode repo's `Attach to Agent Host Process` config (paraphrased):
+
+```jsonc
+{
+  "name": "Attach to Agent Host Process",
+  "type": "node",
+  "request": "attach",
+  "outFiles": ["${workspaceFolder}/out/**/*.js"]
+}
+```
+
+To attach with both `sourceMaps:true` and explicit `resolveSourceMapLocations`:
+
+```bash
+dap-cli launch \
+  --workspace . \
+  --config "Attach to Agent Host Process" \
+  --resolve-source-maps '**' '!**/node_modules/**' \
+  --json-overrides '{"sourceMaps":true}'
+```
+
+Result: dap-cli auto-routes to DAP `attach` (per the named config's `request:'attach'`), then sends a config containing `outFiles` (from `--config`), `sourceMaps:true` (from `--json-overrides`), `resolveSourceMapLocations:['**','!**/node_modules/**']` (from `--resolve-source-maps`, the highest layer), and the locked `request:'attach'`.
+
+`--json-overrides` cannot bypass the auto-route: a malicious `--json-overrides '{"request":"launch"}'` is silently overwritten by the `request:` field at the tail of the config object. The verb routing is decided once from `--config` and is not negotiable through overrides.
+
 ## Advanced Setup: Manual Provisioning
 
 Manual provisioning is a fallback for pinned versions, offline installs, or non-standard adapter locations. It should not be the normal built-in adapter experience.
