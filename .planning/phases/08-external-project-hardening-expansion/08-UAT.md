@@ -78,16 +78,18 @@ status: closed
 reason: Both `ginpei/vscode-debug-web-demo` and `jobscale/zipcode-jp` launched pwa-node configs successfully, but breakpoints set in plain JavaScript source paths stayed unbound. The returned breakpoint payload only said `Unbound breakpoint`, without source-path or timing guidance.
 severity: major
 test: Phase 8 Node pwa-node external attempts
-fix: `src/controller/diagnostics.ts` now adds JavaScript-specific breakpoint timeout diagnostics covering source-path comparison against stopped stack frames and timing guidance for quick-exit/lazy-loaded programs.
-verification: `tests/controller/sessionManager.test.ts` asserts the JS diagnostics are present on verification timeouts.
+fix: `src/controller/diagnostics.ts` now adds JavaScript-specific breakpoint timeout diagnostics covering source-path comparison against stopped stack frames and timing guidance for quick-exit/lazy-loaded programs. Follow-up root-cause fix: breakpoint source paths are normalized to absolute paths, js-debug `setBreakpoints` requests are intercepted even before child sessions exist, pending payloads replay to newly-created children before `configurationDone`, and child breakpoint events now satisfy the parent provisional response.
+verification: `tests/controller/sessionManager.test.ts` asserts the JS diagnostics are present on verification timeouts. `tests/controller/childSessions.test.ts` covers `setBreakpoints` before child registration. `tmp/phase-08-ginpei-rootcause-verified.log` captures the external ginpei pwa-node repro returning verified breakpoints, a stopped event, and a stack frame at `server.js` line 9.
 artifacts:
   - `tmp/phase-08-ginpei-rerun.log`
   - `tmp/phase-08-jobscale.log`
+  - `tmp/phase-08-ginpei-rootcause-verified.log`
 reproduction:
   - `DAP_CLI_HOME=... node dist/index.js launch --workspace tmp/phase-08-external-projects/ginpei__vscode-debug-web-demo --config Server --name phase8-ginpei-server`
   - `DAP_CLI_HOME=... node dist/index.js breakpoints set --name phase8-ginpei-server --source tmp/phase-08-external-projects/ginpei__vscode-debug-web-demo/server.js --line 9 --line 15`
 missing:
   - closed: better breakpoint-binding diagnostics for real JS pwa-node configs, including source-path comparison and pending/timing guidance.
+  - closed: root-cause binding path for early pwa-node breakpoints in `ginpei/vscode-debug-web-demo`.
 
 ## Gap Closure Verification
 
@@ -103,3 +105,46 @@ missing:
 ## Cleanup
 
 All Phase 8 dap-cli homes used `cleanup --purge` and `stop-controller` where a controller started successfully. Scratch clones remain under ignored `tmp/phase-08-external-projects/` for review.
+
+## Round 3 Follow-Up (2026-05-09)
+
+A second external-repo hardening round drove four new scenarios end-to-end and surfaced one new product gap.
+
+### Scenarios
+
+| # | Scenario | Workspace | Config | Result | Log |
+|---|----------|-----------|--------|--------|-----|
+| A | pwa-node, breakpoint set AFTER child registration + curl trigger | `ginpei__vscode-debug-web-demo` | `Server` | pass + product-gap (BUG-08-04) | `tmp/phase-08-scenario-a-ginpei-late-bp.log` |
+| B | pwa-chrome with breakpoint on docs/js/index.js (static `python3 -m http.server 3000` backing the URL) | `jobscale__zipcode-jp` | `Chrome` | pass-with-limitation (bp verified, two child targets listed; Chrome user-gesture trigger out of CLI scope) | `tmp/phase-08-scenario-b-jobscale-chrome.log` |
+| C | debugpy `module:` launch with `args`, `env`, `cwd`, `stopOnEntry`, breakpoint on `greet()` | `tmp/.../scenario-c-pymodule` (built fresh) | `PyModule` | pass | `tmp/phase-08-scenario-c-pymodule.log` |
+| D | pwa-node with `${execPath}`, `${workspaceFolder}`, `${workspaceFolderBasename}`, `${userHome}`, `${env:HOME}`, `${env:USER}`, `envFile`, multi-var concat in `env`; plus a `MissingEnv` config referencing an undefined var | `tmp/.../scenario-d-vars` (built fresh) | `TrickyVars` + `MissingEnv` | pass | `tmp/phase-08-scenario-d-vars.log` |
+
+### GAP-08-04: child-routed scopes/variables/source returned `controller_unavailable` for unknown frameId / variablesReference / sourceReference
+
+truth: For multi-child sessions (js-debug pwa-node / pwa-chrome), passing a stale or unknown frameId/variablesReference/sourceReference must return a structured session-state error pointing the user at `dap-cli stack`/`dap-cli scopes` to discover current ids — never `controller_unavailable: Run dap-cli start`.
+status: closed
+reason: `routeByFrameId`/`routeByVariableReference`/`routeBySourceReference` in `src/controller/childSessions.ts` threw plain `Error` instances. Plain errors travel through the controller IPC envelope without `category`/`exitCode`, so the controller wraps them as `controller_request_failed` and the CLI client collapses anything not matching a known session-error code into `controllerUnavailable(message)` — yielding the misleading "Run dap-cli start" diagnostic. Same shape as previously-fixed GAP-08-02, but for the frame/variables/source routing paths.
+severity: major
+test: Phase 8 round 3 Scenario A (`ginpei/vscode-debug-web-demo` `Server` paused at `server.js:19`).
+fix:
+- `routeByFrameId` now throws `sessionError` with `code: frame_not_found` (or `code: frame_id_required`), category `session`, exitCode 4, and `data.availableFrameIds`.
+- `routeByVariableReference` now throws `sessionError` with `code: variable_reference_not_found`, plus `data.availableVariableReferences` + `data.availableFrameIds`.
+- `routeBySourceReference` now throws `sessionError` with `code: source_reference_not_found` (or `code: source_reference_required`), plus `data.availableSourceReferences`.
+verification:
+- `tests/controller/childSessions.test.ts` adds three focused tests asserting the structured error code, category, and `data` payload for each routing path.
+- External re-run: `tmp/phase-08-scenario-a-fix-verification.log` shows `scopes --frame-id 0` (stale id) returning `code: frame_not_found, category: session, exitCode: 4` with `availableFrameIds: []`, then after `stack --thread-id 0` seeded ids, `scopes --frame-id 999` returns `frame_not_found` with a populated `availableFrameIds` (frames 39…200+); positive control `scopes --frame-id 39` returns a normal scopes response.
+artifacts:
+- `tmp/phase-08-scenario-a-ginpei-late-bp.log` (pre-fix repro)
+- `tmp/phase-08-scenario-a-fix-verification.log` (post-fix verification)
+reproduction:
+- `DAP_CLI_HOME=/tmp/d8a node dist/index.js launch --workspace tmp/phase-08-external-projects/ginpei__vscode-debug-web-demo --config Server --name scenA-ginpei`
+- `node dist/index.js breakpoints set --name scenA-ginpei --source …/server.js --line 19`
+- `curl -s http://localhost:8080/data.json`
+- `node dist/index.js scopes --name scenA-ginpei --frame-id 0`
+- Before fix: `controller_unavailable: Run dap-cli start`. After fix: `frame_not_found` with `data.availableFrameIds`.
+missing: closed.
+
+### Round 3 Non-Gap Limitations
+
+- pwa-chrome breakpoint *hit* verification needs a separate browser driver to trigger a user gesture; dap-cli itself has no in-process way to click on the debugged page. Documented, not treated as a gap.
+- `stoppedThreadIds: []` when the adapter sets `allThreadsStopped: true` is documented behavior in `src/controller/pausedState.ts` (covered by an existing test). For debugpy this means `status` always reports `[]` while paused; the user has to run `threads` separately. Flagged for a future UX pass.

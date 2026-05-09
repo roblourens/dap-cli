@@ -991,16 +991,10 @@ describe('ChildSessionCoordinator', () => {
     await parentClient.close();
   });
 
-  test('initial breakpoints registered on the coordinator are NOT replayed to js-debug children via runChildLifecycle', async () => {
-    // Plan 05-15 — gap #11 closure. Direct DAP trace evidence proved the
-    // js-debug pwa-chrome parent owns the provisional bp registry and
-    // propagates to children internally. registerInitialBreakpoints (used
-    // by the parent's before-configurationDone hook) must NOT replay
-    // setBreakpoints to children during the child handshake — only the
-    // parent gets it via the controller hook. Children may still receive
-    // setBreakpoints later via maybeIntercept fan-out for verification
-    // (see the dedicated parent-routing test); this test asserts only the
-    // bring-up path.
+  test('initial breakpoints registered on the coordinator replay to js-debug children during runChildLifecycle', async () => {
+    // Real pwa-node targets can create their child session after the parent
+    // returns provisional unbound breakpoints. Replay pending payloads during
+    // child bring-up so early source breakpoints bind before configurationDone.
     const manager = await SessionManager.create({ dapCliHome });
     const parent = await manager.create({ name: 'pwa', adapter: 'js-debug' });
     const parentEndpoint = new FakeAdapterEndpoint();
@@ -1029,7 +1023,10 @@ describe('ChildSessionCoordinator', () => {
     await tick(4);
 
     const setBpRequest = childEndpoints[0]?.receivedRequests.find(req => req.command === 'setBreakpoints');
-    expect(setBpRequest, 'child must NOT receive setBreakpoints from runChildLifecycle for js-debug').toBeUndefined();
+    expect(setBpRequest?.arguments, 'child must receive pending setBreakpoints from runChildLifecycle for js-debug').toEqual({
+      source: { path: 'app.js' },
+      breakpoints: [{ line: 7 }],
+    });
 
     await coordinator.dispose();
     await parentClient.close();

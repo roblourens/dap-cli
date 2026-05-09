@@ -446,6 +446,78 @@ describe('ChildSessionCoordinator parent-name thread routing (H-3a)', () => {
     }
   });
 
+  test('setBreakpoints before child registration replays to new child and returns verified breakpoints', async () => {
+    const manager = await SessionManager.create({ dapCliHome });
+    const parent = await manager.create({ name: 'pwa-parent', adapter: 'js-debug' });
+    const parentEndpoint = new FakeAdapterEndpoint('parent');
+    const parentClient = new DapClient(parentEndpoint);
+    const childEndpoint = new FakeAdapterEndpoint('child');
+    parentEndpoint.responders.set('setBreakpoints', () => ({ breakpoints: [{ id: 1, verified: false, message: 'Unbound breakpoint' }] }));
+    childEndpoint.responders.set('setBreakpoints', () => {
+      childEndpoint.emitEvent('breakpoint', { reason: 'changed', breakpoint: { id: 1, verified: true, source: { path: '/repo/server.js' }, line: 9 } });
+      childEndpoint.emitEvent('breakpoint', { reason: 'changed', breakpoint: { id: 2, verified: true, source: { path: '/repo/server.js' }, line: 18 } });
+      return { breakpoints: [] };
+    });
+
+    const coordinator = new ChildSessionCoordinator({
+      parentSessionId: parent.id,
+      parentName: parent.name,
+      parentClient,
+      adapterId: 'js-debug',
+      ownedAdapter: { startedByDapCli: true, stderrTail: [] },
+      sessionManager: manager,
+      parentEventCache: new DapEventCache(),
+      openChildTransport: () => Promise.resolve(childEndpoint),
+      setBreakpointsVerificationTimeoutMs: 50,
+    });
+    coordinator.attach();
+
+    try {
+      const resultPromise = coordinator.maybeIntercept('setBreakpoints', { source: { path: '/repo/server.js' }, breakpoints: [{ line: 9 }], lines: [9] });
+      parentEndpoint.emitReverseRequest('startDebugging', {
+        request: 'launch',
+        configuration: { __pendingTargetId: 'target-1', type: 'pwa-node' },
+      });
+
+      const result = (await resultPromise)?.value as { breakpoints: Array<{ verified: boolean; line?: number; id?: number }>; warnings?: unknown[] };
+      expect(result.breakpoints).toEqual([{ id: 1, verified: true, line: 9, source: { path: '/repo/server.js' } }]);
+      expect(result.warnings).toBeUndefined();
+      const childSetBreakpoints = childEndpoint.receivedRequests.filter(request => request.command === 'setBreakpoints');
+      expect(childSetBreakpoints.length).toBeGreaterThanOrEqual(1);
+      expect(childSetBreakpoints[0]?.arguments).toMatchObject({ source: { path: '/repo/server.js' }, lines: [9] });
+    } finally {
+      await coordinator.dispose();
+      await parentClient.close();
+    }
+  });
+
+  test('setBreakpoints with no children falls back to parent for non-js-debug adapters', async () => {
+    const manager = await SessionManager.create({ dapCliHome });
+    const parent = await manager.create({ name: 'socket-parent', adapter: 'socket-adapter' });
+    const parentEndpoint = new FakeAdapterEndpoint('parent');
+    const parentClient = new DapClient(parentEndpoint);
+    const coordinator = new ChildSessionCoordinator({
+      parentSessionId: parent.id,
+      parentName: parent.name,
+      parentClient,
+      adapterId: 'socket-adapter',
+      ownedAdapter: { startedByDapCli: true, stderrTail: [] },
+      sessionManager: manager,
+      parentEventCache: new DapEventCache(),
+      openChildTransport: () => Promise.reject(new Error('unexpected child transport')),
+    });
+    coordinator.attach();
+
+    try {
+      const result = await coordinator.maybeIntercept('setBreakpoints', { source: { path: '/repo/server.js' }, breakpoints: [{ line: 9 }], lines: [9] });
+      expect(result).toBeUndefined();
+      expect(parentEndpoint.receivedRequests.find(request => request.command === 'setBreakpoints')).toBeUndefined();
+    } finally {
+      await coordinator.dispose();
+      await parentClient.close();
+    }
+  });
+
   test('child scopes and variables not-paused failures map to thread_not_paused', async () => {
     const harness = await createMultiChildHarness([
       [{ id: 7, name: 'main' }],
@@ -580,6 +652,96 @@ describe('ChildSessionCoordinator parent-name thread routing (H-3a)', () => {
     }
   });
 
+  // Phase 8 round 3: structured errors for child-routed scopes/variables/source
+  // when frameId / variablesReference / sourceReference cannot be resolved.
+  // Replaces the previous plain-Error path that surfaced as
+  // `controller_unavailable: Run dap-cli start` on the CLI.
+  test('routeByFrameId throws frame_not_found with availableFrameIds when no child claims the id', async () => {
+    const harness = await createMultiChildHarness([
+      [{ id: 1, name: 'main' }],
+    ]);
+    try {
+      await harness.coordinator.maybeIntercept('threads', {});
+      const child = harness.childEndpoints[0]!;
+      child.responders.set('stackTrace', () => ({ stackFrames: [{ id: 11, name: 'fn', line: 1, column: 1 }] }));
+      await harness.coordinator.maybeIntercept('stackTrace', { threadId: 1 });
+
+      let captured: unknown;
+      try {
+        await harness.coordinator.maybeIntercept('scopes', { frameId: 999 });
+      } catch (error) {
+        captured = error;
+      }
+      expect(captured).toBeInstanceOf(CliError);
+      const cliError = captured as CliError;
+      expect(cliError.code).toBe('frame_not_found');
+      expect(cliError.category).toBe('session');
+      const data = cliError.data as { requestedFrameId: number; availableFrameIds: Array<{ frameId: number }> };
+      expect(data.requestedFrameId).toBe(999);
+      expect(data.availableFrameIds.map(a => a.frameId)).toEqual([11]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('routeByVariableReference throws variable_reference_not_found with availableVariableReferences', async () => {
+    const harness = await createMultiChildHarness([
+      [{ id: 1, name: 'main' }],
+    ]);
+    try {
+      await harness.coordinator.maybeIntercept('threads', {});
+      const child = harness.childEndpoints[0]!;
+      child.responders.set('stackTrace', () => ({ stackFrames: [{ id: 11, name: 'fn', line: 1, column: 1 }] }));
+      child.responders.set('scopes', () => ({ scopes: [{ name: 'Locals', variablesReference: 50, expensive: false }] }));
+      await harness.coordinator.maybeIntercept('stackTrace', { threadId: 1 });
+      await harness.coordinator.maybeIntercept('scopes', { frameId: 11 });
+
+      let captured: unknown;
+      try {
+        await harness.coordinator.maybeIntercept('variables', { variablesReference: 9999 });
+      } catch (error) {
+        captured = error;
+      }
+      expect(captured).toBeInstanceOf(CliError);
+      const cliError = captured as CliError;
+      expect(cliError.code).toBe('variable_reference_not_found');
+      expect(cliError.category).toBe('session');
+      const data = cliError.data as { requestedVariablesReference?: number; availableVariableReferences: Array<{ variablesReference: number }> };
+      expect(data.requestedVariablesReference).toBe(9999);
+      expect(data.availableVariableReferences.map(a => a.variablesReference)).toEqual([50]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('routeBySourceReference throws source_reference_not_found with availableSourceReferences', async () => {
+    const harness = await createMultiChildHarness([
+      [{ id: 1, name: 'main' }],
+    ]);
+    try {
+      await harness.coordinator.maybeIntercept('threads', {});
+      const child = harness.childEndpoints[0]!;
+      child.responders.set('stackTrace', () => ({ stackFrames: [{ id: 11, name: 'fn', line: 1, column: 1, source: { name: 'eval', sourceReference: 42 } }] }));
+      await harness.coordinator.maybeIntercept('stackTrace', { threadId: 1 });
+
+      let captured: unknown;
+      try {
+        await harness.coordinator.maybeIntercept('source', { source: { sourceReference: 9999 } });
+      } catch (error) {
+        captured = error;
+      }
+      expect(captured).toBeInstanceOf(CliError);
+      const cliError = captured as CliError;
+      expect(cliError.code).toBe('source_reference_not_found');
+      expect(cliError.category).toBe('session');
+      const data = cliError.data as { requestedSourceReference: number; availableSourceReferences: Array<{ sourceReference: number }> };
+      expect(data.requestedSourceReference).toBe(9999);
+      expect(data.availableSourceReferences.map(a => a.sourceReference)).toEqual([42]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   test('thread exited event removes the id from knownThreadIds', async () => {
     const harness = await createMultiChildHarness([[]]);
     try {
@@ -605,6 +767,59 @@ describe('ChildSessionCoordinator parent-name thread routing (H-3a)', () => {
         secondCaptured = error;
       }
       expect((secondCaptured as CliError).data).toMatchObject({ availableThreads: [] });
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  // Phase 8 round 4 (GAP-08-04-A): when a child adapter rejects a routed DAP
+  // request (e.g. evaluate / setExpression / variables on a frame the adapter
+  // claims it can't satisfy), the raw DAP error must propagate out of
+  // `maybeIntercept` so that ControllerServer.routeDapRequest can wrap it via
+  // toDapCliError into a structured `dap_request_failed` envelope. Previously
+  // the wrap was missing on the intercept path and the CLI saw
+  // `controller_unavailable: <DAP error message>` (same misleading shape as
+  // GAP-08-04 but for the adapter-rejected case rather than the lookup-failed
+  // case). The server-side wrap is exercised by the existing `failed-step-out`
+  // integration test (errorContracts.test.ts); this test pins the contract
+  // that `maybeIntercept` re-throws the error so the wrap can categorize it.
+  test('child-rejected DAP requests re-throw raw error so server can wrap as dap_request_failed (GAP-08-04 round 4)', async () => {
+    const harness = await createMultiChildHarness([
+      [{ id: 1, name: 'main' }],
+    ]);
+    try {
+      await harness.coordinator.maybeIntercept('threads', {});
+      const child = harness.childEndpoints[0]!;
+      child.responders.set('stackTrace', () => ({ stackFrames: [{ id: 11, name: 'fn', line: 1, column: 1 }] }));
+      child.responders.set('scopes', () => ({ scopes: [{ name: 'Locals', variablesReference: 50, expensive: false }] }));
+      // Adapter rejects the actual evaluate request with success:false (e.g.
+      // user-code threw, ReferenceError on undefined symbol, etc.).
+      child.failures.set('evaluate', 'simulated adapter evaluate failure');
+      await harness.coordinator.maybeIntercept('stackTrace', { threadId: 1 });
+      await harness.coordinator.maybeIntercept('scopes', { frameId: 11 });
+
+      let captured: unknown;
+      try {
+        await harness.coordinator.maybeIntercept('evaluate', {
+          frameId: 11,
+          expression: 'thisIsCertainlyUndefined',
+          context: 'repl',
+        });
+      } catch (error) {
+        captured = error;
+      }
+
+      // The intercept layer rethrows raw — it is NOT a CliError.
+      // (If it were a CliError, the server wrap would short-circuit and use
+      // it as-is; either way `controller_unavailable` is wrong.)
+      expect(captured).toBeInstanceOf(Error);
+      expect(captured).not.toBeInstanceOf(CliError);
+      // Whatever the message text, it must NOT be the misleading
+      // `controller_unavailable` shape — the wrap-or-pass-through MUST
+      // surface adapter context, not a "controller is down" hint.
+      const message = (captured as Error).message;
+      expect(message.toLowerCase()).not.toContain('controller is not available');
+      expect(message.toLowerCase()).not.toContain('run `dap-cli start`');
     } finally {
       await harness.cleanup();
     }

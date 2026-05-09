@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { Command } from 'commander';
 import type { OutputWriter } from '../outputWriter.js';
 import { getDapGeneratedCommand } from '../../generated/dapCommandRegistry.js';
@@ -60,7 +61,7 @@ export function registerDapAliasCommands(program: Command, output: OutputWriter)
     .action(async (options: BreakpointsSetOptions) => {
       const lines = parseIntegerValues(options.line, 'line');
       await sendAliasRequest(output, 'setBreakpoints', {
-        source: { path: options.source },
+        source: { path: path.resolve(options.source) },
         breakpoints: lines.map(line => compactObject({
           line,
           condition: options.condition,

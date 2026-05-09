@@ -53,7 +53,6 @@ interface ChildRuntime {
   variableReferences: Set<number>;
   /** sourceReferences that came from this child. */
   sourceReferences: Set<number>;
-  pendingSetBreakpoints: unknown[];
   /** Resolves once the child adapter emits `initialized`. */
   initializedPromise: Promise<void>;
   initializedSeen: boolean;
@@ -102,6 +101,8 @@ const ROUTABLE_COMMANDS = new Set([
 
 export class ChildSessionCoordinator {
   private readonly children = new Map<SessionId, ChildRuntime>();
+  private readonly pendingSetBreakpoints: unknown[] = [];
+  private readonly breakpointEventSinks = new Set<(event: DapEventMessage) => void>();
   private childCounter = 0;
   private readonly detachHandlers = new Set<() => void>();
   private readonly bringUps: Promise<unknown>[] = [];
@@ -190,12 +191,8 @@ export class ChildSessionCoordinator {
    * Returns `undefined` for non-routable commands or when there are no children.
    */
   public async maybeIntercept(command: string, args: unknown): Promise<InterceptedRequest | undefined> {
-    if (this.children.size === 0 || !ROUTABLE_COMMANDS.has(command)) {
+    if (!ROUTABLE_COMMANDS.has(command)) {
       return undefined;
-    }
-
-    if (command === 'threads') {
-      return { value: await this.aggregateThreads() };
     }
 
     if (command === 'setBreakpoints') {
@@ -207,7 +204,18 @@ export class ChildSessionCoordinator {
       if (this.options.adapterId === 'js-debug') {
         return { value: await this.routeSetBreakpointsThroughParent(args) };
       }
+      if (this.children.size === 0) {
+        return undefined;
+      }
       return { value: await this.fanOutSetBreakpoints(args) };
+    }
+
+    if (this.children.size === 0) {
+      return undefined;
+    }
+
+    if (command === 'threads') {
+      return { value: await this.aggregateThreads() };
     }
 
     if (command === 'stackTrace') {
@@ -248,16 +256,31 @@ export class ChildSessionCoordinator {
   }
 
   /**
-   * Historically replayed initial setBreakpoints to every child as it came
-   * up. That model is wrong for js-debug pwa-chrome — the parent owns the
-   * provisional bp registry and propagates to children internally; sending
-   * setBreakpoints to a child returns `{breakpoints: []}`. The parent's
-   * before-configurationDone hook in `controller/server.ts` already issues
-   * `setBreakpoints` to the parent client, which is sufficient. This method
-   * is kept as a no-op so existing callers compile. See 05-15-PLAN.md.
+   * Remember initial setBreakpoints payloads that were issued before js-debug
+   * created child sessions. The parent response is only provisional for real
+   * pwa-node targets; child replay is what lets early source breakpoints bind
+   * once the concrete target appears.
    */
-  public registerInitialBreakpoints(_payloads: readonly unknown[]): void {
-    // intentional no-op — see method docs.
+  public registerInitialBreakpoints(payloads: readonly unknown[]): void {
+    for (const payload of payloads) {
+      this.rememberPendingSetBreakpoints(payload);
+    }
+  }
+
+  private rememberPendingSetBreakpoints(args: unknown): void {
+    const key = breakpointPayloadSourceKey(args);
+    if (key === undefined) {
+      this.pendingSetBreakpoints.push(args);
+      return;
+    }
+
+    const existingIndex = this.pendingSetBreakpoints.findIndex(payload => breakpointPayloadSourceKey(payload) === key);
+    if (existingIndex === -1) {
+      this.pendingSetBreakpoints.push(args);
+      return;
+    }
+
+    this.pendingSetBreakpoints[existingIndex] = args;
   }
 
   private async handleStartDebugging(args: unknown): Promise<ReverseRequestResult> {
@@ -328,7 +351,6 @@ export class ChildSessionCoordinator {
       frameIds: new Set(),
       variableReferences: new Set(),
       sourceReferences: new Set(),
-      pendingSetBreakpoints: [],
       initializedPromise,
       initializedSeen: false,
       readyPromise,
@@ -424,10 +446,9 @@ export class ChildSessionCoordinator {
       requestPromise.catch(() => undefined);
       // Wait for the child's `initialized` event before configurationDone.
       await runtime.initializedPromise;
-      // Initial breakpoints land on the parent (which owns pwa-chrome's
-      // provisional bp registry); js-debug propagates them to children
-      // internally. We do NOT replay setBreakpoints to children — doing so
-      // returns `{breakpoints: []}` from the wrong session. See 05-15-PLAN.md.
+      for (const breakpointArgs of this.pendingSetBreakpoints) {
+        await client.request('setBreakpoints', breakpointArgs);
+      }
       await client.request('configurationDone');
       await requestPromise;
       await this.options.sessionManager.updateLifecycle(childId, 'running').catch(() => undefined);
@@ -467,6 +488,11 @@ export class ChildSessionCoordinator {
       body: { ...((event as { body?: Record<string, unknown> }).body ?? {}), child_session_id: childId },
     };
     this.options.parentEventCache.append(this.options.parentSessionId, annotated);
+    if (event.event === 'breakpoint') {
+      for (const sink of this.breakpointEventSinks) {
+        sink(annotated);
+      }
+    }
   }
 
   private async aggregateThreads(): Promise<{ threads: Array<{ id: number; name: string; sessionName: string }> }> {
@@ -654,8 +680,19 @@ export class ChildSessionCoordinator {
       }
     });
 
+    const childBreakpointSink = (event: DapEventMessage): void => {
+      const body = (event as { body?: { breakpoint?: unknown } }).body;
+      const bp = body?.breakpoint;
+      if (isRecord(bp)) {
+        recordVerifiedEvent(bp);
+        notifyWaiters();
+      }
+    };
+    this.breakpointEventSinks.add(childBreakpointSink);
+
     let timer: NodeJS.Timeout | undefined;
     try {
+      this.rememberPendingSetBreakpoints(args);
       // Issue parent setBreakpoints to update its provisional bp registry.
       // Per direct DAP trace evidence, the parent must be told even though
       // its response is provisional — it owns propagation to current and
@@ -669,9 +706,10 @@ export class ChildSessionCoordinator {
       // This is a deviation from plan 05-15 (which assumed children always
       // return `[]`); in practice the page child returns the real array.
       // Per-child failures surface as warnings.
+      await this.awaitPendingChildren();
       let childResults: ChildResult[] = [];
       if (this.children.size > 0) {
-        await this.awaitChildrenReady();
+        await Promise.allSettled([...this.children.values()].map(child => child.readyPromise));
         childResults = await Promise.all(
           [...this.children.values()].map(async (child): Promise<ChildResult> => {
             try {
@@ -780,6 +818,7 @@ export class ChildSessionCoordinator {
         clearTimeout(timer);
       }
       detach();
+      this.breakpointEventSinks.delete(childBreakpointSink);
     }
   }
 
@@ -834,11 +873,29 @@ export class ChildSessionCoordinator {
   private async routeByFrameId(command: string, args: unknown): Promise<unknown> {
     const frameId = isRecord(args) && typeof args.frameId === 'number' ? args.frameId : undefined;
     if (frameId === undefined) {
-      throw new Error(`${command} requires frameId.`);
+      // Phase 8 round 3: structured error so the CLI does not surface
+      // `controller_unavailable: Run dap-cli start` for a missing frameId.
+      throw sessionError(`'${command}' requires frameId.`, {
+        code: 'frame_id_required',
+        diagnostics: [
+          `'${command}' requires --frame-id when the named session has children.`,
+          'Run `dap-cli stack --name <parent> --thread-id <id>` to list available frame ids.',
+        ],
+        data: { availableFrameIds: this.listAvailableFrameIds() },
+      });
     }
     const child = this.findChildByFrameId(frameId);
     if (child === undefined) {
-      throw new Error(`No child session owns frame ${frameId}.`);
+      // Phase 8 round 3: same — surface a session-state error, not a
+      // bogus controller-unavailable hint.
+      throw sessionError(`No child session owns frame ${frameId}.`, {
+        code: 'frame_not_found',
+        diagnostics: [
+          `Frame ${frameId} is not known to any child of this parent session.`,
+          'Run `dap-cli stack --name <parent> --thread-id <id>` to list current frame ids; frame ids change after each stop.',
+        ],
+        data: { requestedFrameId: frameId, availableFrameIds: this.listAvailableFrameIds() },
+      });
     }
     let response: unknown;
     try {
@@ -886,7 +943,22 @@ export class ChildSessionCoordinator {
       }
     }
     if (child === undefined) {
-      throw new Error(`No child session owns ${command} target.`);
+      // Phase 8 round 3: structured error so the CLI does not surface
+      // `controller_unavailable: Run dap-cli start` for an unknown
+      // variablesReference / frameId.
+      throw sessionError(`No child session owns ${command} target.`, {
+        code: 'variable_reference_not_found',
+        diagnostics: [
+          `'${command}' requires --variables-reference (or --frame-id) pointing at a value owned by a paused child of this parent session.`,
+          'Run `dap-cli scopes --name <parent> --frame-id <id>` to list current variablesReferences; references change after each stop.',
+        ],
+        data: {
+          ...(isRecord(args) && typeof args.variablesReference === 'number' ? { requestedVariablesReference: args.variablesReference } : {}),
+          ...(isRecord(args) && typeof args.frameId === 'number' ? { requestedFrameId: args.frameId } : {}),
+          availableFrameIds: this.listAvailableFrameIds(),
+          availableVariableReferences: this.listAvailableVariableReferences(),
+        },
+      });
     }
     let response: unknown;
     try {
@@ -917,11 +989,24 @@ export class ChildSessionCoordinator {
       ? args.source.sourceReference
       : undefined;
     if (reference === undefined) {
-      throw new Error('source requires source.sourceReference.');
+      throw sessionError(`'${command}' requires source.sourceReference.`, {
+        code: 'source_reference_required',
+        diagnostics: [
+          `'${command}' requires a source.sourceReference pointing at a virtual source owned by a child of this parent session.`,
+        ],
+        data: { availableSourceReferences: this.listAvailableSourceReferences() },
+      });
     }
     const child = this.findChildBySourceReference(reference);
     if (child === undefined) {
-      throw new Error(`No child session owns source reference ${reference}.`);
+      throw sessionError(`No child session owns source reference ${reference}.`, {
+        code: 'source_reference_not_found',
+        diagnostics: [
+          `Source reference ${reference} is not known to any child of this parent session.`,
+          'Run `dap-cli stack --name <parent> --thread-id <id>` to discover current sourceReferences; references change after each stop.',
+        ],
+        data: { requestedSourceReference: reference, availableSourceReferences: this.listAvailableSourceReferences() },
+      });
     }
     return child.client.request<unknown>(command, args);
   }
@@ -1018,6 +1103,36 @@ export class ChildSessionCoordinator {
     }
     return undefined;
   }
+
+  private listAvailableFrameIds(): Array<{ sessionName: string; sessionId: SessionId; frameId: number }> {
+    const result: Array<{ sessionName: string; sessionId: SessionId; frameId: number }> = [];
+    for (const child of this.children.values()) {
+      for (const frameId of child.frameIds) {
+        result.push({ sessionName: child.sessionName, sessionId: child.sessionId, frameId });
+      }
+    }
+    return result;
+  }
+
+  private listAvailableVariableReferences(): Array<{ sessionName: string; sessionId: SessionId; variablesReference: number }> {
+    const result: Array<{ sessionName: string; sessionId: SessionId; variablesReference: number }> = [];
+    for (const child of this.children.values()) {
+      for (const reference of child.variableReferences) {
+        result.push({ sessionName: child.sessionName, sessionId: child.sessionId, variablesReference: reference });
+      }
+    }
+    return result;
+  }
+
+  private listAvailableSourceReferences(): Array<{ sessionName: string; sessionId: SessionId; sourceReference: number }> {
+    const result: Array<{ sessionName: string; sessionId: SessionId; sourceReference: number }> = [];
+    for (const child of this.children.values()) {
+      for (const reference of child.sourceReferences) {
+        result.push({ sessionName: child.sessionName, sessionId: child.sessionId, sourceReference: reference });
+      }
+    }
+    return result;
+  }
 }
 
 function defaultCreateChildClient(transport: DapTransport): DapClient {
@@ -1037,6 +1152,23 @@ function createInitializeArgs(adapterId: string): Record<string, unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function breakpointPayloadSourceKey(payload: unknown): string | undefined {
+  if (!isRecord(payload) || !isRecord(payload.source)) {
+    return undefined;
+  }
+  const source = payload.source;
+  if (typeof source.path === 'string') {
+    return `path:${source.path}`;
+  }
+  if (typeof source.sourceReference === 'number') {
+    return `sourceReference:${source.sourceReference}`;
+  }
+  if (typeof source.name === 'string') {
+    return `name:${source.name}`;
+  }
+  return undefined;
 }
 
 /**

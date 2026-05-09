@@ -553,15 +553,7 @@ export class ControllerServer {
     const runtime = this.resolveRuntime(requestParams.name);
     this.assertSupportedDapRequest(runtime, requestParams.command);
     this.assertThreadPausedIfRequired(runtime, requestParams.command);
-    if (runtime.children !== undefined) {
-      const intercepted = await runtime.children.maybeIntercept(requestParams.command, requestParams.args);
-      if (intercepted !== undefined) {
-        return intercepted.value;
-      }
-    }
-    try {
-      return await runtime.client.request(requestParams.command, requestParams.args);
-    } catch (error) {
+    const wrapDapError = (error: unknown): never => {
       let staleStatus: string | undefined;
       try {
         staleStatus = this.requireSessionManager().status(requestParams.name).status;
@@ -574,6 +566,22 @@ export class ControllerServer {
         request: runtime.client.lastRequest ?? { command: requestParams.command },
         staleSession: { sessionRef: runtime.sessionId, ...(staleStatus !== undefined ? { status: staleStatus } : {}) },
       });
+    };
+    if (runtime.children !== undefined) {
+      let intercepted;
+      try {
+        intercepted = await runtime.children.maybeIntercept(requestParams.command, requestParams.args);
+      } catch (error) {
+        wrapDapError(error);
+      }
+      if (intercepted !== undefined) {
+        return intercepted.value;
+      }
+    }
+    try {
+      return await runtime.client.request(requestParams.command, requestParams.args);
+    } catch (error) {
+      wrapDapError(error);
     }
   }
 

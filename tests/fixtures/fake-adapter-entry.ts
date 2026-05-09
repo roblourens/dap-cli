@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import path from 'node:path';
+
 const scriptIndex = process.argv.indexOf('--script');
 const scriptName = scriptIndex === -1 ? 'stopped-on-entry' : process.argv[scriptIndex + 1] ?? 'stopped-on-entry';
 
@@ -310,7 +312,7 @@ function createConditionalBreakpointsScript(): FakeStep[] {
 		{
 			command: 'setBreakpoints',
 			expectedArguments: {
-				source: { path: 'app.js' },
+				source: { path: path.resolve('app.js') },
 				lines: [5, 9],
 				breakpoints: [
 					{ line: 5, condition: 'left > 3', hitCondition: '2', logMessage: 'left={left}' },
