@@ -6,7 +6,7 @@ import { DapClient, type ReverseRequestResult } from '../protocol/dapClient.js';
 import { sessionError } from '../cli/errors.js';
 import type { OwnedAdapterMetadata, SessionId } from '../sessions/session.js';
 import type { SessionManager } from '../sessions/sessionManager.js';
-import { derivePausedStateFromStopped } from './pausedState.js';
+import { combineChildPausedStates } from './pausedState.js';
 
 export type OpenChildTransport = (name: string) => Promise<DapTransport>;
 export type CreateChildClient = (transport: DapTransport) => DapClient;
@@ -47,6 +47,22 @@ interface ChildRuntime {
   knownThreadIds: Set<number>;
   /** Most recently observed `name` per thread id (filled from `threads` responses). */
   threadNames: Map<number, string>;
+  /**
+   * Per-child paused-thread set. Populated from this child's own `stopped`
+   * (additive) and `continued` (removes) events. Combined across all
+   * non-{@link lifecycleEnded} children by
+   * {@link ChildSessionCoordinator.recomputeParentPausedState} into the
+   * parent SessionRecord's paused state — replaces the pre-Phase-18
+   * "last child event wins" mirror that let a sibling's `terminated`
+   * clobber a real `stopped` (S-02 root cause).
+   */
+  stoppedThreadIds: Set<number>;
+  /** True after `stopped { allThreadsStopped: true }`; cleared on a matching all-threads continue, threadless continued, or terminated. */
+  allThreadsStopped: boolean;
+  /** True after `terminated` or `exited` — child's threads are excluded from paused-state union and routing. */
+  lifecycleEnded: boolean;
+  /** Most recently observed `stopped.reason` for this child (used to pick the parent-level `stoppedReason`). */
+  lastStoppedReason: string | undefined;
   /** frameIds that came from this child (so stack/scopes/variables route back here). */
   frameIds: Set<number>;
   /** variablesReferences that came from this child. */
@@ -348,6 +364,10 @@ export class ChildSessionCoordinator {
       client,
       knownThreadIds: new Set(),
       threadNames: new Map(),
+      stoppedThreadIds: new Set(),
+      allThreadsStopped: false,
+      lifecycleEnded: false,
+      lastStoppedReason: undefined,
       frameIds: new Set(),
       variableReferences: new Set(),
       sourceReferences: new Set(),
@@ -393,23 +413,64 @@ export class ChildSessionCoordinator {
         }
       }
     });
-    // Plan 05-25 (H-1a/H-1b): mirror child paused-state onto the PARENT
-    // record. In js-debug pwa-node/pwa-chrome, `stopped`/`continued`/
-    // `terminated` events arrive on the child runtime, but the user's only
-    // visible handle is the parent name (children are hidden by default per
-    // plan 05-19). Without this mirror, `dap-cli status --name <parent>`
-    // never observes paused-state. Fire-and-forget: a torn-down parent
-    // surfaces as a swallowed `session_not_found` rather than crashing the
-    // child event loop.
+    // Plan 05-25 (H-1a/H-1b) + Phase 18: mirror child paused-state onto the
+    // PARENT record. The pre-Phase-18 implementation called
+    // `updatePausedState` directly per child event, which let a sibling's
+    // `terminated` clobber a real `stopped` from another child (the S-02
+    // root cause: bootloader child terminates after the ext-host child
+    // stops, parent flips back to paused=false). Phase 18 keeps per-child
+    // bookkeeping on the {@link ChildRuntime} and lets
+    // {@link recomputeParentPausedState} compose the union across
+    // non-terminated children. A torn-down parent surfaces inside the
+    // recompute as a swallowed `session_not_found` rather than crashing
+    // the child event loop.
     client.onEvent(event => {
       if (event.event === 'stopped') {
-        void this.options.sessionManager
-          .updatePausedState(this.options.parentSessionId, derivePausedStateFromStopped(event.body))
-          .catch(() => undefined);
-      } else if (event.event === 'continued' || event.event === 'terminated') {
-        void this.options.sessionManager
-          .updatePausedState(this.options.parentSessionId, { paused: false })
-          .catch(() => undefined);
+        const body = (event as { body?: { reason?: unknown; threadId?: unknown; allThreadsStopped?: unknown } }).body;
+        // A child resurrecting after `terminated` (re-emitting `stopped`)
+        // is a state-correctness path, not a security boundary — just
+        // clear the lifecycle flag so the recompute counts it again.
+        if (runtime.lifecycleEnded) {
+          runtime.lifecycleEnded = false;
+        }
+        if (body?.allThreadsStopped === true) {
+          runtime.allThreadsStopped = true;
+          for (const id of runtime.knownThreadIds) {
+            runtime.stoppedThreadIds.add(id);
+          }
+        } else if (typeof body?.threadId === 'number') {
+          runtime.stoppedThreadIds.add(body.threadId);
+        }
+        if (typeof body?.reason === 'string') {
+          runtime.lastStoppedReason = body.reason;
+        }
+        this.recomputeParentPausedState();
+      } else if (event.event === 'continued') {
+        const body = (event as { body?: { threadId?: unknown; allThreadsContinued?: unknown } }).body;
+        if (body?.allThreadsContinued === true || typeof body?.threadId !== 'number') {
+          runtime.stoppedThreadIds.clear();
+          runtime.allThreadsStopped = false;
+        } else {
+          runtime.stoppedThreadIds.delete(body.threadId);
+          // Single-thread continue does NOT clear `allThreadsStopped`;
+          // other threads in the child may still be paused.
+        }
+        this.recomputeParentPausedState();
+      } else if (event.event === 'terminated' || event.event === 'exited') {
+        runtime.lifecycleEnded = true;
+        runtime.stoppedThreadIds.clear();
+        runtime.allThreadsStopped = false;
+        this.recomputeParentPausedState();
+      } else if (event.event === 'thread') {
+        // The separate `thread` handler above maintains `knownThreadIds`;
+        // here we only need to drop a thread from the per-child paused
+        // set when it exits (so `recomputeParentPausedState` no longer
+        // counts it).
+        const body = (event as { body?: { reason?: unknown; threadId?: unknown } }).body;
+        if (body?.reason === 'exited' && typeof body.threadId === 'number') {
+          runtime.stoppedThreadIds.delete(body.threadId);
+          this.recomputeParentPausedState();
+        }
       }
     });
 
@@ -495,9 +556,34 @@ export class ChildSessionCoordinator {
     }
   }
 
+  /**
+   * Compose the parent SessionRecord's paused-state from the union of
+   * non-terminated children. Called from the per-child `stopped` /
+   * `continued` / `thread` (exited) / `terminated` / `exited` handlers
+   * installed in {@link handleStartDebugging}. Fire-and-forget on the
+   * SessionManager write — a torn-down parent surfaces as a swallowed
+   * `session_not_found`.
+   */
+  private recomputeParentPausedState(): void {
+    const snapshots = [...this.children.values()].map(child => ({
+      stoppedThreadIds: child.stoppedThreadIds as ReadonlySet<number>,
+      allThreadsStopped: child.allThreadsStopped,
+      knownThreadIds: child.knownThreadIds as ReadonlySet<number>,
+      lifecycleEnded: child.lifecycleEnded,
+      lastStoppedReason: child.lastStoppedReason,
+    }));
+    const next = combineChildPausedStates(snapshots);
+    void this.options.sessionManager
+      .updatePausedState(this.options.parentSessionId, next)
+      .catch(() => undefined);
+  }
+
   private async aggregateThreads(): Promise<{ threads: Array<{ id: number; name: string; sessionName: string }> }> {
     const result: Array<{ id: number; name: string; sessionName: string }> = [];
     for (const child of this.children.values()) {
+      if (child.lifecycleEnded) {
+        continue;
+      }
       let response: { threads?: Array<{ id: number; name: string }> } | undefined;
       try {
         response = await child.client.request<{ threads?: Array<{ id: number; name: string }> }>('threads');
@@ -1012,29 +1098,53 @@ export class ChildSessionCoordinator {
   }
 
   /**
-   * Find the child whose REAL thread id list contains `threadId`. Two-stage
-   * lookup so the fast path is O(children) cache hits and the cold path
-   * (worker spawned mid-session, before any `threads` request observed it)
-   * still resolves via a parallel live `threads` fan-out. Iterates
-   * `this.children` LIVE so a worker registered between command parse and
-   * lookup is observed.
+   * Find the child whose REAL thread id list contains `threadId`. Three-pass
+   * lookup, all passes restricted to non-{@link ChildRuntime.lifecycleEnded}
+   * children:
    *
-   * Deterministic: returns the FIRST child whose cache claims the id
-   * (Map iteration order = insertion order). When two children legitimately
-   * own the same id, the user can disambiguate via the `sessionName`
-   * surfaced by {@link aggregateThreads}.
+   *   1. Prefer a child that is actually stopped on this thread
+   *      (`stoppedThreadIds.has(threadId)` OR `allThreadsStopped &&
+   *      knownThreadIds.has(threadId)`). This is the Phase 18 fix for the
+   *      pre-existing "first cache hit wins" routing that sent
+   *      thread-bearing commands to a dead bootloader child whose cache
+   *      still claimed the id (S-02 routing failure).
+   *   2. Fall back to any non-terminated child that knows the thread.
+   *   3. Cold path — live `threads` fan-out across non-terminated
+   *      children, then re-run passes 1–2 against the refreshed cache.
+   *
+   * Iterates `this.children` LIVE so a worker registered between command
+   * parse and lookup is observed. When two paused children legitimately own
+   * the same id, Map iteration order (= insertion order) breaks the tie
+   * and the user can disambiguate via the `sessionName` surfaced by
+   * {@link aggregateThreads}.
    */
   private async findChildOwningThread(threadId: number): Promise<ChildRuntime | undefined> {
+    // Pass 1: prefer the child actually stopped on this thread.
     for (const child of this.children.values()) {
+      if (child.lifecycleEnded) {
+        continue;
+      }
+      if (child.stoppedThreadIds.has(threadId)) {
+        return child;
+      }
+      if (child.allThreadsStopped && child.knownThreadIds.has(threadId)) {
+        return child;
+      }
+    }
+    // Pass 2: any non-terminated child that knows the thread.
+    for (const child of this.children.values()) {
+      if (child.lifecycleEnded) {
+        continue;
+      }
       if (child.knownThreadIds.has(threadId)) {
         return child;
       }
     }
-    // Cold path: cache miss. Fan out live `threads` requests to refresh
-    // every child cache, then re-check. Bounded by live child count (1 for
-    // pwa-node, 1–3 for pwa-chrome) and the per-request timeout configured
-    // on each child's DapClient (30s, see defaultCreateChildClient).
-    const refreshes = [...this.children.values()].map(async child => {
+    // Pass 3: cold path — live `threads` fan-out, only against
+    // non-terminated children. Bounded by live child count and the
+    // per-request timeout configured on each child's DapClient.
+    const live = [...this.children.values()].filter(child => !child.lifecycleEnded);
+    const refreshes = live.map(async child => {
       try {
         const response = await child.client.request<{ threads?: Array<{ id: number; name: string }> }>('threads');
         for (const thread of response?.threads ?? []) {
@@ -1048,7 +1158,15 @@ export class ChildSessionCoordinator {
       }
     });
     await Promise.allSettled(refreshes);
-    for (const child of this.children.values()) {
+    for (const child of live) {
+      if (child.stoppedThreadIds.has(threadId)) {
+        return child;
+      }
+      if (child.allThreadsStopped && child.knownThreadIds.has(threadId)) {
+        return child;
+      }
+    }
+    for (const child of live) {
       if (child.knownThreadIds.has(threadId)) {
         return child;
       }
@@ -1064,6 +1182,9 @@ export class ChildSessionCoordinator {
   private listAvailableThreads(): Array<{ sessionName: string; sessionId: SessionId; threadId: number; name?: string }> {
     const result: Array<{ sessionName: string; sessionId: SessionId; threadId: number; name?: string }> = [];
     for (const child of this.children.values()) {
+      if (child.lifecycleEnded) {
+        continue;
+      }
       for (const threadId of child.knownThreadIds) {
         const name = child.threadNames.get(threadId);
         result.push({

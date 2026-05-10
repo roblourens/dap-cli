@@ -5,9 +5,9 @@ import { createProgram } from '../../src/cli/program.js';
 
 const docsToValidate = [
   'README.md',
-  'docs/AGENT-WORKFLOWS.md',
-  'docs/PLAYWRIGHT-INTEROP.md',
-  'docs/ADAPTER-SETUP.md',
+  'skills/dap-cli/references/agent-workflows.md',
+  'docs/playwright-interop.md',
+  'docs/adapter-setup.md',
 ];
 
 interface CommandExample {
@@ -30,25 +30,40 @@ describe('documentation command examples', () => {
 });
 
 describe('Phase 16 docs (PYEVAL-02 / VERB-DOC-01 / PWDOC-01)', () => {
-  test('AGENT-WORKFLOWS.md documents Python evaluate auto-wrap', async () => {
-    const content = await fs.readFile(path.join(process.cwd(), 'docs/AGENT-WORKFLOWS.md'), 'utf8');
+  test('agent-workflows.md documents Python evaluate auto-wrap', async () => {
+    const content = await fs.readFile(path.join(process.cwd(), 'skills/dap-cli/references/agent-workflows.md'), 'utf8');
     expect(content).toContain('evaluate_requires_exec');
     expect(content).toContain('exec(');
     expect(content).toContain('debugpy');
   });
 
-  test('AGENT-WORKFLOWS.md documents launch-vs-attach verb selection', async () => {
-    const content = await fs.readFile(path.join(process.cwd(), 'docs/AGENT-WORKFLOWS.md'), 'utf8');
+  test('agent-workflows.md documents launch-vs-attach verb selection', async () => {
+    const content = await fs.readFile(path.join(process.cwd(), 'skills/dap-cli/references/agent-workflows.md'), 'utf8');
     expect(content).toContain('dap-cli launch');
     expect(content).toContain('dap-cli attach');
     expect(content).toMatch(/no .{0,15}--request.{0,15}flag/i);
   });
 
-  test('PLAYWRIGHT-INTEROP.md documents daemon-died recovery', async () => {
-    const content = await fs.readFile(path.join(process.cwd(), 'docs/PLAYWRIGHT-INTEROP.md'), 'utf8');
+  test('playwright-interop.md documents daemon-died recovery', async () => {
+    const content = await fs.readFile(path.join(process.cwd(), 'docs/playwright-interop.md'), 'utf8');
     expect(content).toContain('not open, please run open first');
     expect(content).toMatch(/pkill|kill .*playwright|killing/i);
   });
+});
+
+describe('Phase 18 docs (PAUSED-DOC-01)', () => {
+  const phase18Files = [
+    'skills/dap-cli/references/agent-workflows.md',
+    'skills/dap-cli/SKILL.md',
+    'skills/dap-cli/references/javascript-typescript.md',
+  ];
+
+  for (const file of phase18Files) {
+    test(`${file} documents per-child paused-state union and paused-first routing`, async () => {
+      const content = await fs.readFile(path.join(process.cwd(), file), 'utf8');
+      expect(content).toMatch(/paused child/i);
+    });
+  }
 });
 
 function collectCommandPaths(): Set<string> {

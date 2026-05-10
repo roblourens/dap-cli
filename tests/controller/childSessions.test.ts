@@ -4,7 +4,7 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { ChildSessionCoordinator } from '../../src/controller/childSessions.js';
-import { derivePausedStateFromStopped } from '../../src/controller/pausedState.js';
+import { combineChildPausedStates, derivePausedStateFromStopped } from '../../src/controller/pausedState.js';
 import { DapClient } from '../../src/protocol/dapClient.js';
 import { CliError } from '../../src/cli/errors.js';
 import { DapEventCache } from '../../src/protocol/eventCache.js';
@@ -912,5 +912,361 @@ describe('ChildSessionCoordinator output-event mirroring (CHILD-VERIFY-01)', () 
     const stored = snapshot.events[0] as { body?: Record<string, unknown> };
     expect(stored.body).toEqual({ category: 'stdout', output: 'parent-direct\n' });
     expect(stored.body && 'child_session_id' in stored.body).toBe(false);
+  });
+});
+
+/**
+ * Phase 18 (PAUSED-UNION-01) — combineChildPausedStates is the helper that
+ * composes the parent SessionRecord's paused-state from per-child
+ * snapshots. Pinned in isolation here so the union-vs-overwrite contract
+ * doesn't have to be re-derived from the integration paths.
+ */
+describe('combineChildPausedStates (PAUSED-UNION-01)', () => {
+  test('all snapshots lifecycleEnded → paused: false', () => {
+    const result = combineChildPausedStates([
+      {
+        stoppedThreadIds: new Set([1, 2]),
+        allThreadsStopped: false,
+        knownThreadIds: new Set([1, 2]),
+        lifecycleEnded: true,
+        lastStoppedReason: 'breakpoint',
+      },
+      {
+        stoppedThreadIds: new Set(),
+        allThreadsStopped: false,
+        knownThreadIds: new Set([3]),
+        lifecycleEnded: true,
+        lastStoppedReason: undefined,
+      },
+    ]);
+    expect(result).toEqual({ paused: false });
+  });
+
+  test('union of stoppedThreadIds across non-terminated children', () => {
+    const result = combineChildPausedStates([
+      {
+        stoppedThreadIds: new Set([1, 2]),
+        allThreadsStopped: false,
+        knownThreadIds: new Set([1, 2]),
+        lifecycleEnded: false,
+        lastStoppedReason: 'breakpoint',
+      },
+      {
+        stoppedThreadIds: new Set([3]),
+        allThreadsStopped: false,
+        knownThreadIds: new Set([3]),
+        lifecycleEnded: false,
+        lastStoppedReason: 'step',
+      },
+    ]);
+    expect(result.paused).toBe(true);
+    expect(result.paused === true && [...result.stoppedThreadIds].sort((a, b) => a - b)).toEqual([1, 2, 3]);
+  });
+
+  test('allThreadsStopped expands to knownThreadIds at union time', () => {
+    const result = combineChildPausedStates([
+      {
+        stoppedThreadIds: new Set(),
+        allThreadsStopped: true,
+        knownThreadIds: new Set([1, 2, 3]),
+        lifecycleEnded: false,
+        lastStoppedReason: 'pause',
+      },
+    ]);
+    expect(result.paused).toBe(true);
+    expect(result.paused === true && [...result.stoppedThreadIds].sort((a, b) => a - b)).toEqual([1, 2, 3]);
+    expect(result.paused === true && result.stoppedReason).toBe('pause');
+  });
+
+  test('lastStoppedReason is picked from a child currently stopped, not one already continued', () => {
+    const result = combineChildPausedStates([
+      {
+        // Continued — its lastStoppedReason should NOT be picked.
+        stoppedThreadIds: new Set(),
+        allThreadsStopped: false,
+        knownThreadIds: new Set([1]),
+        lifecycleEnded: false,
+        lastStoppedReason: 'step',
+      },
+      {
+        // Currently stopped — its reason wins.
+        stoppedThreadIds: new Set([2]),
+        allThreadsStopped: false,
+        knownThreadIds: new Set([2]),
+        lifecycleEnded: false,
+        lastStoppedReason: 'breakpoint',
+      },
+    ]);
+    expect(result.paused).toBe(true);
+    expect(result.paused === true && result.stoppedReason).toBe('breakpoint');
+  });
+
+  test('no stopped children but some live → paused: false', () => {
+    const result = combineChildPausedStates([
+      {
+        stoppedThreadIds: new Set(),
+        allThreadsStopped: false,
+        knownThreadIds: new Set([1]),
+        lifecycleEnded: false,
+        lastStoppedReason: undefined,
+      },
+    ]);
+    expect(result).toEqual({ paused: false });
+  });
+});
+
+/**
+ * Phase 18 (PAUSED-UNION-01) — parent.status.paused is the UNION of every
+ * non-terminated child's paused state. The pre-Phase-18 mirror was
+ * "last child event wins", which let a sibling's `terminated` clobber a
+ * real `stopped` (S-02 root cause: bootloader child terminates after the
+ * ext-host child stops; parent flips back to paused=false). These tests
+ * pin the union behaviour end-to-end through ChildSessionCoordinator.
+ */
+describe('ChildSessionCoordinator paused-state union (PAUSED-UNION-01)', () => {
+  async function bringUpTwoChildren(): Promise<{
+    manager: SessionManager;
+    parentId: string;
+    childA: FakeAdapterEndpoint;
+    childB: FakeAdapterEndpoint;
+    coordinator: ChildSessionCoordinator;
+    parentClient: DapClient;
+  }> {
+    const manager = await SessionManager.create({ dapCliHome });
+    const parent = await manager.create({ name: 'pwa-multi', adapter: 'js-debug' });
+    const parentEndpoint = new FakeAdapterEndpoint('parent');
+    const parentClient = new DapClient(parentEndpoint);
+    const childA = new FakeAdapterEndpoint('child-A');
+    const childB = new FakeAdapterEndpoint('child-B');
+    const endpoints = [childA, childB];
+    let next = 0;
+    const coordinator = new ChildSessionCoordinator({
+      parentSessionId: parent.id,
+      parentName: parent.name,
+      parentClient,
+      adapterId: 'js-debug',
+      ownedAdapter: { startedByDapCli: true, stderrTail: [] },
+      sessionManager: manager,
+      parentEventCache: new DapEventCache(),
+      openChildTransport: () => {
+        const endpoint = endpoints[next];
+        next += 1;
+        if (endpoint === undefined) {
+          throw new Error('no endpoint');
+        }
+        return Promise.resolve(endpoint);
+      },
+    });
+    coordinator.attach();
+    parentEndpoint.emitReverseRequest('startDebugging', {
+      request: 'launch',
+      configuration: { __pendingTargetId: 'tgt-A', type: 'pwa-node' },
+    });
+    parentEndpoint.emitReverseRequest('startDebugging', {
+      request: 'launch',
+      configuration: { __pendingTargetId: 'tgt-B', type: 'pwa-node' },
+    });
+    await coordinator.awaitPendingChildren();
+    await tick(2);
+    return { manager, parentId: parent.id, childA, childB, coordinator, parentClient };
+  }
+
+  test('two children stopped on different threads → parent.stoppedThreadIds is the union', async () => {
+    const { manager, parentId, childA, childB, coordinator, parentClient } = await bringUpTwoChildren();
+    try {
+      childA.emitEvent('stopped', { reason: 'breakpoint', threadId: 5 });
+      await tick(4);
+      childB.emitEvent('stopped', { reason: 'step', threadId: 10 });
+      await tick(4);
+
+      const status = manager.status(parentId);
+      expect(status.paused).toBe(true);
+      expect([...(status.stoppedThreadIds ?? [])].sort((a, b) => a - b)).toEqual([5, 10]);
+    } finally {
+      await coordinator.dispose();
+      await parentClient.close();
+    }
+  });
+
+  test('child stop survives a sibling terminated event (S-02 regression)', async () => {
+    const { manager, parentId, childA, childB, coordinator, parentClient } = await bringUpTwoChildren();
+    try {
+      // Child B is the real target; child A is the bootloader analog that
+      // terminates after the real child stops.
+      childB.emitEvent('stopped', { reason: 'breakpoint', threadId: 0 });
+      await tick(4);
+      let status = manager.status(parentId);
+      expect(status.paused).toBe(true);
+      expect([...(status.stoppedThreadIds ?? [])]).toEqual([0]);
+
+      childA.emitEvent('terminated');
+      await tick(4);
+      status = manager.status(parentId);
+      // The Phase 18 fix: a sibling's terminated MUST NOT clobber the
+      // parent's paused state.
+      expect(status.paused).toBe(true);
+      expect([...(status.stoppedThreadIds ?? [])]).toEqual([0]);
+
+      childB.emitEvent('continued', { threadId: 0, allThreadsContinued: true });
+      await tick(4);
+      status = manager.status(parentId);
+      expect(status.paused).toBe(false);
+    } finally {
+      await coordinator.dispose();
+      await parentClient.close();
+    }
+  });
+
+  test('single-thread continue does not flip paused while another thread on the same child is still stopped', async () => {
+    const { manager, parentId, childA, coordinator, parentClient } = await bringUpTwoChildren();
+    try {
+      childA.emitEvent('stopped', { reason: 'breakpoint', threadId: 5 });
+      await tick(4);
+      childA.emitEvent('stopped', { reason: 'breakpoint', threadId: 10 });
+      await tick(4);
+      childA.emitEvent('continued', { threadId: 5 });
+      await tick(4);
+
+      const status = manager.status(parentId);
+      expect(status.paused).toBe(true);
+      expect([...(status.stoppedThreadIds ?? [])]).toEqual([10]);
+    } finally {
+      await coordinator.dispose();
+      await parentClient.close();
+    }
+  });
+});
+
+/**
+ * Phase 18 (PAUSED-ROUTE-01) — findChildOwningThread prefers the child
+ * actually paused on the requested thread, not just any child whose cache
+ * claims the id. The pre-Phase-18 lookup picked the first cache hit, which
+ * routed `stack --thread-id 0` to a dead bootloader after it terminated
+ * with thread 0 in its knownThreadIds (the S-02 routing failure mode).
+ */
+describe('ChildSessionCoordinator paused-first routing (PAUSED-ROUTE-01)', () => {
+  test('routeByThreadId prefers the child actually stopped on the thread', async () => {
+    const manager = await SessionManager.create({ dapCliHome });
+    const parent = await manager.create({ name: 'pwa-route', adapter: 'js-debug' });
+    const parentEndpoint = new FakeAdapterEndpoint('parent');
+    const parentClient = new DapClient(parentEndpoint);
+    const childA = new FakeAdapterEndpoint('child-A');
+    const childB = new FakeAdapterEndpoint('child-B');
+    // Both children claim thread 0; only child B will emit `stopped` on it.
+    childA.responders.set('threads', () => ({ threads: [{ id: 0, name: 'main' }] }));
+    childB.responders.set('threads', () => ({ threads: [{ id: 0, name: 'main' }] }));
+    childA.failures.set('stackTrace', 'Thread is not paused');
+    childB.responders.set('stackTrace', () => ({
+      stackFrames: [{ id: 200, name: 'someFn', line: 42, column: 1 }],
+      totalFrames: 1,
+    }));
+    const endpoints = [childA, childB];
+    let next = 0;
+    const coordinator = new ChildSessionCoordinator({
+      parentSessionId: parent.id,
+      parentName: parent.name,
+      parentClient,
+      adapterId: 'js-debug',
+      ownedAdapter: { startedByDapCli: true, stderrTail: [] },
+      sessionManager: manager,
+      parentEventCache: new DapEventCache(),
+      openChildTransport: () => {
+        const endpoint = endpoints[next];
+        next += 1;
+        if (endpoint === undefined) {
+          throw new Error('no endpoint');
+        }
+        return Promise.resolve(endpoint);
+      },
+    });
+    coordinator.attach();
+    parentEndpoint.emitReverseRequest('startDebugging', {
+      request: 'launch',
+      configuration: { __pendingTargetId: 'tgt-A', type: 'pwa-node' },
+    });
+    parentEndpoint.emitReverseRequest('startDebugging', {
+      request: 'launch',
+      configuration: { __pendingTargetId: 'tgt-B', type: 'pwa-node' },
+    });
+    await coordinator.awaitPendingChildren();
+    await tick(2);
+
+    try {
+      // Prime knownThreadIds on both children via aggregateThreads so pass 1
+      // (paused-first) is the only thing distinguishing them. Without this,
+      // routing would resolve correctly via the cold-path threads fan-out
+      // anyway, but pinning pass 1 is the contract this test exists for.
+      await coordinator.maybeIntercept('threads', {});
+      childB.emitEvent('stopped', { reason: 'breakpoint', threadId: 0 });
+      await tick(4);
+
+      const result = await coordinator.maybeIntercept('stackTrace', { threadId: 0 });
+      expect(result).toBeDefined();
+      const frames = (result!.value as { stackFrames: Array<{ id: number }> }).stackFrames;
+      expect(frames).toHaveLength(1);
+      expect(frames[0]!.id).toBe(200);
+      // And confirm child A was NOT consulted for stackTrace.
+      expect(childA.receivedRequests.find(r => r.command === 'stackTrace')).toBeUndefined();
+    } finally {
+      await coordinator.dispose();
+      await parentClient.close();
+    }
+  });
+
+  test('aggregateThreads excludes terminated child threads', async () => {
+    const manager = await SessionManager.create({ dapCliHome });
+    const parent = await manager.create({ name: 'pwa-agg', adapter: 'js-debug' });
+    const parentEndpoint = new FakeAdapterEndpoint('parent');
+    const parentClient = new DapClient(parentEndpoint);
+    const childA = new FakeAdapterEndpoint('child-A');
+    const childB = new FakeAdapterEndpoint('child-B');
+    childA.responders.set('threads', () => ({ threads: [{ id: 1, name: 'bootloader' }] }));
+    childB.responders.set('threads', () => ({ threads: [{ id: 2, name: 'main' }] }));
+    const endpoints = [childA, childB];
+    let next = 0;
+    const coordinator = new ChildSessionCoordinator({
+      parentSessionId: parent.id,
+      parentName: parent.name,
+      parentClient,
+      adapterId: 'js-debug',
+      ownedAdapter: { startedByDapCli: true, stderrTail: [] },
+      sessionManager: manager,
+      parentEventCache: new DapEventCache(),
+      openChildTransport: () => {
+        const endpoint = endpoints[next];
+        next += 1;
+        if (endpoint === undefined) {
+          throw new Error('no endpoint');
+        }
+        return Promise.resolve(endpoint);
+      },
+    });
+    coordinator.attach();
+    parentEndpoint.emitReverseRequest('startDebugging', {
+      request: 'launch',
+      configuration: { __pendingTargetId: 'tgt-A', type: 'pwa-node' },
+    });
+    parentEndpoint.emitReverseRequest('startDebugging', {
+      request: 'launch',
+      configuration: { __pendingTargetId: 'tgt-B', type: 'pwa-node' },
+    });
+    await coordinator.awaitPendingChildren();
+    await tick(2);
+
+    try {
+      // Both children alive: aggregateThreads sees both.
+      let result = await coordinator.maybeIntercept('threads', {});
+      let threads = (result!.value as { threads: Array<{ id: number }> }).threads;
+      expect(threads.map(t => t.id).sort((a, b) => a - b)).toEqual([1, 2]);
+
+      childA.emitEvent('terminated');
+      await tick(2);
+      result = await coordinator.maybeIntercept('threads', {});
+      threads = (result!.value as { threads: Array<{ id: number }> }).threads;
+      expect(threads.map(t => t.id)).toEqual([2]);
+    } finally {
+      await coordinator.dispose();
+      await parentClient.close();
+    }
   });
 });

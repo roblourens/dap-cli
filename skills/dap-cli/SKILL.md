@@ -256,7 +256,7 @@ dap-cli events --name web-demo --after-cursor 0 \
   | jq '.data.events[] | select(.body.child_session_id == "<child-id>")'
 ```
 
-Set bps on the parent; the parent's `status.paused` mirrors child stops. Targeting a child directly returns `child_session_not_targetable` with `error.data.parentSessionId`.
+Set bps on the parent. For multi-process js-debug attaches (`pwa-node` workers, Electron sub-Node helpers including the extension host, `pwa-chrome` page children), `dap-cli` rolls per-child paused state up into the parent: `status --name <parent>` reports `paused: true` whenever any child is stopped, and routes thread-bearing requests to the paused child. `--thread-id` auto-resolves. Targeting a child directly returns `child_session_not_targetable` with `error.data.parentSessionId`.
 
 ## Example: Playwright interop (drive UI while dap-cli polls)
 

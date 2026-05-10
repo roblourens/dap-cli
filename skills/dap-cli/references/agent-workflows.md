@@ -34,11 +34,11 @@ If the two PIDs differ, you attached to the wrong process — typically a js-deb
 
 ## Poll-Then-Inspect Loop
 
-Multi-process js-debug adapters (`pwa-node`, `pwa-chrome`) spawn child sessions for each runtime they instrument. Child sessions are NOT targetable — see the "Child sessions" subsection below. Set breakpoints on the parent session name; the parent's `status.paused` mirrors child stops via the parent's event stream.
+For multi-process js-debug attaches (`pwa-node` multi-process workers, Electron sub-Node helpers including the extension host / pty host / shared / file watcher / search, worker threads, `pwa-chrome` page children), dap-cli rolls per-child paused state up into the parent. `dap-cli status --name <parent>` reports `paused: true` whenever ANY child is stopped, and stays paused even when a sibling bootloader child terminates afterwards. `--thread-id` auto-resolves to the stopped thread; `dap-cli stack` / `scopes` / `variables` / `evaluate` / `continue` / `pause` / `step*` route to the paused child automatically. Agents do not need to discover children for this case — target the parent name.
 
 Use the same loop for Node.js, Python, browser, and custom adapters:
 
-1. Poll `status --name <session>` to check whether the session is running, stopped (paused), or terminated. `status` is the source of truth for paused-vs-running — it incorporates the most recent `stopped`/`continued` event for both single-process adapters (debugpy, fake) and multi-process adapters (js-debug pwa-node, pwa-chrome). For js-debug parent sessions, `status` reflects the child's most recent stop via the parent's mirrored `paused` projection — no need to walk child sessions.
+1. Poll `status --name <session>` to check whether the session is running, stopped (paused), or terminated. `status` is the source of truth for paused-vs-running — it incorporates the most recent `stopped`/`continued` event for both single-process adapters (debugpy, fake) and multi-process adapters (js-debug pwa-node, pwa-chrome). For js-debug parents, `status.paused` is the union across non-terminated children: `paused: true` whenever any child is stopped, with `stoppedThreadIds` listing every paused thread; thread-bearing requests are routed to the paused child automatically.
 2. Poll `events --name <session> --after-cursor <cursor> --limit 20` for richer context (cursor, body, reason history). `events` is no longer required for stop detection.
 3. If stopped, inspect with `threads`, `stack --thread-id`, `scopes --frame-id`, and `variables --variables-reference`.
 4. Decide with `evaluate`, `continue`, `next`, `step-in`, or `step-out`.
@@ -59,13 +59,13 @@ DAP object references are valid only for the current suspended state. After `con
 
 ### Child sessions (multi-process adapters)
 
-js-debug adapters (`pwa-node`, `pwa-chrome`) spin up a child session per runtime they attach to (one per worker, browser tab, child process, etc.). Child sessions are not directly targetable — passing a child name to `--name` returns `child_session_not_targetable`. The controller's projection rules:
+js-debug adapters (`pwa-node`, `pwa-chrome`) spin up a child session per runtime they attach to (one per worker, browser tab, child process, Electron sub-Node helper, etc.). Child sessions are not directly targetable — passing a child name to `--name` returns `child_session_not_targetable` (Phase 15-02 contract). The controller's projection rules:
 
 - **Set breakpoints on the parent session name.** The parent forwards `setBreakpoints` to the relevant children.
 - **Child stops show up in the parent's event stream.** `events --name <parent>` is the source of stop events.
-- **`status --name <parent>` mirrors the most recent child stop** in `paused` (Phase 11), so the standard poll-then-inspect loop works without enumerating children.
+- **`status --name <parent>` reports the union across non-terminated children** — `paused: true` whenever any child is stopped, `stoppedThreadIds` aggregating every paused thread. A sibling bootloader child terminating after the real target stops does NOT clear the parent's paused state. dap-cli routes thread-bearing requests to the paused child automatically.
 
-Use `sessions` only to confirm that a parent session exists; you do not target children individually.
+Use `sessions --show-children` only when you need to read per-child events filtered by `body.child_session_id` (the multi-renderer recipe below). For inspection (status / stack / scopes / variables / evaluate / continue / step*) target the parent.
 
 #### pwa-chrome multi-renderer recipe
 

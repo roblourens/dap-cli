@@ -420,3 +420,18 @@ Plans:
 Plans:
 - [ ] 17-01-PLAN.md — Build the 20-scenario Code OSS attach matrix (17-SCENARIOS.md) with self-contained per-scenario subagent prompts that explicitly require the dap-cli skill + VS Code launch skill
 - [ ] 17-02-PLAN.md — Execute the 20 scenarios one fresh subagent at a time, record per-scenario results in 17-RESULTS.md (commit-per-row), then synthesize 17-UAT.md (bugs / doc gaps / papercuts / recommended next step)
+
+### Phase 18: Per-child paused-state tracking + paused-first routing
+
+**Goal:** Fix two narrow bugs in the existing multi-child mirror that caused Phase 17 / S-02 to fail. (a) `ChildSessionCoordinator`'s parent paused-state is "last child event wins" — a bootloader child's `terminated` clobbers the real child's `stopped`, so `dap-cli status --name <parent>` reports `paused: false` even though a child is paused on a breakpoint. (b) `findChildOwningThread` picks the first child whose thread cache claims an id, regardless of whether that child is currently paused, so `stack --thread-id 0` routes to a stale bootloader and returns `thread_not_paused`. Fix (a) by giving each `ChildRuntime` its own `stoppedThreadIds` / `allThreadsStopped` / `lifecycleEnded` fields and recomputing the parent's paused state as the union across non-terminated children. Fix (b) by making `findChildOwningThread` prefer children that are actually stopped on the requested id, with the existing live-`threads` fan-out as a final fallback. `aggregateThreads` and error-payload `availableThreads` filter out terminated children so Phase 17's `--thread-id` auto-resolve sees a clean candidate list. No new flags, no virtual thread ids, no new CLI surface — the model dap-cli already implements (per Phase 15-01 mirroring + Phase 15-02 child_session_not_targetable contract) becomes accurate. Unblocks Phase 17 S-02..S-20.
+**Requirements**: PAUSED-UNION-01, PAUSED-ROUTE-01, PAUSED-DOC-01
+**Depends on:** Phase 17 (partial — S-02 surfaced the gap)
+**Plans:** 2 plans
+
+Plans:
+
+**Wave 1**
+- [ ] 18-01-PLAN.md — Controller: per-child stoppedThreadIds / allThreadsStopped / lifecycleEnded bookkeeping on stopped/continued/thread/terminated/exited events; new `combineChildPausedStates` helper in pausedState.ts; recompute parent paused state as union; paused-first three-pass `findChildOwningThread`; terminated-filter on `aggregateThreads` + `listAvailableThreads`; unit tests for union + terminated-survives-stop regression + paused-first routing; new fake-adapter `multi-child-stop` script + end-to-end integration test reproducing the S-02 shape; Code OSS extension-host hand-driven repro (PAUSED-UNION-01, PAUSED-ROUTE-01)
+
+**Wave 2** *(blocked on Wave 1 — docs describe verified behavior)*
+- [ ] 18-02-PLAN.md — Update `docs/AGENT-WORKFLOWS.md`, in-repo `skills/dap-cli/SKILL.md`, `skills/dap-cli/references/javascript-typescript.md` (and README.md if it carries the old recipe) to present "parent rolls up child paused state, dap-cli routes to the paused child" as a guarantee; remove prior hedge language; preserve Phase 15-02's `child_session_not_targetable` contract for direct child addressing; pin with new `docsValidation.test.ts` grep gate on the literal phrase "paused child" (PAUSED-DOC-01)

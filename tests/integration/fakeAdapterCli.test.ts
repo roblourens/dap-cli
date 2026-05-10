@@ -5,6 +5,7 @@ import type { AdapterDescriptor } from '../../src/adapters/descriptor.js';
 import { createControllerClient } from '../../src/controller/client.js';
 import { startControllerServer, type ControllerServer } from '../../src/controller/server.js';
 import { createFakeAdapterScript, startFakeSocketAdapter } from '../../src/testing/fakeAdapter.js';
+import { startMultiChildFakeSocketAdapter, type ConnectionScript } from '../../src/testing/multiChildFakeAdapter.js';
 import { createCliTestEnv, runCli, type CliTestEnv } from '../helpers/runCli.js';
 
 interface JsonEnvelope<T> {
@@ -699,6 +700,177 @@ describe('fake adapter controller integration', () => {
     expect(continued.exitCode, JSON.stringify(continued)).toBe(0);
     expect(parseEnvelope<{ allThreadsContinued: boolean }>(continued.stdout).data.allThreadsContinued).toBe(true);
     expect(continued.stderr).toContain('--thread-id not provided');
+  });
+
+  test('parent status reflects multi-child stop and survives a sibling terminated; --thread-id auto-resolves to the paused child (PAUSED-UNION-01 / PAUSED-ROUTE-01)', async () => {
+    // Phase 18 S-02 regression test driven through the real CLI / controller
+    // / ChildSessionCoordinator stack via a multi-child fake socket adapter.
+    //
+    // Shape of the repro (see CONTEXT.md):
+    //   - parent connects, emits two startDebugging reverse-requests
+    //   - child 0 (bootloader analog) initializes, then later emits
+    //     `terminated` AFTER child 1 emits `stopped`
+    //   - child 1 (the real target) emits `stopped { reason: 'breakpoint',
+    //     threadId: 0 }`, answers stackTrace / evaluate / continue
+    //
+    // Pre-Phase-18 mirror behaviour: child 0's `terminated` clobbered the
+    // parent's paused-state set by child 1's `stopped`. Phase 18 fix:
+    // per-child paused-state union + paused-first routing.
+
+    let resolveChildOneStopped!: () => void;
+    const childOneStopped = new Promise<void>(resolve => { resolveChildOneStopped = resolve; });
+
+    const parent: ConnectionScript = {
+      dispatch(req, ctx) {
+        if (req.command === 'initialize') {
+          ctx.emitEvent('initialized');
+          return { ok: true, body: { supportsConfigurationDoneRequest: true } };
+        }
+        if (req.command === 'attach') {
+          ctx.emitReverseRequest('startDebugging', {
+            request: 'attach',
+            configuration: { type: 'fake', name: 'child-0', __pendingTargetId: 'tgt-0' },
+          });
+          ctx.emitReverseRequest('startDebugging', {
+            request: 'attach',
+            configuration: { type: 'fake', name: 'child-1', __pendingTargetId: 'tgt-1' },
+          });
+          return { ok: true };
+        }
+        if (req.command === 'threads') {
+          return { ok: true, body: { threads: [] } };
+        }
+        return { ok: true };
+      },
+    };
+
+    const childZero: ConnectionScript = {
+      async dispatch(req, ctx) {
+        if (req.command === 'initialize') {
+          ctx.emitEvent('initialized');
+          return { ok: true, body: { supportsConfigurationDoneRequest: true } };
+        }
+        if (req.command === 'configurationDone') {
+          // Schedule terminated AFTER child 1 has emitted stopped — this is
+          // the S-02 ordering that exposed the bug.
+          void childOneStopped.then(() => {
+            setTimeout(() => ctx.emitEvent('terminated'), 50);
+          });
+          return { ok: true };
+        }
+        if (req.command === 'threads') {
+          return { ok: true, body: { threads: [{ id: 0, name: 'bootloader' }] } };
+        }
+        return { ok: true };
+      },
+    };
+
+    const childOne: ConnectionScript = {
+      dispatch(req, ctx) {
+        if (req.command === 'initialize') {
+          ctx.emitEvent('initialized');
+          return { ok: true, body: { supportsConfigurationDoneRequest: true } };
+        }
+        if (req.command === 'configurationDone') {
+          // Stop AFTER configurationDone so the controller has finished the
+          // child handshake by the time the parent observes paused state.
+          setImmediate(() => {
+            ctx.emitEvent('stopped', { reason: 'breakpoint', threadId: 0, allThreadsStopped: false });
+            resolveChildOneStopped();
+          });
+          return { ok: true };
+        }
+        if (req.command === 'threads') {
+          return { ok: true, body: { threads: [{ id: 0, name: 'main' }] } };
+        }
+        if (req.command === 'stackTrace') {
+          return {
+            ok: true,
+            body: {
+              stackFrames: [{ id: 200, name: 'someFn', line: 42, column: 1, source: { path: '/tmp/fake-multi.js', name: 'fake-multi.js' } }],
+              totalFrames: 1,
+            },
+          };
+        }
+        if (req.command === 'evaluate') {
+          return { ok: true, body: { result: 'ok', variablesReference: 0 } };
+        }
+        if (req.command === 'continue') {
+          setImmediate(() => {
+            ctx.emitEvent('continued', { threadId: 0, allThreadsContinued: true });
+            ctx.emitEvent('terminated');
+          });
+          return { ok: true, body: { allThreadsContinued: true } };
+        }
+        return { ok: true };
+      },
+    };
+
+    const adapter = await startMultiChildFakeSocketAdapter({ parent, children: [childZero, childOne] });
+    const client = await createControllerClient({ dapCliHome: testEnv.dapCliHome });
+
+    try {
+      const descriptor: AdapterDescriptor = {
+        id: 'fake-multi-socket',
+        label: 'Phase 18 multi-child fake socket adapter',
+        transport: { kind: 'socket', host: '127.0.0.1', port: adapter.port },
+      };
+      const started = await client.request<{ sessionId: string; lifecycle: string }>('dap.start', {
+        mode: 'attach',
+        name: 'multi',
+        descriptor,
+      });
+      expect(started.sessionId).toMatch(/^sess_/);
+
+      // Poll status until paused appears on the parent. With Phase 17 / 18
+      // the parent's paused-state mirror reflects the child's stopped.
+      const pollPaused = async (): Promise<{ status: string; paused: boolean; stoppedThreadIds?: readonly number[] }> => {
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          const status = await runCli(['status', '--name', 'multi'], { env: testEnv.env });
+          if (status.exitCode === 0) {
+            const data = parseEnvelope<{ status: string; paused?: boolean; stoppedThreadIds?: readonly number[] }>(status.stdout).data;
+            if (data.paused === true) {
+              return { status: data.status, paused: true, ...(data.stoppedThreadIds !== undefined ? { stoppedThreadIds: data.stoppedThreadIds } : {}) };
+            }
+          }
+          await new Promise<void>(resolve => setTimeout(resolve, 50));
+        }
+        const stderr = await runCli(['status', '--name', 'multi'], { env: testEnv.env });
+        throw new Error(`parent never reached paused=true within 5s. last status: ${stderr.stdout} stderr: ${stderr.stderr}`);
+      };
+      const initialPaused = await pollPaused();
+      expect(initialPaused.paused).toBe(true);
+      expect(initialPaused.stoppedThreadIds).toEqual([0]);
+
+      // S-02 regression: wait long enough for child 0's terminated event to
+      // have arrived, then re-poll. Pre-Phase-18 this would have flipped
+      // parent.paused back to false.
+      await new Promise<void>(resolve => setTimeout(resolve, 200));
+      const status2 = await runCli(['status', '--name', 'multi'], { env: testEnv.env });
+      const status2Data = parseEnvelope<{ paused?: boolean; stoppedThreadIds?: readonly number[] }>(status2.stdout).data;
+      expect(status2Data.paused, `parent flipped to paused=false after sibling terminated — S-02 regression`).toBe(true);
+      expect(status2Data.stoppedThreadIds).toEqual([0]);
+
+      // stack auto-resolves --thread-id to the paused child's thread (0).
+      const stack = await runCli(['stack', '--name', 'multi', '--levels', '1'], { env: testEnv.env });
+      expect(stack.exitCode, JSON.stringify(stack)).toBe(0);
+      const frames = parseEnvelope<{ stackFrames: Array<{ id: number; name: string }> }>(stack.stdout).data.stackFrames;
+      expect(frames).toHaveLength(1);
+      expect(frames[0]!.id).toBe(200);
+      expect(stack.stderr).toContain('--thread-id not provided');
+
+      const evaluate = await runCli(['evaluate', '--name', 'multi', '--expression', 'x', '--frame-id', '200'], { env: testEnv.env });
+      expect(evaluate.exitCode, JSON.stringify(evaluate)).toBe(0);
+      expect(parseEnvelope<{ result: string }>(evaluate.stdout).data.result).toBe('ok');
+
+      const continued = await runCli(['continue', '--name', 'multi'], { env: testEnv.env });
+      expect(continued.exitCode, JSON.stringify(continued)).toBe(0);
+      expect(parseEnvelope<{ allThreadsContinued: boolean }>(continued.stdout).data.allThreadsContinued).toBe(true);
+    } finally {
+      await client.close();
+      await adapter.close();
+    }
   });
 
   test('reports adapter startup failures with stderr tail and log path diagnostics', async () => {

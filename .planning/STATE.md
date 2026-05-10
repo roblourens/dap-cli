@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: milestone_complete
-stopped_at: Completed 06-02-PLAN.md
-last_updated: "2026-05-09T20:37:08.557Z"
-last_activity: 2026-05-09 -- Phase 15 marked complete
+stopped_at: Completed 18-02-PLAN.md
+last_updated: "2026-05-10T23:40:00.000Z"
+last_activity: 2026-05-10 -- Phase 18 marked complete (per-child paused-state union + paused-first routing + docs sweep)
 progress:
   total_phases: 18
   completed_phases: 18
   total_plans: 80
-  completed_plans: 84
+  completed_plans: 86
   percent: 100
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** Agents can reliably control a DAP debug session from repeatable CLI commands and inspect paused application state without needing language-specific debugger knowledge.
-**Current focus:** Phase 15 — child-session-enumeration-and-event-routing-for-js-debug-pwa
+**Current focus:** Phase 18 — per-child-paused-state-and-paused-first-routing (complete)
 
 ## Current Position
 
-Phase: 16
-Plan: Not started
+Phase: 18
+Plan: 18-02 (last) complete
 Status: Milestone complete
-Last activity: 2026-05-09
+Last activity: 2026-05-10
 
 Progress: [█████████░] 89%
 

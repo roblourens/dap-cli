@@ -33,7 +33,13 @@ dap-cli attach --workspace <path> --config "<NAME>" --json-overrides '{"continue
 
 There is no first-class `--no-continue-on-attach` flag.
 
-## pwa-chrome / multi-renderer
+## Multi-process js-debug
+
+js-debug spawns child sessions for every runtime it attaches to: `pwa-node` multi-process workers, Electron sub-Node helpers (the extension host, pty host, shared, file watcher, search), `node` `worker_threads`, and `pwa-chrome` page children. The inspection contract is the same in every case: **target the parent name**. `dap-cli` rolls per-child paused state up into the parent — `status --name <parent>` reports `paused: true` whenever any child is stopped, with `stoppedThreadIds` aggregating every paused thread — and routes `stack` / `scopes` / `variables` / `evaluate` / `continue` / `pause` / `step*` to the paused child automatically. `--thread-id` auto-resolves to the stopped thread; there is no `--child-session-id` flag and you do not need one. A sibling bootloader child terminating after the real target stops does not clear the parent's paused state. See [agent-workflows.md](./agent-workflows.md) for the long-form recipe and the Phase 15-02 `child_session_not_targetable` contract that still applies to `events --name <child>`.
+
+For breakpoints, prefer the `.ts` source path. Verification is asynchronous; a `.ts` bp may stay `verified: false` until the child that owns the source loads it (then it upgrades against the child's mapped `.js`).
+
+## pwa-chrome / multi-renderer events
 
 `pwa-chrome` spawns one child per renderer. Children are not directly targetable; every child event is mirrored into the parent's stream with `body.child_session_id` annotated. Discover children with `--show-children`, read events from the parent, then filter by `child_session_id` to isolate one renderer:
 
