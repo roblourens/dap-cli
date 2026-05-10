@@ -1,0 +1,13 @@
+{
+  "name": "dap-cli",
+  "version": "0.1.0",
+  "description": "Agent skill for driving dap-cli — DAP debugging, breakpoints, stack/variables inspection, launch.json configs, js-debug, debugpy, Playwright interop.",
+  "author": {
+    "name": "roblourens",
+    "url": "https://github.com/roblourens"
+  },
+  "homepage": "https://github.com/roblourens/dap-cli",
+  "repository": "https://github.com/roblourens/dap-cli",
+  "license": "MIT",
+  "keywords": ["debugging", "dap", "debug-adapter-protocol", "js-debug", "debugpy", "playwright"]
+}

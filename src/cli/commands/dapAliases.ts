@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { Command } from 'commander';
 import type { OutputWriter } from '../outputWriter.js';
+import { sessionError, usageError } from '../errors.js';
 import { getDapGeneratedCommand } from '../../generated/dapCommandRegistry.js';
 import { parseIntegerOption, parseIntegerValues, parseRequiredIntegerOption, requireGeneratedCommand, sendGeneratedDapRequest } from './dapGenerated.js';
 import { createControllerClient, type ControllerClient } from '../../controller/client.js';
@@ -84,8 +85,21 @@ interface VerificationDiagnostic {
   totalCount: number;
   loadedSourcesCount: number;
   matchingLoadedSources: ReadonlyArray<{ path: string; name?: string }>;
+  // Phase 17 follow-up: count of js-debug child sessions attached to the
+  // parent. When >0 and the parent has 0 loaded sources, that's NORMAL for
+  // multi-process pwa-node/pwa-chrome attaches (the runtime sources live
+  // on children, not the bootstrap parent). The hint changes accordingly
+  // so the diagnostic stops shouting "wrong process" at correctly-attached
+  // multi-process sessions.
+  childSessionCount: number;
   hint: string;
   recipe: string;
+}
+
+interface SessionsListEntry {
+  id?: string;
+  parent_session_id?: string;
+  [key: string]: unknown;
 }
 
 export function registerDapAliasCommands(program: Command, output: OutputWriter): void {
@@ -175,9 +189,10 @@ export function registerDapAliasCommands(program: Command, output: OutputWriter)
     await sendAliasRequest(output, 'threads', {}, options.name, 'threads');
   });
 
-  program.command('stack').requiredOption('--thread-id <number>', 'thread id').option('--start-frame <number>', 'start frame').option('--levels <number>', 'frame count').option('--name <name>', 'session name or id').description('Get stack frames for a thread (requires thread-id from threads command)').addHelpText('after', workflowHelp()).action(async (options: StackOptions) => {
+  program.command('stack').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--start-frame <number>', 'start frame').option('--levels <number>', 'frame count').option('--name <name>', 'session name or id').description('Get stack frames for a thread (auto-resolves to the stopped thread if --thread-id omitted)').addHelpText('after', workflowHelp()).action(async (options: StackOptions) => {
+    const threadId = await resolveThreadId(output, options.threadId, options.name, 'stack', 'stopped');
     await sendAliasRequest(output, 'stackTrace', compactObject({
-      threadId: parseRequiredIntegerOption(options.threadId, 'thread-id'),
+      threadId,
       startFrame: parseIntegerOption(options.startFrame, 'start-frame'),
       levels: parseIntegerOption(options.levels, 'levels'),
     }), options.name, 'stack');
@@ -211,24 +226,24 @@ export function registerDapAliasCommands(program: Command, output: OutputWriter)
     }), options.name, 'evaluate');
   });
 
-  program.command('continue').requiredOption('--thread-id <number>', 'thread id').option('--single-thread', 'resume only one thread').option('--name <name>', 'session name or id').description('Continue execution').action(async (options: ThreadControlOptions) => {
-    await sendThreadControlAlias(output, 'continue', options, 'continue');
+  program.command('continue').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--single-thread', 'resume only one thread').option('--name <name>', 'session name or id').description('Continue execution (auto-resolves to the stopped thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
+    await sendThreadControlAlias(output, 'continue', options, 'continue', 'stopped');
   });
 
-  program.command('pause').requiredOption('--thread-id <number>', 'thread id').option('--name <name>', 'session name or id').description('Pause execution').action(async (options: ThreadControlOptions) => {
-    await sendThreadControlAlias(output, 'pause', options, 'pause');
+  program.command('pause').option('--thread-id <number>', 'thread id (defaults to the unique running thread when omitted)').option('--name <name>', 'session name or id').description('Pause execution (auto-resolves to the unique thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
+    await sendThreadControlAlias(output, 'pause', options, 'pause', 'any');
   });
 
-  program.command('next').requiredOption('--thread-id <number>', 'thread id').option('--single-thread', 'step only one thread').option('--name <name>', 'session name or id').description('Step over').action(async (options: ThreadControlOptions) => {
-    await sendThreadControlAlias(output, 'next', options, 'next');
+  program.command('next').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--single-thread', 'step only one thread').option('--name <name>', 'session name or id').description('Step over (auto-resolves to the stopped thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
+    await sendThreadControlAlias(output, 'next', options, 'next', 'stopped');
   });
 
-  program.command('step-in').requiredOption('--thread-id <number>', 'thread id').option('--single-thread', 'step only one thread').option('--target-id <number>', 'step target id').option('--name <name>', 'session name or id').description('Step in').action(async (options: ThreadControlOptions) => {
-    await sendThreadControlAlias(output, 'stepIn', options, 'step-in');
+  program.command('step-in').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--single-thread', 'step only one thread').option('--target-id <number>', 'step target id').option('--name <name>', 'session name or id').description('Step in (auto-resolves to the stopped thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
+    await sendThreadControlAlias(output, 'stepIn', options, 'step-in', 'stopped');
   });
 
-  program.command('step-out').requiredOption('--thread-id <number>', 'thread id').option('--single-thread', 'step only one thread').option('--name <name>', 'session name or id').description('Step out').action(async (options: ThreadControlOptions) => {
-    await sendThreadControlAlias(output, 'stepOut', options, 'step-out');
+  program.command('step-out').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--single-thread', 'step only one thread').option('--name <name>', 'session name or id').description('Step out (auto-resolves to the stopped thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
+    await sendThreadControlAlias(output, 'stepOut', options, 'step-out', 'stopped');
   });
 }
 
@@ -245,9 +260,10 @@ Polling workflow:
 `;
 }
 
-async function sendThreadControlAlias(output: OutputWriter, dapCommand: 'continue' | 'pause' | 'next' | 'stepIn' | 'stepOut', options: ThreadControlOptions, commandLabel: string): Promise<void> {
+async function sendThreadControlAlias(output: OutputWriter, dapCommand: 'continue' | 'pause' | 'next' | 'stepIn' | 'stepOut', options: ThreadControlOptions, commandLabel: string, threadFilter: 'stopped' | 'any'): Promise<void> {
+  const threadId = await resolveThreadId(output, options.threadId, options.name, commandLabel, threadFilter);
   await sendAliasRequest(output, dapCommand, compactObject({
-    threadId: parseRequiredIntegerOption(options.threadId, 'thread-id'),
+    threadId,
     singleThread: options.singleThread === true ? true : undefined,
     targetId: parseIntegerOption(options.targetId, 'target-id'),
   }), options.name, commandLabel);
@@ -274,8 +290,119 @@ interface SessionStatusForAutoFrame {
   stoppedThreadIds?: readonly number[];
 }
 
+interface ThreadInfo {
+  id?: unknown;
+  name?: unknown;
+}
+
 interface ThreadsResponse {
-  threads?: ReadonlyArray<{ id?: unknown }>;
+  threads?: ReadonlyArray<ThreadInfo>;
+}
+
+// Phase 17 follow-up: when `--thread-id` is omitted on a thread-control or
+// inspection command (continue/pause/next/step-in/step-out/stack), resolve
+// it to the unique candidate thread on the session. Subagents reliably
+// guess `--thread-id 1` when there is exactly one thread (id 0); making the
+// flag optional turns that guess into a successful no-op.
+//
+// threadFilter:
+//   'stopped' — only consider stopped threads (continue/step/stack). Reads
+//     status.stoppedThreadIds; falls back to the full threads list if the
+//     status payload doesn't carry stop info yet.
+//   'any'     — consider every thread (pause). Reads the threads list.
+//
+// Errors with a structured `usage` envelope when ambiguous (>1 candidate)
+// or when no candidate exists. The data payload includes available threads
+// so callers can pick one without re-running `threads`.
+async function resolveThreadId(
+  output: OutputWriter,
+  rawThreadId: string | undefined,
+  name: string | undefined,
+  commandLabel: string,
+  threadFilter: 'stopped' | 'any',
+): Promise<number> {
+  if (rawThreadId !== undefined) {
+    return parseRequiredIntegerOption(rawThreadId, 'thread-id');
+  }
+
+  let client: ControllerClient;
+  try {
+    client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME });
+  } catch (error) {
+    throw usageError(
+      `--thread-id is required (auto-resolve unavailable: ${describeError(error)})`,
+      { code: 'thread_id_required' },
+    );
+  }
+
+  try {
+    let stoppedThreadIds: readonly number[] = [];
+    if (threadFilter === 'stopped') {
+      try {
+        const status = await client.request<SessionStatusForAutoFrame>(
+          'sessions.status',
+          name === undefined ? undefined : { name },
+        );
+        stoppedThreadIds = Array.isArray(status.stoppedThreadIds) ? status.stoppedThreadIds : [];
+      } catch {
+        // Fall through to full threads list below.
+      }
+
+      if (stoppedThreadIds.length === 1) {
+        const resolved = stoppedThreadIds[0]!;
+        output.warn(`${commandLabel}: --thread-id not provided; using stopped thread ${resolved}`);
+        return resolved;
+      }
+      if (stoppedThreadIds.length > 1) {
+        throw usageError(
+          `--thread-id required: ${stoppedThreadIds.length} threads are stopped (${stoppedThreadIds.join(', ')})`,
+          {
+            code: 'thread_id_required',
+            data: { availableThreadIds: [...stoppedThreadIds] },
+          },
+        );
+      }
+    }
+
+    let threadsResponse: ThreadsResponse;
+    try {
+      threadsResponse = await client.request<ThreadsResponse>('dap.request', {
+        command: 'threads',
+        args: {},
+        ...(name === undefined ? {} : { name }),
+      });
+    } catch (error) {
+      throw usageError(
+        `--thread-id is required (could not list threads: ${describeError(error)})`,
+        { code: 'thread_id_required' },
+      );
+    }
+
+    const threads = (threadsResponse.threads ?? [])
+      .map(t => ({ id: t.id, name: typeof t.name === 'string' ? t.name : undefined }))
+      .filter((t): t is { id: number; name: string | undefined } => typeof t.id === 'number' && Number.isInteger(t.id));
+
+    if (threads.length === 1) {
+      const resolved = threads[0]!.id;
+      output.warn(`${commandLabel}: --thread-id not provided; using thread ${resolved}`);
+      return resolved;
+    }
+    if (threads.length === 0) {
+      throw usageError(
+        `--thread-id is required (session reports no threads)`,
+        { code: 'thread_id_required' },
+      );
+    }
+    throw usageError(
+      `--thread-id required: ${threads.length} threads available`,
+      {
+        code: 'thread_id_required',
+        data: { availableThreads: threads.map(t => ({ id: t.id, name: t.name })) },
+      },
+    );
+  } finally {
+    await client.close();
+  }
 }
 
 interface StackTraceResponse {
@@ -379,6 +506,11 @@ async function buildVerificationDiagnostic(
   const recipe = `dap-cli dap loaded-sources${name === undefined ? '' : ` --name ${name}`}`;
   const baseHint = `${unverifiedCount} of ${totalCount} breakpoints unverified`;
 
+  // Phase 17 follow-up: count js-debug child sessions up front so every
+  // diagnostic branch can include them and the wrong-process hint can be
+  // softened when children exist.
+  const childSessionCount = await countChildSessions(client, name);
+
   let supportsLoadedSources = false;
   try {
     const caps = await client.request<CapabilitiesResponse>('dap.capabilities', name === undefined ? undefined : { name });
@@ -389,6 +521,7 @@ async function buildVerificationDiagnostic(
         totalCount,
         loadedSourcesCount: -1,
         matchingLoadedSources: [],
+        childSessionCount,
         hint: `${baseHint}; loadedSources lookup failed (adapter does not support loadedSources). Try running: ${recipe}`,
         recipe,
       };
@@ -399,6 +532,7 @@ async function buildVerificationDiagnostic(
       totalCount,
       loadedSourcesCount: -1,
       matchingLoadedSources: [],
+      childSessionCount,
       hint: `${baseHint}; loadedSources lookup failed (capabilities probe failed: ${describeError(err)}). Try running: ${recipe}`,
       recipe,
     };
@@ -414,6 +548,7 @@ async function buildVerificationDiagnostic(
       totalCount,
       loadedSourcesCount: -1,
       matchingLoadedSources: [],
+      childSessionCount,
       hint: `${baseHint}; loadedSources lookup failed (${describeError(err)}). Try running: ${recipe}`,
       recipe,
     };
@@ -432,14 +567,50 @@ async function buildVerificationDiagnostic(
       return typeof s.name === 'string' ? { path: sourcePath, name: s.name } : { path: sourcePath };
     });
 
+  const isTsSource = /\.(?:ts|tsx|mts|cts)$/i.test(requestedPath);
+  const sourceMapHint = isTsSource
+    ? ' If the bp is on a .ts source, also try the compiled .js path under your build output, or pass `--out-files` / `--resolve-source-maps` matching your build (e.g. `--out-files "${workspaceFolder}/out/**/*.js"`).'
+    : '';
+
   let hint: string;
   if (loadedSourcesCount === 0) {
-    hint = `${baseHint}; debuggee has loaded 0 sources — likely attached to the wrong process. Run: ${recipe}`;
+    if (childSessionCount > 0) {
+      // Multi-process js-debug attach (pwa-node / pwa-chrome). Loaded sources
+      // live on the child sessions, not the bootstrap parent. The previous
+      // "wrong process" wording was actively misleading here — this branch
+      // exists specifically for that case.
+      hint = `${baseHint}; parent has 0 loaded sources but session has ${childSessionCount} child session(s). This is normal for multi-process js-debug attaches — runtime sources live on children. js-debug should forward the breakpoint to the children that own the source; if it stays unverified after the program runs past the line, the source-map mapping likely failed.${sourceMapHint} Run: ${recipe}`;
+    } else {
+      hint = `${baseHint}; debuggee has loaded 0 sources — likely attached to the wrong process. Run: ${recipe}`;
+    }
   } else if (matchingLoadedSources.length === 0) {
-    hint = `${baseHint}; ${loadedSourcesCount} sources loaded but none match ${wantBasename}. Check source maps / outFiles. Run: ${recipe}`;
+    hint = `${baseHint}; ${loadedSourcesCount} sources loaded but none match ${wantBasename}. Check source maps / outFiles.${sourceMapHint} Run: ${recipe}`;
   } else {
     hint = `${baseHint} despite ${matchingLoadedSources.length} matching loaded source(s). Check breakpoint line numbers. Run: ${recipe}`;
   }
 
-  return { unverifiedCount, totalCount, loadedSourcesCount, matchingLoadedSources, hint, recipe };
+  return { unverifiedCount, totalCount, loadedSourcesCount, matchingLoadedSources, childSessionCount, hint, recipe };
+}
+
+async function countChildSessions(client: ControllerClient, parentName: string | undefined): Promise<number> {
+  if (parentName === undefined) {
+    return 0;
+  }
+  try {
+    const list = await client.request<ReadonlyArray<SessionsListEntry>>('sessions.list', { includeChildren: true });
+    if (!Array.isArray(list)) {
+      return 0;
+    }
+    const parent = list.find(entry => typeof entry === 'object' && entry !== null && (entry as { name?: string }).name === parentName);
+    if (parent === undefined) {
+      return 0;
+    }
+    const parentId = parent.id;
+    if (typeof parentId !== 'string') {
+      return 0;
+    }
+    return list.filter(entry => entry.parent_session_id === parentId).length;
+  } catch {
+    return 0;
+  }
 }

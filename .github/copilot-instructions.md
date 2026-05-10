@@ -16,7 +16,7 @@ that the work is done. Test harnesses wrap the CLI; humans don't.
 
 **Hard rule for every `/gsd-verify-work` round:**
 
-1. The agent itself MUST execute `docs/HAND-DRIVEN-SMOKE.md` Sequence A and
+1. The agent itself MUST execute `dev/smoke/hand-driven-smoke.md` Sequence A and
    Sequence B in a real terminal using `run_in_terminal`. Not a subagent —
    the orchestrator agent runs the commands so it sees the live output.
 2. The verbatim captured output of every step goes into the phase's

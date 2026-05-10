@@ -37,6 +37,7 @@ const scripts: Record<string, FakeStep[]> = {
 	'expect-conditional-breakpoints': createConditionalBreakpointsScript(),
 	'playwright-inspection': createPlaywrightInspectionScript(),
 	'execution-control': createExecutionControlScript(),
+	'auto-thread-resolve': createAutoThreadResolveScript(),
 	'failed-threads': createFailedThreadsScript(),
 	'failed-step-out': createFailedStepOutScript(),
 	'expect-launch-overrides': createLifecycleScript('launch', { request: 'launch', program: 'flag.js', cwd: 'flag-cwd' }),
@@ -656,6 +657,26 @@ function createExecutionControlScript(): FakeStep[] {
 		{ event: 'stopped', body: { reason: 'step', threadId: 1, allThreadsStopped: true } },
 		{ command: 'stepOut' },
 		{ event: 'stopped', body: { reason: 'step', threadId: 1, allThreadsStopped: true } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	];
+}
+
+function createAutoThreadResolveScript(): FakeStep[] {
+	// Session is paused-on-entry with a single thread (id=1); auto-resolve
+	// should pick it for `continue`/`stack` even when --thread-id is omitted.
+	// The stopped event uses allThreadsStopped:true, so stoppedThreadIds is
+	// empty by design; auto-resolve falls back to the threads list.
+	return [
+		...createLifecycleScript('launch').slice(0, 5),
+		// stack: auto-resolve threads, then stackTrace.
+		{ command: 'threads', body: { threads: [{ id: 1, name: 'main' }] } },
+		{ command: 'stackTrace', expectedArguments: { threadId: 1, levels: 1 }, body: { stackFrames: [{ id: 10, name: 'main', line: 1, column: 1 }], totalFrames: 1 } },
+		// continue: auto-resolve threads, then continue.
+		{ command: 'threads', body: { threads: [{ id: 1, name: 'main' }] } },
+		{ command: 'continue', expectedArguments: { threadId: 1 }, body: { allThreadsContinued: true } },
+		{ event: 'continued', body: { threadId: 1, allThreadsContinued: true } },
 		{ command: 'disconnect' },
 		{ event: 'terminated' },
 		{ close: true },

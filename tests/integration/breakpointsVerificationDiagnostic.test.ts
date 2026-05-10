@@ -14,6 +14,7 @@ interface VerificationDiagnostic {
   totalCount: number;
   loadedSourcesCount: number;
   matchingLoadedSources: Array<{ path: string; name?: string }>;
+  childSessionCount: number;
   hint: string;
   recipe: string;
 }
@@ -70,6 +71,7 @@ describe('breakpoints set verification diagnostic (Phase 12 plan 02)', () => {
     expect(diag).toBeDefined();
     expect(diag!.loadedSourcesCount).toBe(0);
     expect(diag!.matchingLoadedSources).toEqual([]);
+    expect(diag!.childSessionCount).toBe(0);
     expect(diag!.hint).toMatch(/wrong process/);
     expect(diag!.recipe).toBe('dap-cli dap loaded-sources --name verifyB');
     expect(set.stderr).toContain(diag!.hint);

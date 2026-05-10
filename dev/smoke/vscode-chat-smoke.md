@@ -5,14 +5,14 @@ through its workspace `.vscode/launch.json` compound, sets a breakpoint inside
 the chat widget, then drives the chat panel with `playwright-cli` and observes
 the breakpoint fire when the user submits a message.
 
-It is the VS Code analogue of [PLAYWRIGHT-INTEROP.md](PLAYWRIGHT-INTEROP.md):
+It is the VS Code analogue of [../../docs/playwright-interop.md](../../docs/playwright-interop.md):
 two clients (a debugger and a UI driver) sharing one Chrome DevTools Protocol
 endpoint.
 
 > **"Playwright CLI"** in this doc means the imperative
 > [`@playwright/cli`](https://www.npmjs.com/package/@playwright/cli) binary
 > (`playwright-cli`), **not** `npx playwright test`. See
-> [PLAYWRIGHT-INTEROP.md](PLAYWRIGHT-INTEROP.md) for the distinction.
+> [../../docs/playwright-interop.md](../../docs/playwright-interop.md) for the distinction.
 
 ## Prerequisites
 

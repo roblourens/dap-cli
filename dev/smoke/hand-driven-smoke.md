@@ -161,7 +161,7 @@ hand to prove the published CLI surface works.
 > [`@playwright/test`](https://www.npmjs.com/package/@playwright/test). The
 > sequence below uses `dap-cli evaluate` as the trigger so it has no
 > external Playwright dependency; for the imperative interop loop see
-> [PLAYWRIGHT-INTEROP.md](PLAYWRIGHT-INTEROP.md).
+> [../../docs/playwright-interop.md](../../docs/playwright-interop.md).
 
 ```bash
 # 1. Start controller (global)

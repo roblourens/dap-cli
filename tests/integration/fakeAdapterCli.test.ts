@@ -686,6 +686,21 @@ describe('fake adapter controller integration', () => {
     expect(stepOut.exitCode).toBe(0);
   });
 
+  test('auto-resolves --thread-id to the unique stopped thread for stack and continue', async () => {
+    const launch = await runCli(['launch', '--adapter', 'fake', '--script', 'auto-thread-resolve', '--name', 'auto-tid'], { env: testEnv.env });
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+
+    const stack = await runCli(['stack', '--name', 'auto-tid', '--levels', '1'], { env: testEnv.env });
+    expect(stack.exitCode, JSON.stringify(stack)).toBe(0);
+    expect(parseEnvelope<{ stackFrames: Array<{ id: number }> }>(stack.stdout).data.stackFrames).toEqual([expect.objectContaining({ id: 10 })]);
+    expect(stack.stderr).toContain('--thread-id not provided');
+
+    const continued = await runCli(['continue', '--name', 'auto-tid'], { env: testEnv.env });
+    expect(continued.exitCode, JSON.stringify(continued)).toBe(0);
+    expect(parseEnvelope<{ allThreadsContinued: boolean }>(continued.stdout).data.allThreadsContinued).toBe(true);
+    expect(continued.stderr).toContain('--thread-id not provided');
+  });
+
   test('reports adapter startup failures with stderr tail and log path diagnostics', async () => {
     const launch = await runCli(['launch', '--adapter', 'fake', '--script', 'stderr-close', '--name', 'bad-adapter'], { env: testEnv.env });
     const failure = launch.envelope as unknown as JsonFailureEnvelope;

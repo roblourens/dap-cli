@@ -908,7 +908,7 @@ export class ControllerServer {
       code: 'child_session_not_targetable',
       sessionId: status.id,
       diagnostics: [
-        `Child sessions are owned by their parent. Re-run the command with \`--name ${parentRef}\` — the parent owns threads, breakpoints, and the event stream for js-debug pwa-chrome (see docs/HAND-DRIVEN-SMOKE.md).`,
+        `Child sessions are owned by their parent. Re-run the command with \`--name ${parentRef}\` — the parent owns threads, breakpoints, and the event stream for js-debug pwa-chrome (see dev/smoke/hand-driven-smoke.md).`,
       ],
       data: {
         childSessionId: status.id,

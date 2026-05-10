@@ -4,7 +4,7 @@
 
 Playwright drives the browser UI. dap-cli controls and inspects debugger state. Keep those responsibilities separate and coordinate through polling.
 
-> Looking for the **VS Code** flavor of this workflow (driving Code OSS built from sources, breakpointing chat input)? See [VSCODE-CHAT-SMOKE.md](VSCODE-CHAT-SMOKE.md).
+> Looking for the **VS Code** flavor of this workflow (driving Code OSS built from sources, breakpointing chat input)? See [dev/smoke/vscode-chat-smoke.md](../dev/smoke/vscode-chat-smoke.md).
 
 ## Setup Order
 

@@ -147,23 +147,25 @@ When `breakpoints set` returns any breakpoint with `verified: false`, the CLI fo
 interface VerificationDiagnostic {
   unverifiedCount: number;        // count of breakpoints with verified === false
   totalCount: number;             // total breakpoints in the response
-  loadedSourcesCount: number;     // length of loadedSources response, or -1 on lookup failure
+  loadedSourcesCount: number;     // length of loadedSources response on the parent, or -1 on lookup failure
   matchingLoadedSources: Array<{ path: string; name?: string }>;
+  childSessionCount: number;      // count of js-debug child sessions attached to the parent
   hint: string;                   // one-line human/grep-friendly summary
   recipe: string;                 // literal command an agent should run next
 }
 ```
 
-The `hint` text distinguishes four failure modes:
+The `hint` text distinguishes five failure modes:
 
 | Condition | Hint phrase |
 |-----------|-------------|
-| `loadedSourcesCount === 0` | `wrong process` |
+| `loadedSourcesCount === 0 && childSessionCount === 0` | `wrong process` |
+| `loadedSourcesCount === 0 && childSessionCount > 0` | `parent has 0 loaded sources but session has N child session(s)` |
 | `loadedSourcesCount > 0 && matchingLoadedSources.length === 0` | `none match …. Check source maps / outFiles` |
 | `loadedSourcesCount > 0 && matchingLoadedSources.length > 0` | `Check breakpoint line numbers` |
 | Adapter does not advertise `supportsLoadedSourcesRequest` | `does not support loadedSources` |
 
-The `wrong process` phrase exists specifically so an agent grep can find it. Per `analysis.md` §3, "After the wrong attach, every dap-cli breakpoints set returned `verified: false`" — that failure mode now surfaces in-band instead of looking identical to a source-map mismatch. The `recipe` field is always the literal `dap-cli dap loaded-sources [--name <session>]` so the next-step is one read away.
+The `wrong process` phrase exists specifically so an agent grep can find it. Per `analysis.md` §3, "After the wrong attach, every dap-cli breakpoints set returned `verified: false`" — that failure mode now surfaces in-band instead of looking identical to a source-map mismatch. For multi-process js-debug attaches (`pwa-node` / `pwa-chrome`), the parent's loadedSources is always empty by design — the runtime sources live on the children — so the `childSessionCount > 0` branch fires instead, with hint text that names the child count and explicitly says this is normal. The `recipe` field is always the literal `dap-cli dap loaded-sources [--name <session>]` so the next-step is one read away.
 
 ## Evaluation and Branching Decisions
 

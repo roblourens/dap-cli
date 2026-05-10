@@ -409,3 +409,14 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 — docs describe verified behavior)*
 - [x] 16-02-PLAN.md — Mirror the auto-wrap rule, the launch-vs-attach verb-selection note, and the playwright-cli daemon-died recovery recipe across `docs/AGENT-WORKFLOWS.md`, `README.md`, `docs/PLAYWRIGHT-INTEROP.md`, and the user-level `~/.copilot/skills/dap-cli/` pair, with new `docsValidation.test.ts` grep gates pinning all three (PYEVAL-02, VERB-DOC-01, PWDOC-01)
+
+### Phase 17: Code OSS smoke scenario hardening — 20 attach scenarios driven by subagents
+
+**Goal:** Drive 20 distinct Code-OSS-only attach scenarios — one fresh subagent per scenario — to surface dap-cli bugs, dap-cli ergonomic papercuts, and dap-cli/launch-skill documentation gaps that only appear when an LLM agent is the user. Output is a structured 17-UAT.md classifying findings (bugs vs doc gaps vs papercuts) with one explicit recommended next step.
+**Requirements**: [DBG-01, DBG-02, DBG-03, DBG-04, DBG-05, DBG-06, AGNT-01, AGNT-02, AGNT-03, AGNT-05, TEST-04, TEST-06, TEST-07]
+**Depends on:** Phase 16
+**Plans:** 2 plans
+
+Plans:
+- [ ] 17-01-PLAN.md — Build the 20-scenario Code OSS attach matrix (17-SCENARIOS.md) with self-contained per-scenario subagent prompts that explicitly require the dap-cli skill + VS Code launch skill
+- [ ] 17-02-PLAN.md — Execute the 20 scenarios one fresh subagent at a time, record per-scenario results in 17-RESULTS.md (commit-per-row), then synthesize 17-UAT.md (bugs / doc gaps / papercuts / recommended next step)
