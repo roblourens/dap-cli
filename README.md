@@ -4,12 +4,6 @@ Give your agent debugging skills!
 
 A command-line debugger built for AI agents. Drive any [Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/) target — Node.js, Python, Chrome, custom adapters — from shell commands, with stable JSON output and `.vscode/launch.json` support.
 
-```bash
-npm install -g @roblourens/dap-cli
-```
-
-The binary is `dap-cli` (the package is scoped, but the command is not).
-
 ## Why
 
 Agents already know how to run shell commands. They don't know how to drive an IDE debugger. `dap-cli` closes that gap so an agent can:
@@ -29,7 +23,7 @@ The first time the agent uses an adapter, dap-cli provisions it (js-debug binary
 
 ## Install the agent skill
 
-The repo includes an [Open Plugins](https://open-plugins.com/) plugin. The [SKILL.md](dap-cli/skills/dap-cli/SKILL.md) at the root teaches your agent how to use the CLI — common commands, the polling loop, breakpoint verification, and language-specific gotchas for `js-debug` and `debugpy`.
+The repo includes an [Open Plugins](https://open-plugins.com/) plugin. The [SKILL.md](dap-cli/skills/dap-cli/SKILL.md) teaches your agent how to use the CLI — common commands, the polling loop, breakpoint verification, and language-specific gotchas for `js-debug` and `debugpy`.
 
 **VS Code (Copilot Chat agent mode):**
 
