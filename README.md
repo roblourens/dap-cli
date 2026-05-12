@@ -1,5 +1,7 @@
 # dap-cli
 
+Give your agent debugging skills!
+
 A command-line debugger built for AI agents. Drive any [Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/) target — Node.js, Python, Chrome, custom adapters — from shell commands, with stable JSON output and `.vscode/launch.json` support.
 
 ```bash
@@ -11,7 +13,7 @@ npm install -g dap-cli
 Agents already know how to run shell commands. They don't know how to drive an IDE debugger. `dap-cli` closes that gap so an agent can:
 
 - **Set breakpoints, step, and inspect variables** in any runtime with a DAP adapter — no ad-hoc `console.log` campaigns or re-building the program for every new question.
-- **Reuse your `.vscode/launch.json` configs** — `dap-cli attach --config "Attach to App"` runs the same configuration you'd pick from the Run and Debug picker in VS Code.
+- **Reuse your `.vscode/launch.json` configs** — `dap-cli launch --config "Launch App"` runs the same configuration you'd pick from the Run and Debug picker in VS Code.
 - **Coordinate with other tools like [`playwright-cli`](https://www.npmjs.com/package/@playwright/cli)** — Playwright drives the page, dap-cli polls the debugger, both attached to the same Chromium instance.
 
 ## Install the CLI
@@ -25,7 +27,7 @@ The first time the agent uses an adapter, dap-cli provisions it (js-debug binary
 
 ## Install the agent skill
 
-The repo doubles as an [Open Plugins](https://open-plugins.com/) plugin. The [SKILL.md](skills/dap-cli/SKILL.md) at the root teaches your agent how to use the CLI — common commands, the polling loop, breakpoint verification, and language-specific gotchas for `js-debug` and `debugpy`.
+The repo includes an [Open Plugins](https://open-plugins.com/) plugin. The [SKILL.md](dap-cli/skills/dap-cli/SKILL.md) at the root teaches your agent how to use the CLI — common commands, the polling loop, breakpoint verification, and language-specific gotchas for `js-debug` and `debugpy`.
 
 **VS Code (Copilot Chat agent mode):**
 
@@ -38,11 +40,9 @@ The repo doubles as an [Open Plugins](https://open-plugins.com/) plugin. The [SK
 /plugin install roblourens/dap-cli
 ```
 
-**Codex / harnesses without plugin support:** point the agent at [skills/dap-cli/SKILL.md](skills/dap-cli/SKILL.md) however your harness loads custom skills.
-
 ## Quick taste
 
-The philosophy: drive the target with explicit commands, poll `status` for state changes, every reply is a JSON envelope. The CLI is designed for agents but works fine for humans too — pass `--human` for readable output.
+The philosophy: drive the target with explicit commands, poll `status` for state changes, every reply is a JSON envelope. Pass `--human` for human-readable output.
 
 ```bash
 # launch a Node script paused at entry
@@ -78,27 +78,9 @@ dap-cli launch --config "Attach to App" \
 
 `--workspace` defaults to the current directory; pass it explicitly to point at a different repo. Compounds and most VS Code launch variables (`${workspaceFolder}`, `${env:NAME}`, etc.) are supported. See [docs/adapter-setup.md](docs/adapter-setup.md) for the full list.
 
-## Output
-
-JSON by default; non-TTY stdout always gets JSON regardless of any setting.
-
-```json
-{ "ok": true,  "data": { /* … */ }, "meta": { "command": "status", "timestamp": "…" } }
-{ "ok": false, "error": { "code": "adapter_not_found", "category": "usage", "exitCode": 2, "diagnostics": [] }, "meta": { /* … */ } }
-```
-
-For a person at a terminal:
-
-```bash
-dap-cli sessions --human
-DAP_CLI_HUMAN=1 dap-cli status
-```
-
-Human output is for reading, not parsing.
-
 ## Multiple sessions
 
-dap-cli is designed to be running several debug sessions at once. Pass `--name <session>` to target one explicitly; when omitted, commands act on the active session (the most recent one, or whatever was set with `dap-cli use <name>`).
+dap-cli is able to be running several debug sessions at once. Pass `--name <session>` to target one explicitly; when omitted, commands act on the active session (the most recent one, or whatever was set with `dap-cli use <name>`).
 
 ```bash
 dap-cli launch --program api.js --name api
@@ -109,7 +91,7 @@ dap-cli close api
 
 ## Going deeper
 
-Most of what an agent needs lives in [the SKILL.md](skills/dap-cli/SKILL.md). For longer-form material:
+Most of what an agent needs lives in [the SKILL.md](dap-cli/skills/dap-cli/SKILL.md). For longer-form material:
 
 | Doc | What it covers |
 |---|---|
