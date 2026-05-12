@@ -66,6 +66,7 @@ interface DapEventsCommandOptions {
 export function registerDapCoreCommands(program: Command, output: OutputWriter): void {
   program
     .command('launch')
+    .helpGroup('Launch & attach')
     .description('Start a DAP launch session using an adapter id, named launch config, or fake adapter')
     .option('--adapter <adapter>', 'adapter id (inferred from --type or --program when omitted)')
     .option('--config <name>', 'named .vscode/launch.json configuration')
@@ -95,6 +96,7 @@ export function registerDapCoreCommands(program: Command, output: OutputWriter):
 
   program
     .command('attach')
+    .helpGroup('Launch & attach')
     .description('Start a DAP attach session using an adapter id, named launch config, or fake adapter')
     .option('--adapter <adapter>', 'adapter id (inferred from --type or --program when omitted)')
     .option('--config <name>', 'named .vscode/launch.json configuration')
@@ -124,6 +126,7 @@ export function registerDapCoreCommands(program: Command, output: OutputWriter):
 
   program
     .command('request')
+    .helpGroup('DAP protocol escape hatches')
     .argument('<command>', 'DAP request command')
     .option('--json <json>', 'request arguments as JSON', '{}')
     .option('--name <name>', 'session name or id')
@@ -144,6 +147,7 @@ Examples:
 
   program
     .command('capabilities')
+    .helpGroup('DAP protocol escape hatches')
     .option('--name <name>', 'session name or id')
     .description('Return adapter capabilities for a fake/custom session')
     .action(async (options: DapCapabilitiesCommandOptions) => {
@@ -152,6 +156,7 @@ Examples:
 
   program
     .command('events')
+    .helpGroup('DAP protocol escape hatches')
     .option('--name <name>', 'session name or id')
     .option('--after-cursor <cursor>', 'return events after cursor')
     .option('--limit <count>', 'maximum events to return')

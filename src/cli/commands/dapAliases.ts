@@ -103,7 +103,7 @@ interface SessionsListEntry {
 }
 
 export function registerDapAliasCommands(program: Command, output: OutputWriter): void {
-  const breakpoints = program.command('breakpoints').description('Manage source breakpoints');
+  const breakpoints = program.command('breakpoints').helpGroup('Breakpoints').description('Manage source breakpoints');
   breakpoints
     .command('set')
     .requiredOption('--source <path>', 'source path')
@@ -185,11 +185,11 @@ export function registerDapAliasCommands(program: Command, output: OutputWriter)
       }
     });
 
-  program.command('threads').option('--name <name>', 'session name or id').description('List active threads in a paused session').addHelpText('after', workflowHelp()).action(async (options: NamedOptions) => {
+  program.command('threads').helpGroup('Paused-state inspection').option('--name <name>', 'session name or id').description('List active threads in a paused session').addHelpText('after', workflowHelp()).action(async (options: NamedOptions) => {
     await sendAliasRequest(output, 'threads', {}, options.name, 'threads');
   });
 
-  program.command('stack').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--start-frame <number>', 'start frame').option('--levels <number>', 'frame count').option('--name <name>', 'session name or id').description('Get stack frames for a thread (auto-resolves to the stopped thread if --thread-id omitted)').addHelpText('after', workflowHelp()).action(async (options: StackOptions) => {
+  program.command('stack').helpGroup('Paused-state inspection').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--start-frame <number>', 'start frame').option('--levels <number>', 'frame count').option('--name <name>', 'session name or id').description('Get stack frames for a thread (auto-resolves to the stopped thread if --thread-id omitted)').addHelpText('after', workflowHelp()).action(async (options: StackOptions) => {
     const threadId = await resolveThreadId(output, options.threadId, options.name, 'stack', 'stopped');
     await sendAliasRequest(output, 'stackTrace', compactObject({
       threadId,
@@ -198,15 +198,15 @@ export function registerDapAliasCommands(program: Command, output: OutputWriter)
     }), options.name, 'stack');
   });
 
-  program.command('scopes').requiredOption('--frame-id <number>', 'frame id').option('--name <name>', 'session name or id').description('List scopes for a stack frame (requires frame-id from stack command)').addHelpText('after', workflowHelp()).action(async (options: ScopesOptions) => {
+  program.command('scopes').helpGroup('Paused-state inspection').requiredOption('--frame-id <number>', 'frame id').option('--name <name>', 'session name or id').description('List scopes for a stack frame (requires frame-id from stack command)').addHelpText('after', workflowHelp()).action(async (options: ScopesOptions) => {
     await sendAliasRequest(output, 'scopes', { frameId: parseRequiredIntegerOption(options.frameId, 'frame-id') }, options.name, 'scopes');
   });
 
-  program.command('variables').requiredOption('--variables-reference <number>', 'variables reference').option('--name <name>', 'session name or id').description('Inspect variables for a scope (requires variables-reference from scopes command)').addHelpText('after', workflowHelp()).action(async (options: VariablesOptions) => {
+  program.command('variables').helpGroup('Paused-state inspection').requiredOption('--variables-reference <number>', 'variables reference').option('--name <name>', 'session name or id').description('Inspect variables for a scope (requires variables-reference from scopes command)').addHelpText('after', workflowHelp()).action(async (options: VariablesOptions) => {
     await sendAliasRequest(output, 'variables', { variablesReference: parseRequiredIntegerOption(options.variablesReference, 'variables-reference') }, options.name, 'variables');
   });
 
-  program.command('source').requiredOption('--source-reference <number>', 'source reference').option('--path <path>', 'source path').option('--name <name>', 'session name or id').description('Return source content').action(async (options: SourceOptions) => {
+  program.command('source').helpGroup('Paused-state inspection').requiredOption('--source-reference <number>', 'source reference').option('--path <path>', 'source path').option('--name <name>', 'session name or id').description('Return source content').action(async (options: SourceOptions) => {
     const path = options.path;
     await sendAliasRequest(output, 'source', compactObject({
       sourceReference: parseRequiredIntegerOption(options.sourceReference, 'source-reference'),
@@ -214,7 +214,7 @@ export function registerDapAliasCommands(program: Command, output: OutputWriter)
     }), options.name, 'source');
   });
 
-  program.command('evaluate').requiredOption('--expression <expr>', 'expression').option('--frame-id <number>', 'frame id (auto-resolved to topmost paused frame when omitted)').option('--context <context>', 'evaluation context').option('--name <name>', 'session name or id').description('Evaluate an expression (auto-uses topmost frame of most-recently-stopped thread when paused)').action(async (options: EvaluateOptions) => {
+  program.command('evaluate').helpGroup('Paused-state inspection').requiredOption('--expression <expr>', 'expression').option('--frame-id <number>', 'frame id (auto-resolved to topmost paused frame when omitted)').option('--context <context>', 'evaluation context').option('--name <name>', 'session name or id').description('Evaluate an expression (auto-uses topmost frame of most-recently-stopped thread when paused)').action(async (options: EvaluateOptions) => {
     let frameId = parseIntegerOption(options.frameId, 'frame-id');
     if (frameId === undefined) {
       frameId = await resolveAutoFrameId(output, options.name);
@@ -226,23 +226,23 @@ export function registerDapAliasCommands(program: Command, output: OutputWriter)
     }), options.name, 'evaluate');
   });
 
-  program.command('continue').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--single-thread', 'resume only one thread').option('--name <name>', 'session name or id').description('Continue execution (auto-resolves to the stopped thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
+  program.command('continue').helpGroup('Execution control').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--single-thread', 'resume only one thread').option('--name <name>', 'session name or id').description('Continue execution (auto-resolves to the stopped thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
     await sendThreadControlAlias(output, 'continue', options, 'continue', 'stopped');
   });
 
-  program.command('pause').option('--thread-id <number>', 'thread id (defaults to the unique running thread when omitted)').option('--name <name>', 'session name or id').description('Pause execution (auto-resolves to the unique thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
+  program.command('pause').helpGroup('Execution control').option('--thread-id <number>', 'thread id (defaults to the unique running thread when omitted)').option('--name <name>', 'session name or id').description('Pause execution (auto-resolves to the unique thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
     await sendThreadControlAlias(output, 'pause', options, 'pause', 'any');
   });
 
-  program.command('next').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--single-thread', 'step only one thread').option('--name <name>', 'session name or id').description('Step over (auto-resolves to the stopped thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
+  program.command('next').helpGroup('Execution control').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--single-thread', 'step only one thread').option('--name <name>', 'session name or id').description('Step over (auto-resolves to the stopped thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
     await sendThreadControlAlias(output, 'next', options, 'next', 'stopped');
   });
 
-  program.command('step-in').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--single-thread', 'step only one thread').option('--target-id <number>', 'step target id').option('--name <name>', 'session name or id').description('Step in (auto-resolves to the stopped thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
+  program.command('step-in').helpGroup('Execution control').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--single-thread', 'step only one thread').option('--target-id <number>', 'step target id').option('--name <name>', 'session name or id').description('Step in (auto-resolves to the stopped thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
     await sendThreadControlAlias(output, 'stepIn', options, 'step-in', 'stopped');
   });
 
-  program.command('step-out').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--single-thread', 'step only one thread').option('--name <name>', 'session name or id').description('Step out (auto-resolves to the stopped thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
+  program.command('step-out').helpGroup('Execution control').option('--thread-id <number>', 'thread id (defaults to the unique stopped thread when omitted)').option('--single-thread', 'step only one thread').option('--name <name>', 'session name or id').description('Step out (auto-resolves to the stopped thread if --thread-id omitted)').action(async (options: ThreadControlOptions) => {
     await sendThreadControlAlias(output, 'stepOut', options, 'step-out', 'stopped');
   });
 }

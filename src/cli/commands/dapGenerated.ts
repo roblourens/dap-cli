@@ -13,6 +13,7 @@ export interface GeneratedDapCommandOptions {
 export function registerGeneratedDapCommands(program: Command, output: OutputWriter): void {
   const dap = program
     .command('dap')
+    .helpGroup('DAP protocol escape hatches')
     .description('Send generated DAP requests by protocol command name');
 
   for (const metadata of dapGeneratedCommands) {

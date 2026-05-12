@@ -6,6 +6,7 @@ import type { OutputWriter } from '../outputWriter.js';
 export function registerSessionCommands(program: Command, output: OutputWriter): void {
   program
     .command('sessions')
+    .helpGroup('Sessions')
     .description('List known debug sessions (child sessions are hidden by default; use --show-children to include them)')
     .option('--show-children', 'include child sessions (e.g. js-debug pwa-chrome page-level children) in the listing')
     .option('--all', 'alias for --show-children')
@@ -16,6 +17,7 @@ export function registerSessionCommands(program: Command, output: OutputWriter):
 
   program
     .command('use')
+    .helpGroup('Sessions')
     .argument('<name>', 'session name or id')
     .description('Set the active debug session')
     .action(async (name: string) => {
@@ -24,6 +26,7 @@ export function registerSessionCommands(program: Command, output: OutputWriter):
 
   program
     .command('detach')
+    .helpGroup('Sessions')
     .option('--name <name>', 'session name or id')
     .description('Detach from a debug session')
     .action(async (options: { name?: string }) => {
@@ -32,6 +35,7 @@ export function registerSessionCommands(program: Command, output: OutputWriter):
 
   program
     .command('close')
+    .helpGroup('Sessions')
     .argument('[name]', 'session name or id (positional, optional)')
     .option('--name <name>', 'session name or id')
     .description('Close a debug session')
@@ -53,6 +57,7 @@ export function registerSessionCommands(program: Command, output: OutputWriter):
 
   program
     .command('cleanup')
+    .helpGroup('Sessions')
     .option('--force', 'alias for --purge (legacy)')
     .option('--purge', 'also remove records for sessions dap-cli does not own')
     .description('Clean up stale session state')

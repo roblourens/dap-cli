@@ -21,6 +21,7 @@ interface ControllerStartResult {
 export function registerControllerCommands(program: Command, output: OutputWriter): void {
   program
     .command('start')
+    .helpGroup('Controller lifecycle')
     .description('Start the persistent controller for debug sessions')
     .action(async () => {
       output.success(await startControllerProcess(), { command: 'start' });
@@ -28,6 +29,7 @@ export function registerControllerCommands(program: Command, output: OutputWrite
 
   program
     .command('status')
+    .helpGroup('Controller lifecycle')
     .option('--name <name>', 'session name or id')
     .description('Poll session status (running, stopped, terminated)')
     .addHelpText('after', `
@@ -48,6 +50,7 @@ Examples:
 
   program
     .command('stop')
+    .helpGroup('Controller lifecycle')
     .option('--name <name>', 'session name or id')
     .description('Stop a debug session, or stop the controller when no session is selected')
     .action(async (options: { name?: string }) => {
@@ -69,6 +72,7 @@ Examples:
 
   program
     .command('stop-controller')
+    .helpGroup('Controller lifecycle')
     .description('Shut down the persistent controller (does not affect on-disk session records)')
     .action(async () => {
       const result = await stopControllerProcess();
