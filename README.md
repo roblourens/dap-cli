@@ -5,8 +5,10 @@ Give your agent debugging skills!
 A command-line debugger built for AI agents. Drive any [Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/) target — Node.js, Python, Chrome, custom adapters — from shell commands, with stable JSON output and `.vscode/launch.json` support.
 
 ```bash
-npm install -g dap-cli
+npm install -g @roblourens/dap-cli
 ```
+
+The binary is `dap-cli` (the package is scoped, but the command is not).
 
 ## Why
 
@@ -19,7 +21,7 @@ Agents already know how to run shell commands. They don't know how to drive an I
 ## Install the CLI
 
 ```bash
-npm install -g dap-cli
+npm install -g @roblourens/dap-cli
 dap-cli --version
 ```
 

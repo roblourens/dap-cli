@@ -5,7 +5,9 @@ description: "Use when: an agent needs to debug, inspect, or control a local pro
 
 # Debug Adapter Control with dap-cli
 
-`dap-cli` is an agent-facing CLI for the Debug Adapter Protocol. It's language-agnostic — any DAP adapter (js-debug, debugpy, custom) works the same way. The CLI is assumed to be on `PATH`; if it isn't, the user installed it as `npx dap-cli`.
+`dap-cli` is an agent-facing CLI for the Debug Adapter Protocol. It's language-agnostic — any DAP adapter (js-debug, debugpy, custom) works the same way.
+
+If the `dap-cli` command is not on `PATH`, install it with `npm install -g @roblourens/dap-cli` (the package is scoped, the binary is `dap-cli`). One-off invocations also work via `npx -p @roblourens/dap-cli dap-cli ...`.
 
 The model is intentionally simple:
 
