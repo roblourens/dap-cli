@@ -68,6 +68,13 @@ class FakeAdapterEndpoint implements DapTransport {
    */
   public readonly responders = new Map<string, (request: DapRequestMessage) => unknown>();
   public readonly failures = new Map<string, string>();
+  /**
+   * Commands listed here are received but never get a response. Used by
+   * Phase 17 S-08 Bug 1 tests to model a child stuck mid-handshake (e.g.
+   * `configurationDone` never returns), which leaves its `readyPromise`
+   * pending forever.
+   */
+  public readonly silent = new Set<string>();
   private readonly parser = new DapMessageParser();
   private serverSeq = 1000;
   private closed = false;
@@ -118,6 +125,11 @@ class FakeAdapterEndpoint implements DapTransport {
   private autoRespond(request: DapRequestMessage): void {
     const seq = this.serverSeq;
     this.serverSeq += 1;
+    if (this.silent.has(request.command)) {
+      // Intentional black hole — emit no response, no event. Models a
+      // child whose handshake stalls (Phase 17 S-08 Bug 1).
+      return;
+    }
     const responder = this.responders.get(request.command);
     const failureMessage = this.failures.get(request.command);
     if (failureMessage !== undefined) {
@@ -139,6 +151,17 @@ async function tick(times = 1): Promise<void> {
   for (let i = 0; i < times; i += 1) {
     await new Promise<void>(resolve => setImmediate(resolve));
   }
+}
+
+async function waitForChildRegistration(coordinator: ChildSessionCoordinator, expectedCount = 1): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline) {
+    if (coordinator.listChildSessionIds().length >= expectedCount) {
+      return;
+    }
+    await tick(2);
+  }
+  throw new Error(`Timed out waiting for ${expectedCount} child(ren) to register`);
 }
 
 describe('ChildSessionCoordinator paused-state mirroring (H-1a/H-1b)', () => {
@@ -1265,6 +1288,100 @@ describe('ChildSessionCoordinator paused-first routing (PAUSED-ROUTE-01)', () =>
       threads = (result!.value as { threads: Array<{ id: number }> }).threads;
       expect(threads.map(t => t.id)).toEqual([2]);
     } finally {
+      await coordinator.dispose();
+      await parentClient.close();
+    }
+  });
+});
+
+/**
+ * Phase 17 S-08 Bug 1 (17-S08-FINDINGS.md): if a js-debug child is stuck
+ * mid-handshake (e.g. attach to an Electron utility process where
+ * `configurationDone` never returns), the previous unbounded
+ * `Promise.allSettled([...].readyPromise)` left `setBreakpoints` hanging
+ * past the 5s controller IPC budget and the agent saw a misleading
+ * `controller_request_timeout`. The bounded variant surfaces a
+ * `child_readiness_timeout` warning per still-pending child and proceeds.
+ */
+describe('ChildSessionCoordinator awaitChildrenReadyBounded (S-08 Bug 1)', () => {
+  test('routeSetBreakpointsThroughParent surfaces child_readiness_timeout warning when child handshake stalls', async () => {
+    const manager = await SessionManager.create({ dapCliHome });
+    const parent = await manager.create({ name: 'pwa-stuck', adapter: 'js-debug' });
+    const parentEndpoint = new FakeAdapterEndpoint('parent');
+    const parentClient = new DapClient(parentEndpoint);
+    const stuckChild = new FakeAdapterEndpoint('stuck-child');
+    // Black-hole `configurationDone` so the child's readyPromise never settles.
+    stuckChild.silent.add('configurationDone');
+    parentEndpoint.responders.set('setBreakpoints', () => ({ breakpoints: [{ id: 1, verified: true, line: 9 }] }));
+
+    const coordinator = new ChildSessionCoordinator({
+      parentSessionId: parent.id,
+      parentName: parent.name,
+      parentClient,
+      adapterId: 'js-debug',
+      ownedAdapter: { startedByDapCli: true, stderrTail: [] },
+      sessionManager: manager,
+      parentEventCache: new DapEventCache(),
+      openChildTransport: () => Promise.resolve(stuckChild),
+      setBreakpointsVerificationTimeoutMs: 50,
+      awaitChildrenReadyTimeoutMs: 50,
+    });
+    coordinator.attach();
+
+    try {
+      parentEndpoint.emitReverseRequest('startDebugging', {
+        request: 'launch',
+        configuration: { __pendingTargetId: 'tgt-stuck', type: 'pwa-node' },
+      });
+      await waitForChildRegistration(coordinator);
+
+      const intercepted = await coordinator.maybeIntercept('setBreakpoints', { source: { path: '/repo/server.js' }, breakpoints: [{ line: 9 }], lines: [9] });
+      const result = intercepted!.value as { breakpoints: Array<unknown>; warnings?: Array<{ sessionId: string; message: string }> };
+      expect(result.breakpoints).toBeDefined();
+      expect(result.warnings).toBeDefined();
+      expect(result.warnings!.some(w => w.message === 'child_readiness_timeout')).toBe(true);
+    } finally {
+      // Unblock the stalled handshake so dispose() can drain bring-ups.
+      await stuckChild.close();
+      await coordinator.dispose();
+      await parentClient.close();
+    }
+  });
+
+  test('fanOutSetBreakpoints surfaces child_readiness_timeout warning for non-js-debug stalled child', async () => {
+    const manager = await SessionManager.create({ dapCliHome });
+    const parent = await manager.create({ name: 'compound-stuck', adapter: 'compound' });
+    const parentEndpoint = new FakeAdapterEndpoint('parent');
+    const parentClient = new DapClient(parentEndpoint);
+    const stuckChild = new FakeAdapterEndpoint('stuck-child');
+    stuckChild.silent.add('configurationDone');
+
+    const coordinator = new ChildSessionCoordinator({
+      parentSessionId: parent.id,
+      parentName: parent.name,
+      parentClient,
+      adapterId: 'compound',
+      ownedAdapter: { startedByDapCli: true, stderrTail: [] },
+      sessionManager: manager,
+      parentEventCache: new DapEventCache(),
+      openChildTransport: () => Promise.resolve(stuckChild),
+      awaitChildrenReadyTimeoutMs: 50,
+    });
+    coordinator.attach();
+
+    try {
+      parentEndpoint.emitReverseRequest('startDebugging', {
+        request: 'launch',
+        configuration: { __pendingTargetId: 'tgt-fan-stuck', type: 'node' },
+      });
+      await waitForChildRegistration(coordinator);
+
+      const intercepted = await coordinator.maybeIntercept('setBreakpoints', { source: { path: '/repo/server.js' }, breakpoints: [{ line: 9 }], lines: [9] });
+      const result = intercepted!.value as { breakpoints: Array<unknown>; warnings?: Array<{ sessionId: string; message: string }> };
+      expect(result.warnings).toBeDefined();
+      expect(result.warnings!.some(w => w.message === 'child_readiness_timeout')).toBe(true);
+    } finally {
+      await stuckChild.close();
       await coordinator.dispose();
       await parentClient.close();
     }

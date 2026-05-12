@@ -3,7 +3,7 @@ import { CliError, internalError, usageError } from './errors.js';
 import { ExitCode } from './exitCodes.js';
 import type { JsonWritable } from './output.js';
 import { createOutputWriter } from './outputWriter.js';
-import { createProgram, getProgramHumanOption } from './program.js';
+import { createProgram, getProgramHumanOption, getProgramOutputWriter } from './program.js';
 import { resolveOutputMode } from './outputMode.js';
 
 export interface CliStreams {
@@ -14,7 +14,10 @@ export interface CliStreams {
 export async function main(args: readonly string[], program: Command | undefined = undefined, streams: CliStreams = process): Promise<ExitCode> {
   const command = getCommandName(args);
   const activeProgram = program ?? createProgram({ stdout: streams.stdout, stderr: streams.stderr });
-  const output = createOutputWriter({
+  // Reuse the program's writer so warnings buffered by command handlers (e.g.
+  // auto-resolve hints from `continue --thread-id`) survive into the top-level
+  // failure envelope's meta.warnings instead of being silently dropped.
+  const output = getProgramOutputWriter(activeProgram) ?? createOutputWriter({
     stream: streams.stdout,
     errorStream: streams.stderr,
     resolveMode: () => resolveOutputMode({ cliHuman: getProgramHumanOption(activeProgram), isStdoutTTY: streams.stdout.isTTY === true, env: process.env }),

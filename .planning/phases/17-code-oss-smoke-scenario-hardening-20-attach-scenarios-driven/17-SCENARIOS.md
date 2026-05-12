@@ -239,8 +239,9 @@ All scenarios target only `/Users/roblou/code/vscode`. No other repos.
 - **launch_recipe:**
   ```bash
   cd /Users/roblou/code/vscode
-  ./scripts/code.sh --user-data-dir .build/chat-memory-smoke/user-data --inspect-shared=5879
+  ./scripts/code.sh --user-data-dir .build/chat-memory-smoke/user-data --inspect-brk-sharedprocess=5879
   ```
+  Note: the real VS Code flags are `--inspect-sharedprocess=PORT` and `--inspect-brk-sharedprocess=PORT` (no plain `--inspect-shared`). For this scenario you need `-brk`, otherwise the shared process boots past `init()` before any agent can race an attach in.
 - **area of interest:** `src/vs/code/electron-utility/sharedProcess/sharedProcessMain.ts`, around the `SharedProcessMain` class declaration (currently line 148).
 - **success criteria:**
   1. Attached.
@@ -262,10 +263,16 @@ All scenarios target only `/Users/roblou/code/vscode`. No other repos.
 
   Launch Code OSS:
     cd /Users/roblou/code/vscode
-    ./scripts/code.sh --user-data-dir .build/chat-memory-smoke/user-data --inspect-shared=5879
+    ./scripts/code.sh --user-data-dir .build/chat-memory-smoke/user-data --inspect-brk-sharedprocess=5879
 
-  Trigger a fresh shared-process boot however you like — the simplest path is
-  Cmd+Q the window and relaunch with the same flags.
+  (Real VS Code flag is `--inspect-brk-sharedprocess=PORT` — there is no
+  `--inspect-shared`. Without `-brk`, the shared process boots past `init()`
+  before any agent can race an attach in.)
+
+  Trigger a fresh shared-process boot however you like. The most reliable
+  path is `pkill -f 'Code - OSS'` (or quit by hand) and then relaunch with
+  the same flags — AppleScript Cmd+Q is often blocked by Accessibility
+  permissions in CI-style environments.
 
   Success criteria:
     1. session attached.
@@ -399,16 +406,17 @@ All scenarios target only `/Users/roblou/code/vscode`. No other repos.
 
 ### S-07 — Read the user's Quick Open query out of the search process
 
-- **focus:** Pause inside the search process when the user types a Quick Open query and read the query string.
-- **target_process:** Search service
+- **focus:** Pause inside the search code when the user types a Quick Open query and read the query string.
+- **target_process:** Extension host (search now runs there — see note below)
 - **adapter_type (hint):** pwa-node
 - **launch_verb (hint):** attach
 - **launch_recipe:**
   ```bash
   cd /Users/roblou/code/vscode
-  ./scripts/code.sh --user-data-dir .build/chat-memory-smoke/user-data --inspect-search=5876
+  ./scripts/code.sh --user-data-dir .build/chat-memory-smoke/user-data --inspect-extensions=5870
   ```
-- **area of interest:** `src/vs/workbench/services/search/node/rawSearchService.ts`, around the `fileSearch` declaration (currently line 32).
+  Note: `--inspect-search=5876` is declared in `argv.ts` but **dead** in current OSS — `rawSearchService.ts` is now instantiated inside the extension host (`src/vs/workbench/api/node/extHostSearch.ts:101` does `new SearchService(...)`). There is no separate search worker process. Attach to the ext-host inspector (`--inspect-extensions=5870`) instead.
+- **area of interest:** `src/vs/workbench/services/search/node/rawSearchService.ts`. The `fileSearch` entry around line 37 is fine as a first stop, but the actual code path Quick Open hits is `doFileSearch` around line 92.
 - **success criteria:**
   1. Attached, breakpoint verified.
   2. Paused on Cmd+P + typed query.
@@ -429,9 +437,17 @@ All scenarios target only `/Users/roblou/code/vscode`. No other repos.
 
   Launch Code OSS:
     cd /Users/roblou/code/vscode
-    ./scripts/code.sh --user-data-dir .build/chat-memory-smoke/user-data --inspect-search=5876
+    ./scripts/code.sh --user-data-dir .build/chat-memory-smoke/user-data --inspect-extensions=5870
+
+  Note: `--inspect-search=5876` is declared but dead in current OSS — search
+  runs in the extension host now (see `src/vs/workbench/api/node/extHostSearch.ts:101`).
+  Attach to the ext-host inspector instead. Set the breakpoint in
+  `rawSearchService.ts` (the file is still imported into the ext-host).
 
   Trigger by pressing Cmd+P in Code OSS and typing any query (e.g. "x").
+  If multiple OSS windows are visible via CDP, drive the one that has a
+  workspace folder open — Quick Open in a no-folder window won't reach the
+  file-search code path.
 
   Success criteria:
     1. session attached, breakpoint verified.
@@ -454,15 +470,19 @@ All scenarios target only `/Users/roblou/code/vscode`. No other repos.
 ### S-08 — Pause the agent host process
 
 - **focus:** Attach to the agent host and pause it inside its bootstrap.
-- **target_process:** Agent host
+- **target_process:** Agent host (Electron utility process, sub-type `node.mojom.NodeService`)
 - **adapter_type (hint):** pwa-node
 - **launch_verb (hint):** attach
+- **prereq:** the agent host only spawns when `chat.agentHost.enabled: true`. The default is `false` (see `chat.contribution.ts`). Write the setting into `.build/chat-memory-smoke/user-data/User/settings.json` before launch, otherwise `AgentHostProcessManager` is never constructed and inspector port 5878 stays closed even with `--inspect-agenthost`.
 - **launch_recipe:**
   ```bash
   cd /Users/roblou/code/vscode
-  ./scripts/code.sh --agents --user-data-dir .build/chat-memory-smoke/user-data --inspect-agenthost=5878
+  mkdir -p .build/chat-memory-smoke/user-data/User
+  echo '{"chat.agentHost.enabled": true}' > .build/chat-memory-smoke/user-data/User/settings.json
+  ./scripts/code.sh --user-data-dir .build/chat-memory-smoke/user-data --inspect-brk-agenthost=5878
   ```
-- **area of interest:** `src/vs/server/node/server.main.ts` near the top of bootstrap (currently around line 11).
+  The host spawns lazily when a renderer requests the connection. After launch, drive activity in the Agents window so `_onRequestConnection.fire()` runs.
+- **area of interest:** `src/vs/platform/agentHost/node/agentHostMain.ts`, around the `startAgentHost()` call (currently line 65). NOT `src/vs/server/node/server.main.ts` — that's the remote server, a different process.
 - **success criteria:**
   1. Attached.
   2. Paused on bootstrap or first request.
@@ -478,15 +498,23 @@ All scenarios target only `/Users/roblou/code/vscode`. No other repos.
   Scenario S-08 — Pause the agent host process.
 
   Goal: using dap-cli, attach to Code OSS's agent host process and pause it
-  inside its bootstrap (`src/vs/server/node/server.main.ts`).
+  inside its bootstrap (`src/vs/platform/agentHost/node/agentHostMain.ts`,
+  around `startAgentHost()` near line 65). The agent host runs as an
+  Electron utility process (sub-type `node.mojom.NodeService`).
+
+  Prereq: the agent host only spawns when `chat.agentHost.enabled: true`.
+  Default is false. Set it before launch:
+    cd /Users/roblou/code/vscode
+    mkdir -p .build/chat-memory-smoke/user-data/User
+    echo '{"chat.agentHost.enabled": true}' > .build/chat-memory-smoke/user-data/User/settings.json
 
   Launch Code OSS:
-    cd /Users/roblou/code/vscode
-    ./scripts/code.sh --agents --user-data-dir .build/chat-memory-smoke/user-data --inspect-agenthost=5878
+    ./scripts/code.sh --user-data-dir .build/chat-memory-smoke/user-data --inspect-brk-agenthost=5878
 
-  If --inspect-agenthost isn't recognized on the current branch, mark
-  result: blocked with that as the reason. If it works, drive activity in the
-  Agents window so the agent host runs work and your breakpoint can fire.
+  After launch, drive activity in the Agents window so the host actually
+  spawns (it spawns lazily on `_onRequestConnection.fire()`). If port 5878
+  never opens after triggering agent activity, mark result: blocked with
+  that as the reason.
 
   Success criteria:
     1. session attached.
@@ -1024,7 +1052,7 @@ All scenarios target only `/Users/roblou/code/vscode`. No other repos.
 
 ### S-18 — Evaluate REPL on a renderer with no paused frame
 
-- **focus:** Show that REPL-context evaluate works without a paused frame, and that the auto-frame short form errors *cleanly* (not as `controllerUnavailable`) when nothing is paused.
+- **focus:** Show that REPL-context evaluate works without a paused frame, and that the auto-frame short form follows the Phase 11 contract when nothing is paused: it sends evaluate without `frameId`, emits the not-paused warning, and uses adapter REPL context rather than failing.
 - **target_process:** Renderer
 - **adapter_type (hint):** pwa-chrome
 - **launch_verb (hint):** attach
@@ -1036,7 +1064,7 @@ All scenarios target only `/Users/roblou/code/vscode`. No other repos.
   ```
 - **area of interest:** none — pure REPL.
 - **success criteria:**
-  1. Auto-frame `evaluate` (no `--frame-id`, nothing paused) returns a structured error (not `controllerUnavailable`).
+  1. Auto-frame `evaluate` (no `--frame-id`, nothing paused) does not return `controllerUnavailable`; it either succeeds in adapter REPL context with a warning containing `session not paused`, or returns a structured adapter error.
   2. Explicit REPL-context `evaluate` of `navigator.userAgent` returns a string containing `Electron`.
   3. Cleanup clean.
 - **cleanup:** standard sweep.
@@ -1050,8 +1078,11 @@ All scenarios target only `/Users/roblou/code/vscode`. No other repos.
 
   Goal: using dap-cli, attach to the renderer (no breakpoint, no pause) and
   prove two things:
-    1. the auto-frame short form of `evaluate` returns a *structured error*
-       (not the misleading `controllerUnavailable`) when nothing is paused.
+    1. the auto-frame short form of `evaluate` follows the Phase 11 contract
+       when nothing is paused: it does not return the old misleading
+       `controllerUnavailable` error; it may succeed in adapter REPL context
+       with a `session not paused` warning, or return a structured adapter
+       error.
     2. the explicit REPL-context form of `evaluate` returns a useful value
        (e.g. `navigator.userAgent` should contain "Electron").
 
@@ -1061,8 +1092,9 @@ All scenarios target only `/Users/roblou/code/vscode`. No other repos.
     ./scripts/code.sh --user-data-dir .build/chat-memory-smoke/user-data --remote-debugging-port=9230
 
   Success criteria:
-    1. auto-frame evaluate with nothing paused returns a structured error
-       envelope (NOT controllerUnavailable).
+    1. auto-frame evaluate with nothing paused does NOT return
+       controllerUnavailable; success in adapter REPL context with a
+       `session not paused` warning is acceptable.
     2. explicit REPL-context evaluate of `navigator.userAgent` returns a
        string containing "Electron".
     3. cleanup clean.

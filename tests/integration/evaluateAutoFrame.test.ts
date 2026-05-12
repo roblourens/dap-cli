@@ -5,7 +5,7 @@ import { createCliTestEnv, runCli, type CliTestEnv } from '../helpers/runCli.js'
 interface JsonEnvelope<T> {
   ok: true;
   data: T;
-  meta: { command: string; timestamp: string };
+  meta: { command: string; timestamp: string; warnings?: readonly string[] };
 }
 
 let testEnv: CliTestEnv;
@@ -75,8 +75,10 @@ describe('evaluate auto-frame (Phase 11 plan 02)', () => {
 
     const evaluate = await runCli(['evaluate', '--expression', 'x', '--name', 'auto4'], { env: testEnv.env });
     expect(evaluate.exitCode, JSON.stringify(evaluate)).toBe(0);
-    expect(parseEnvelope<{ result: string }>(evaluate.stdout).data.result).toBe('no-frame');
-    expect(evaluate.stderr).toContain('session not paused');
+    const auto4Envelope = parseEnvelope<{ result: string }>(evaluate.stdout);
+    expect(auto4Envelope.data.result).toBe('no-frame');
+    expect(auto4Envelope.meta.warnings?.some(w => w.includes('session not paused'))).toBe(true);
+    expect(evaluate.stderr).toBe('');
   });
 
   test('5: auto-resolve failure (paused but threads returns []) → falls back, emits "auto-frame failed" hint', async () => {
@@ -85,8 +87,10 @@ describe('evaluate auto-frame (Phase 11 plan 02)', () => {
 
     const evaluate = await runCli(['evaluate', '--expression', 'x', '--name', 'auto5'], { env: testEnv.env });
     expect(evaluate.exitCode, JSON.stringify(evaluate)).toBe(0);
-    expect(parseEnvelope<{ result: string }>(evaluate.stdout).data.result).toBe('no-frame');
-    expect(evaluate.stderr).toContain('auto-frame failed');
+    const auto5Envelope = parseEnvelope<{ result: string }>(evaluate.stdout);
+    expect(auto5Envelope.data.result).toBe('no-frame');
+    expect(auto5Envelope.meta.warnings?.some(w => w.includes('auto-frame failed'))).toBe(true);
+    expect(evaluate.stderr).toBe('');
   });
 });
 

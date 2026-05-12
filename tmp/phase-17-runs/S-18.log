@@ -1,0 +1,1484 @@
+Scenario S-18 evidence log
+Mon May 11 17:52:35 UTC 2026
+
+## Required skill read 1 (exact requested path)
+$ sed -n '1,240p' ~/.copilot/skills/dap-cli/SKILL.md
+sed: /Users/roblou/.copilot/skills/dap-cli/SKILL.md: No such file or directory
+
+## Required skill read 2
+$ sed -n '1,260p' /Users/roblou/code/vscode/.agents/skills/launch/SKILL.md
+---
+name: launch
+description: "Launch and automate VS Code (Code OSS) using @playwright/cli via Chrome DevTools Protocol. Use when you need to interact with the VS Code UI, automate the chat panel, test UI features, or take screenshots of VS Code. Triggers include 'automate VS Code', 'interact with chat', 'test the UI', 'take a screenshot', 'launch Code OSS with debugging'."
+metadata:
+  allowed-tools: Bash(npx @playwright/cli:*)
+---
+
+# VS Code Automation
+
+Automate VS Code (Code OSS) using `@playwright/cli`. VS Code is built on Electron/Chromium and exposes a Chrome DevTools Protocol (CDP) port that `@playwright/cli` can attach to, enabling the same snapshot-interact workflow used for web pages.
+
+## Prerequisites
+
+- **`@playwright/cli` is available via devDependencies.** Run `npm install` at the repo root, then use `npx @playwright/cli` to invoke commands. Alternatively, install globally with `npm install -g @playwright/cli`.
+- **For Code OSS (VS Code dev build):** The repo must be built before launching. `./scripts/code.sh` runs the build automatically if needed, or set `VSCODE_SKIP_PRELAUNCH=1` to skip the compile step if you've already built.
+- **CSS selectors are internal implementation details.** Selectors like `.interactive-input-part`, `.interactive-input-editor`, and `.part.auxiliarybar` used in `eval` commands are VS Code internals that may change across versions. If they stop working, use `npx @playwright/cli snapshot` to re-discover the current DOM structure.
+
+## Core Workflow
+
+1. **Launch** Code OSS with remote debugging enabled
+2. **Attach** npx @playwright/cli to the CDP port
+3. **Snapshot** to discover interactive elements
+4. **Interact** using element refs
+5. **Re-snapshot** after navigation or state changes
+
+> **📸 Take screenshots for a paper trail.** Use `npx @playwright/cli screenshot --filename=<path>` at key moments — after launch, before/after interactions, and when something goes wrong. Screenshots provide visual proof of what the UI looked like and are invaluable for debugging failures or documenting what was accomplished.
+>
+> Save screenshots inside a timestamped subfolder so each run is isolated and nothing gets overwritten:
+>
+> ```bash
+> # Create a timestamped folder for this run's screenshots
+> SCREENSHOT_DIR="/tmp/code-oss-screenshots/$(date +%Y-%m-%dT%H-%M-%S)"
+> mkdir -p "$SCREENSHOT_DIR"
+>
+> # Save a screenshot
+> npx @playwright/cli screenshot --filename="$SCREENSHOT_DIR/after-launch.png"
+> ```
+
+```bash
+# Launch Code OSS with remote debugging
+# NOTE: unset ELECTRON_RUN_AS_NODE if running from a Claude Code terminal
+unset ELECTRON_RUN_AS_NODE
+./scripts/code.sh --remote-debugging-port=9224
+
+# Wait for Code OSS to start, retry until attached
+for i in 1 2 3 4 5; do npx @playwright/cli attach --cdp=http://127.0.0.1:9224 2>/dev/null && break || sleep 3; done
+
+# Verify you're connected to the right target (not about:blank)
+# If `tab-list` shows the wrong target, run `npx @playwright/cli close` and reattach
+npx @playwright/cli tab-list
+
+# Discover UI elements
+npx @playwright/cli snapshot
+
+# Focus the chat input (macOS)
+npx @playwright/cli press Control+Meta+i
+```
+
+## Attaching
+
+```bash
+# Attach to a specific CDP port
+npx @playwright/cli attach --cdp=http://127.0.0.1:9222
+```
+
+After `attach`, all subsequent commands target the connected app without needing to reattach.
+
+## Tab Management
+
+Electron apps often have multiple windows or webviews. Use tab commands to list and switch between them:
+
+```bash
+# List all available targets (windows, webviews, etc.)
+npx @playwright/cli tab-list
+
+# Switch to a specific tab by index
+npx @playwright/cli tab-select 2
+```
+
+## Launching Code OSS (VS Code Dev Build)
+
+The VS Code repository includes `scripts/code.sh` which launches Code OSS from source. It passes all arguments through to the Electron binary, so `--remote-debugging-port` works directly:
+
+```bash
+cd <repo-root>  # the root of your VS Code checkout
+./scripts/code.sh --remote-debugging-port=9224
+```
+
+Wait for the window to fully initialize, then attach:
+
+```bash
+# Wait for Code OSS to start, retry until attached
+for i in 1 2 3 4 5; do npx @playwright/cli attach --cdp=http://127.0.0.1:9224 2>/dev/null && break || sleep 3; done
+
+# Verify you're connected to the right target (not about:blank)
+# If `tab-list` shows the wrong target, run `npx @playwright/cli close` and reattach
+npx @playwright/cli tab-list
+npx @playwright/cli snapshot
+```
+
+**Tips:**
+- Unset `ELECTRON_RUN_AS_NODE` before launching if it's set in your shell (e.g., in Claude Code terminals): `unset ELECTRON_RUN_AS_NODE && ./scripts/code.sh --remote-debugging-port=9224`
+- Set `VSCODE_SKIP_PRELAUNCH=1` to skip the compile step if you've already built: `VSCODE_SKIP_PRELAUNCH=1 ./scripts/code.sh --remote-debugging-port=9224` (from the repo root)
+- Code OSS uses the default user data directory. Unlike VS Code Insiders, you don't typically need `--user-data-dir` since there's usually only one Code OSS instance running.
+- If you see "Sent env to running instance. Terminating..." it means Code OSS is already running and forwarded your args to the existing instance. Quit Code OSS and relaunch with the flag, or use `--user-data-dir=/tmp/code-oss-debug` to force a new instance.
+
+## Launching the Agents App (Agents Window)
+
+The Agents app is a separate workbench mode launched with the `--agents` flag. It uses a dedicated user data directory to avoid conflicts with the main Code OSS instance.
+
+```bash
+cd <repo-root>  # the root of your VS Code checkout
+./scripts/code.sh --agents --remote-debugging-port=9224
+```
+
+Wait for the window to fully initialize, then attach:
+
+```bash
+# Wait for Agents app to start, retry until attached
+for i in 1 2 3 4 5; do npx @playwright/cli attach --cdp=http://127.0.0.1:9224 2>/dev/null && break || sleep 3; done
+
+# Verify you're connected to the right target (not about:blank)
+npx @playwright/cli tab-list
+npx @playwright/cli snapshot
+```
+
+**Tips:**
+- The `--agents` flag launches the Agents workbench instead of the standard VS Code workbench.
+- Set `VSCODE_SKIP_PRELAUNCH=1` to skip the compile step if you've already built.
+
+## Launching VS Code Extensions for Debugging
+
+To debug a VS Code extension via npx @playwright/cli, launch VS Code Insiders with `--extensionDevelopmentPath` and `--remote-debugging-port`. Use `--user-data-dir` to avoid conflicting with an already-running instance.
+
+```bash
+# Build the extension first
+cd <extension-repo-root>  # e.g., the root of your extension checkout
+npm run compile
+
+# Launch VS Code Insiders with the extension and CDP
+code-insiders \
+  --extensionDevelopmentPath="<extension-repo-root>" \
+  --remote-debugging-port=9223 \
+  --user-data-dir=/tmp/vscode-ext-debug
+
+# Wait for VS Code to start, retry until attached
+for i in 1 2 3 4 5; do npx @playwright/cli attach --cdp=http://127.0.0.1:9223 2>/dev/null && break || sleep 3; done
+
+# Verify you're connected to the right target (not about:blank)
+# If `tab-list` shows the wrong target, run `npx @playwright/cli close` and reattach
+npx @playwright/cli tab-list
+npx @playwright/cli snapshot
+```
+
+**Key flags:**
+- `--extensionDevelopmentPath=<path>` — loads your extension from source (must be compiled first)
+- `--remote-debugging-port=9223` — enables CDP (use 9223 to avoid conflicts with other apps on 9222)
+- `--user-data-dir=<path>` — uses a separate profile so it starts a new process instead of sending to an existing VS Code instance
+
+**Without `--user-data-dir`**, VS Code detects the running instance, forwards the args to it, and exits immediately — you'll see "Sent env to running instance. Terminating..." and CDP never starts.
+
+## Restarting After Code Changes
+
+**After making changes to Code OSS source code, you must restart to pick up the new build.** The workbench loads the compiled JavaScript at startup — changes are not hot-reloaded.
+
+### Restart Workflow
+
+1. **Rebuild** the changed code
+2. **Kill** the running Code OSS instance
+3. **Relaunch** with the same flags
+
+```bash
+# 1. Ensure your build is up to date.
+#    Normally you can skip a manual step here and let ./scripts/code.sh in step 3
+#    trigger the build when needed (or run `npm run watch` in another terminal).
+
+# 2. Kill the Code OSS instance listening on the debug port (if running)
+pids=$(lsof -t -i :9224)
+if [ -n "$pids" ]; then
+	kill $pids
+fi
+
+# 3. Relaunch
+./scripts/code.sh --remote-debugging-port=9224
+
+# 4. Reattach npx @playwright/cli
+for i in 1 2 3 4 5; do npx @playwright/cli attach --cdp=http://127.0.0.1:9224 2>/dev/null && break || sleep 3; done
+npx @playwright/cli tab-list
+npx @playwright/cli snapshot
+```
+
+> **Tip:** If you're iterating frequently, run `npm run watch` in a separate terminal so compilation happens automatically. You still need to kill and relaunch Code OSS to load the new build.
+
+## Interacting with Monaco Editor (Chat Input, Code Editors)
+
+VS Code uses Monaco Editor for all text inputs including the Copilot Chat input. Monaco editors require specific npx @playwright/cli techniques — standard `click`, `fill`, and `type` commands may not work depending on the VS Code build.
+
+### The Universal Pattern: Focus via Keyboard Shortcut + `press`
+
+This works on **all** VS Code builds (Code OSS, Insiders, stable):
+
+```bash
+# 1. Open and focus the chat input with the keyboard shortcut
+# macOS:
+npx @playwright/cli press Control+Meta+i
+# Linux / Windows:
+npx @playwright/cli press Control+Alt+i
+
+# 2. Type using individual press commands
+npx @playwright/cli press H
+npx @playwright/cli press e
+npx @playwright/cli press l
+npx @playwright/cli press l
+npx @playwright/cli press o
+npx @playwright/cli press Space  # Use "Space" for spaces
+npx @playwright/cli press w
+npx @playwright/cli press o
+npx @playwright/cli press r
+npx @playwright/cli press l
+npx @playwright/cli press d
+
+# Verify text appeared (optional)
+npx @playwright/cli eval '
+(() => {
+  const sidebar = document.querySelector(".part.auxiliarybar");
+  const viewLines = sidebar.querySelectorAll(".interactive-input-editor .view-line");
+  return Array.from(viewLines).map(vl => vl.textContent).join("|");
+})()'
+
+# 3. Send the message (same on all platforms)
+npx @playwright/cli press Enter
+```
+
+**Chat focus shortcut by platform:**
+- **macOS:** `Ctrl+Cmd+I` → `npx @playwright/cli press Control+Meta+i`
+- **Linux:** `Ctrl+Alt+I` → `npx @playwright/cli press Control+Alt+i`
+- **Windows:** `Ctrl+Alt+I` → `npx @playwright/cli press Control+Alt+i`
+
+This shortcut focuses the chat input and sets `document.activeElement` to a `DIV` with class `native-edit-context` — VS Code's native text editing surface that correctly processes key events from `npx @playwright/cli press`.
+
+### `fill <ref>` — Works on Some Builds
+
+On VS Code Insiders (extension debug mode), `fill` handles focus and input in one step:
+
+```bash
+npx @playwright/cli snapshot
+# Look for: textbox "The editor is not accessible..." [ref=e62]
+npx @playwright/cli fill e62 "Hello from George!"
+```
+
+> **Tip:** If `fill` silently drops text (the editor stays empty), the ref may be stale or the editor not yet ready. Re-snapshot to get a fresh ref and try again. You can verify text was entered using the snippet in "Verifying Text and Clearing" below.
+
+However, **`fill` silently fails on Code OSS** — the command completes without error but no text appears. Always verify text appeared after typing, and fall back to the keyboard shortcut + `press` pattern if it didn't. The `press`-per-key approach works universally across all builds.
+
+### Compatibility Matrix
+
+| Method | VS Code Insiders | Code OSS |
+|--------|-----------------|----------|
+| `press` per key (after focus shortcut) | ✅ Works | ✅ Works |
+| `fill <ref> "text"` | ✅ Works | ❌ Silent fail |
+
+## Fallback dap-cli skill actually present in repo
+$ sed -n '1,220p' /Users/roblou/code/dap-cli/skills/dap-cli/SKILL.md
+---
+name: dap-cli
+description: "Use when: an agent needs to debug, inspect, or control a local program from shell commands with dap-cli; trigger for DAP debugging, breakpoints, stack/variables inspection, launch.json debugging, js-debug, debugpy, Chrome debugging, Playwright interop, or poll-then-inspect debug loops. Assumes dap-cli is already on PATH."
+---
+
+# Debug Adapter Control with dap-cli
+
+`dap-cli` is an agent-facing CLI for the Debug Adapter Protocol. It's language-agnostic — any DAP adapter (js-debug, debugpy, custom) works the same way. The CLI is assumed to be on `PATH`; if it isn't, the user installed it as `npx dap-cli`.
+
+The model is intentionally simple:
+
+- **Polling, not streaming.** Drive the target with commands; poll `status` for state.
+- **JSON envelope by default.** Every reply is `{ ok, data, error?, meta }`. JSON is emitted automatically when stdout is not a TTY.
+- **Refs are scoped to the current stop.** After `continue` / `next` / `step-in` / `step-out`, reacquire `threads` / `stack` / `scopes` / `variables` before reusing IDs.
+
+## Quick start
+
+```bash
+# start the persistent controller (once per machine — nothing else auto-starts it)
+dap-cli start
+
+# launch a Node target paused at entry
+dap-cli launch --program app.js --stop-on-entry
+
+# set a breakpoint, continue, poll for the stop
+dap-cli breakpoints set --source app.js --line 12
+dap-cli continue
+dap-cli status
+
+# inspect when paused — IDs come from these calls, never guess them
+dap-cli threads
+dap-cli stack
+dap-cli scopes --frame-id 10
+dap-cli variables --variables-reference 100
+dap-cli evaluate --expression "user.email"
+
+# clean up
+dap-cli close
+dap-cli stop-controller
+```
+
+## Standard loop
+
+1. `dap-cli start` if you get `controller_unavailable`.
+2. **Prefer `--config` over raw `--adapter` flags** when the project has a `.vscode/launch.json` — the config carries adapter-specific fields (`outFiles`, `webRoot`, `runtimeArgs`) you'd otherwise have to reconstruct.
+3. Poll `status` for stop detection.
+4. When stopped: `threads` → `stack` → `scopes` → `variables`. `--thread-id` and `--frame-id` are auto-resolved when there is exactly one candidate; `--variables-reference` and `--source-reference` always need a value from a fresh call.
+5. Drive with `evaluate` / `continue` / `next` / `step-in` / `step-out`. Poll again after every resume.
+6. Clean up with `close` / `cleanup` / `stop-controller`.
+
+## Commands
+
+### Lifecycle
+
+```bash
+dap-cli start                               # start the controller
+dap-cli stop-controller                     # stop the controller
+dap-cli sessions                            # list sessions (envelope; data is an array of session objects)
+dap-cli sessions --show-children            # include js-debug child sessions (envelope; data is an array)
+dap-cli close                               # stop and remove the active session
+dap-cli cleanup                             # stop sessions, clear stale state
+dap-cli cleanup --purge                     # also wipe DAP_CLI_HOME caches
+```
+
+### Launch / attach
+
+```bash
+# raw launch — adapter and type inferred from --program extension
+dap-cli launch --program app.js --stop-on-entry
+dap-cli launch --program main.py
+
+# launch.json discovery and use (--workspace defaults to cwd)
+dap-cli launch --list-configs                              # discover names (envelope; data is a string array)
+dap-cli attach --config "Attach Worker"
+dap-cli attach --workspace /elsewhere --config "Attach Worker"
+
+# layer extra fields onto a named config without abandoning --config
+dap-cli launch --config "Attach to App" \
+  --json-overrides '{"sourceMaps":true,"resolveSourceMapLocations":["**","!**/node_modules/**"]}'
+dap-cli launch --config "Attach to App" \
+  --resolve-source-maps '**' '!**/node_modules/**'
+dap-cli launch --config "Attach to App" \
+  --out-files 'dist/**/*.js'
+
+# raw launch payload (no --config auto-route)
+dap-cli launch --adapter js-debug --type pwa-node --json '{"program":"app.js","stopOnEntry":true}'
+```
+
+`launch` and `attach` map directly to the DAP `request` field — there is no `--request` flag. With `--config`, a verb mismatch auto-routes (warns + sets `autoRouted` on the response). Raw `--json` payloads do not auto-route.
+
+### Inspection
+
+```bash
+dap-cli status
+dap-cli events --after-cursor 0 --limit 20    # optional, for richer history
+dap-cli events --include stopped --include output
+dap-cli threads
+dap-cli stack                                 # --thread-id auto-resolved
+dap-cli scopes --frame-id 10
+dap-cli variables --variables-reference 100
+dap-cli evaluate --expression "value + 1"     # auto-frame on a paused session
+dap-cli evaluate --expression "value > 10" --frame-id 10 --context repl
+dap-cli capabilities
+```
+
+### Stepping
+
+```bash
+dap-cli continue                              # --thread-id auto-resolved
+dap-cli next
+dap-cli step-in
+dap-cli step-out
+dap-cli pause
+```
+
+### Breakpoints
+
+```bash
+# set is replacement-semantic per source — send the full desired set for a file each time
+dap-cli breakpoints set --source app.js --line 12
+dap-cli breakpoints set --source app.js --line 22 --condition "count === 1"
+dap-cli breakpoints set --source app.js --line 22 --hit-condition 2
+dap-cli breakpoints set --source app.js --line 22 --log-message "count={count}"
+
+# inspect / clear (controller-side tracking)
+dap-cli breakpoints list
+dap-cli breakpoints list --source app.js
+dap-cli breakpoints clear --source app.js     # DAP empty-list semantics for one source
+dap-cli breakpoints clear                     # clear every tracked source
+```
+
+### Raw DAP
+
+For DAP requests not exposed as first-class commands:
+
+```bash
+dap-cli request stackTrace --json '{"threadId":1}'
+dap-cli dap loaded-sources
+dap-cli dap set-variable --json '{"variablesReference":100,"name":"x","value":"42"}'
+dap-cli dap set-expression --json '{"frameId":10,"expression":"x","value":"42"}'
+```
+
+### Output mode
+
+```bash
+dap-cli sessions --human                 # human-readable (default on TTY only if DAP_CLI_HUMAN=1)
+dap-cli status --no-human                # force JSON on a TTY
+DAP_CLI_HUMAN=1 dap-cli status
+```
+
+Non-TTY stdout always gets JSON. The command-level `--json <json>` is request payload input, not an output-format switch.
+
+## Multiple sessions
+
+`--name <session>` lets you target one of several sessions explicitly. When omitted, commands act on the active session (the most recent one, or whatever was set with `dap-cli use <name>`).
+
+```bash
+# explicit, scriptable
+dap-cli launch --program app.js --name api
+dap-cli launch --program worker.js --name worker
+dap-cli status --name api
+dap-cli close api
+
+# implicit (active-session shorthand)
+dap-cli use api
+dap-cli status
+```
+
+Always pass `--name` in scripts and agent playbooks; rely on the active session only for one-off interactive use.
+
+## JSON envelope
+
+```json
+{ "ok": true,  "data": { /* … */ }, "meta": { "command": "status", "timestamp": "…" } }
+{ "ok": false, "error": { "code": "adapter_not_found", "category": "usage", "exitCode": 2, "diagnostics": [] }, "meta": { /* … */ } }
+```
+
+Read `error.code`, `error.category`, `error.diagnostics`, `stderrTail`, and `logPath` before retrying. If a request fails because execution resumed, restart at `status` and reacquire IDs on the next stop.
+
+## Breakpoint verification is asynchronous
+
+The `verified` flag in the immediate `breakpoints set` response is a snapshot, not a verdict. Adapters often return `verified: false` initially and upgrade once the runtime loads the source.
+
+1. Set the bp. If `verified: true`, you're done.
+2. If `verified: false`, **don't conclude failure.** Continue and poll `status`. If a stop arrives with `reason: "breakpoint"`, your bp resolved.
+3. Only after the program has plausibly run past the line *without* stopping should you read `verificationDiagnostic` and treat it as a binding failure.
+
+The success payload carries `verificationDiagnostic` when any bp is unverified:
+
+```json
+{
+  "verificationDiagnostic": {
+    "unverifiedCount": 1,
+    "loadedSourcesCount": 0,
+    "matchingLoadedSources": [],
+    "hint": "1 of 1 breakpoints unverified; debuggee has loaded 0 sources — likely attached to the wrong process. Run: dap-cli dap loaded-sources",
+    "recipe": "dap-cli dap loaded-sources"
+  }
+}
+```
+
+`recipe` is the literal next command to run. Hint cases:
+
+- 0 sources loaded → likely attached to the wrong process.
+- Loaded but no path/basename match → check source maps / outFiles.
+- Matching loaded source → check breakpoint line numbers.
+- Adapter doesn't advertise `supportsLoadedSourcesRequest` → fall back to event inspection.
+
+An empty `loaded-sources` result with `childSessionCount > 0` is **normal** for multi-process js-debug (children carry the sources, not the parent).
+
+## Example: launch a Node target, break, inspect, continue
+
+```bash
+dap-cli start
+dap-cli launch --program app.js --stop-on-entry
+dap-cli breakpoints set --source app.js --line 12
+dap-cli continue
+dap-cli status
+# stopped → inspect
+dap-cli stack
+
+## Preflight cleanup
+$ npx dap-cli stop-controller || true
+{"ok":true,"data":{"stopped":false},"meta":{"command":"stop-controller","timestamp":"2026-05-11T17:52:42.136Z"}}
+
+$ pkill -f 'scripts/code.sh' || true
+
+$ pgrep -f 'scripts/code.sh' || true
+
+> code-oss-dev@1.121.0 electron
+> node build/lib/electron.ts
+
+
+(node:92485) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[10:52:49] Synchronizing built-in extensions...
+[10:52:49] You can manage built-in extensions with the [36m--builtin[39m flag
+[10:52:49] [34m[github][39m ms-vscode.js-debug-companion@1.1.3 [32m✔︎[39m
+[10:52:49] [34m[github][39m ms-vscode.js-debug@1.117.0 [32m✔︎[39m
+[10:52:49] [34m[github][39m ms-vscode.vscode-js-profile-table@1.0.10 [32m✔︎[39m
+
+DevTools listening on ws://127.0.0.1:9230/devtools/browser/5828d40b-dfc2-4e9d-87e9-be470089ff5f
+
+## dap-cli attach help (for command shape)
+$ npx dap-cli attach --help
+Usage: dap-cli attach [options]
+
+Start a DAP attach session using an adapter id, named launch config, or fake
+adapter
+
+Options:
+  --adapter <adapter>                 adapter id (inferred from --type or
+                                      --program when omitted)
+  --config <name>                     named .vscode/launch.json configuration
+  --workspace <path>                  workspace root for .vscode/launch.json
+                                      discovery and variable substitution
+  --list-configs                      list VS Code launch configurations and
+                                      compounds without starting a session
+  --json <json>                       raw adapter-native attach configuration
+                                      JSON (default: "{}")
+  --script <script>                   fake adapter script
+  --name <name>                       session name (default: "default")
+  --program <path>                    program path override
+  --cwd <path>                        working directory override
+  --runtime-executable <path>         runtime executable override
+  --runtime-args <arg...>             runtime argument overrides
+  --url <url>                         URL override for browser adapters
+  --port <port>                       debug port override
+  --python <path>                     Python executable override
+  --type <type>                       adapter-native debug type (inferred from
+                                      --adapter or --program when omitted)
+  --args <arg...>                     program argument overrides
+  --source-maps <boolean>             source map enablement override
+  --out-files <pattern...>            source map output file patterns
+  --resolve-source-maps <pattern...>  set resolveSourceMapLocations on the
+                                      resolved config (variadic; mirrors
+                                      --out-files)
+  --json-overrides <json>             extra JSON object merged on top of
+                                      --config (between named-config and --json
+                                      layers)
+  --stop-on-entry                     halt at the first program statement
+                                      (adapter must support stopOnEntry)
+  --no-use                            do not make the new session active
+  -h, --help                          display help for command
+
+## Start controller
+$ npx dap-cli start
+{"ok":true,"data":{"started":true,"reused":false,"pid":94202,"endpoint":{"kind":"ipc","path":"/Users/roblou/.dap-cli/state/controller.sock"},"stateDir":"/Users/roblou/.dap-cli/state","logDir":"/Users/roblou/.dap-cli/logs","buildId":"0.0.0:dist:1778518506391.6257:281290"},"meta":{"command":"start","timestamp":"2026-05-11T17:53:27.804Z"}}
+
+## Attach pwa-chrome renderer session
+$ npx dap-cli attach --adapter js-debug --type pwa-chrome --name s18-renderer --port 9230 --json '{"webRoot":"/Users/roblou/code/vscode","browserAttachLocation":"workspace"}'
+{"ok":false,"error":{"code":"adapter_transport_closed","category":"adapter","message":"DAP transport closed.","exitCode":6,"diagnostics":["The adapter transport closed before dap-cli received the expected DAP response.","Session sess_usLXh1nlekwk1vJV may be stale or the debuggee may have exited.","Adapter log: /Users/roblou/.dap-cli/logs/js-debug-94240.log.","Run `dap-cli close sess_usLXh1nlekwk1vJV` and relaunch the session."],"sessionId":"sess_usLXh1nlekwk1vJV","request":{"command":"configurationDone","seq":3},"adapter":{"descriptorId":"js-debug","pid":94240,"stderrTail":["O [Error]: Cannot connect to the target at localhost:9230: Could not connect to debug target at http://localhost:9230: Could not find any debuggable target","    at zr.acquireConnectionForBrowser (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:93:5401)","    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)","    at async zr.attemptToAttach (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:93:3739)","    at async zr.launch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:93:3332)","    at async Rg.captureLaunch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:9517)","    at async Rg._launch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:9264)","    at async Promise.all (index 10)","    at async Rg._boot (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:8388)","    at async Server.<anonymous> (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:106:3656) {","  _cause: {","    id: 9242,","    format: 'Cannot connect to the target at localhost:9230: Could not connect to debug target at http://localhost:9230: Could not find any debuggable target',","    showUser: true","  }","}"],"logPath":"/Users/roblou/.dap-cli/logs/js-debug-94240.log"}},"meta":{"command":"attach js-debug","timestamp":"2026-05-11T17:53:38.507Z"}}
+
+## Sessions after attach
+$ npx dap-cli sessions --show-children
+{"ok":true,"data":[{"id":"sess_usLXh1nlekwk1vJV","name":"s18-renderer","adapter":"js-debug","lifecycle":"failed","status":"failed","updatedAt":"2026-05-11T17:53:38.499Z"}],"meta":{"command":"sessions","timestamp":"2026-05-11T17:53:39.000Z"}}
+
+## Status after attach
+$ npx dap-cli status --name s18-renderer
+{"ok":true,"data":{"id":"sess_usLXh1nlekwk1vJV","name":"s18-renderer","adapter":"js-debug","lifecycle":"failed","status":"failed","updatedAt":"2026-05-11T17:53:38.499Z","stderrTail":["O [Error]: Cannot connect to the target at localhost:9230: Could not connect to debug target at http://localhost:9230: Could not find any debuggable target","    at zr.acquireConnectionForBrowser (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:93:5401)","    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)","    at async zr.attemptToAttach (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:93:3739)","    at async zr.launch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:93:3332)","    at async Rg.captureLaunch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:9517)","    at async Rg._launch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:9264)","    at async Promise.all (index 10)","    at async Rg._boot (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:8388)","    at async Server.<anonymous> (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:106:3656) {","  _cause: {","    id: 9242,","    format: 'Cannot connect to the target at localhost:9230: Could not connect to debug target at http://localhost:9230: Could not find any debuggable target',","    showUser: true","  }","}"],"cleanupActions":["Signal owned adapter pid 94240 if cleanup is required."],"logPath":"/Users/roblou/.dap-cli/logs/js-debug-94240.log"},"meta":{"command":"status","timestamp":"2026-05-11T17:53:39.423Z"}}
+
+## CDP target list
+$ curl -sS http://127.0.0.1:9230/json/list
+curl: (7) Failed to connect to 127.0.0.1 port 9230 after 0 ms: Couldn't connect to server
+
+
+## CDP version
+$ curl -sS http://127.0.0.1:9230/json/version
+curl: (7) Failed to connect to 127.0.0.1 port 9230 after 0 ms: Couldn't connect to server
+
+## Process inspection after first launch exit
+$ pgrep -af "Code - OSS|Electron|remote-debugging-port=9230|scripts/code.sh" || true
+41058
+41133
+41134
+41135
+41159
+41172
+41173
+41174
+41175
+41213
+41214
+41215
+41222
+41337
+63403
+
+$ lsof -nP -iTCP:9230 -sTCP:LISTEN || true
+
+## Detailed process lines
+$ ps -axo pid,command | rg "Code - OSS|Electron|remote-debugging-port=9230|scripts/code.sh" || true
+41133 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler --no-rate-limit --monitor-self-annotation=ptype=crashpad-handler --database=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data/Crashpad --annotation=_companyName=Microsoft --annotation=_productName=Code - OSS Dev --annotation=_version=1.121.0 --annotation=plat=OS X --annotation=prod=Electron --annotation=ver=39.8.8 --handshake-fd=23
+63403 /Applications/Visual Studio Code - Insiders.app/Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler --no-rate-limit --monitor-self-annotation=ptype=crashpad-handler --database=/Users/roblou/Library/Application Support/Code - Insiders/Crashpad --url=appcenter://code-insiders?aid=d6599f8f-6aee-4013-b47c-1e1269faa19a&uid=fb555057-0224-46cf-bd9a-23995ec9a069&iid=fb555057-0224-46cf-bd9a-23995ec9a069&sid=fb555057-0224-46cf-bd9a-23995ec9a069 --annotation=_companyName=Microsoft --annotation=_productName=VSCode --annotation=_version=1.120.0-insider --annotation=plat=OS X --annotation=prod=Electron --annotation=ver=39.8.8 --handshake-fd=21
+95943 rg Code - OSS|Electron|remote-debugging-port=9230|scripts/code.sh
+41058 ./.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS . --disable-extension=vscode.vscode-api-tests --user-data-dir .build/chat-memory-smoke/user-data --remote-debugging-port=9229
+41134 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (GPU).app/Contents/MacOS/Code - OSS Helper (GPU) --type=gpu-process --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --gpu-preferences=SAAAAAAAAAAgAAAEAAAAAAAAAAAAAGAAAwAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAQAAAAAAAAABAAAAAAAAAACAAAAAAAAAAIAAAAAAAAAA== --shared-files --field-trial-handle=1718379636,r,5087254468192516268,12004091450697473260,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708988185955192 --seatbelt-client=35
+41135 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/MacOS/Code - OSS Helper --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=network --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --shared-files --field-trial-handle=1718379636,r,5087254468192516268,12004091450697473260,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708989122997041 --seatbelt-client=37
+41159 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Renderer).app/Contents/MacOS/Code - OSS Helper (Renderer) --type=renderer --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --app-path=/Users/roblou/code/vscode --enable-sandbox --enable-blink-features=HighlightAPI --max-active-webgl-contexts=32 --remote-debugging-port=9229 --disable-blink-features=FontMatchingCTMigration,StandardizedBrowserZoom, --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=4 --time-ticks-at-unix-epoch=-1778220035840994 --launch-time-ticks=301173089745 --shared-files --field-trial-handle=1718379636,r,5087254468192516268,12004091450697473260,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708990060038890 --vscode-window-config=vscode:d54bd989-d22f-42a6-9806-331e7d078432 --seatbelt-client=60
+41172 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/MacOS/Code - OSS Helper --type=utility --utility-sub-type=node.mojom.NodeService --lang=en-US --service-sandbox-type=none --nolazy --experimental-network-inspection --inspect=5879 --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --shared-files --field-trial-handle=1718379636,r,5087254468192516268,12004091450697473260,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708990997080739
+41173 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/MacOS/Code - OSS Helper --type=utility --utility-sub-type=node.mojom.NodeService --lang=en-US --service-sandbox-type=none --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --shared-files --field-trial-handle=1718379636,r,5087254468192516268,12004091450697473260,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708991934122588
+41174 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/MacOS/Code - OSS Helper (Plugin) --type=utility --utility-sub-type=node.mojom.NodeService --lang=en-US --service-sandbox-type=none --dns-result-order=ipv4first --experimental-network-inspection --nolazy --inspect=127.0.0.1:5870 --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --shared-files --field-trial-handle=1718379636,r,5087254468192516268,12004091450697473260,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708992871164437
+41175 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/MacOS/Code - OSS Helper --type=utility --utility-sub-type=node.mojom.NodeService --lang=en-US --service-sandbox-type=none --nolazy --inspect=5878 --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --shared-files --field-trial-handle=1718379636,r,5087254468192516268,12004091450697473260,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708993808206286
+41213 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/MacOS/Code - OSS Helper (Plugin) --max-old-space-size=3072 /Users/roblou/code/vscode/extensions/node_modules/typescript/lib/tsserver.js --serverMode partialSemantic --useInferredProjectPerProjectRoot --disableAutomaticTypingAcquisition --cancellationPipeName /var/folders/ps/jz4h0kxs5_n_8z67tzzrvzn40000gn/T/vscode-typescript501/5c74aad4c9c524c11c4f/tscancellation-40f234f5b524b58bf9d1.tmp* --locale en --noGetErrOnBackgroundUpdate --canUseWatchEvents --validateDefaultNpmLocation --useNodeIpc
+41214 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/MacOS/Code - OSS Helper (Plugin) --max-old-space-size=3072 /Users/roblou/code/vscode/extensions/node_modules/typescript/lib/tsserver.js --useInferredProjectPerProjectRoot --enableTelemetry --cancellationPipeName /var/folders/ps/jz4h0kxs5_n_8z67tzzrvzn40000gn/T/vscode-typescript501/5c74aad4c9c524c11c4f/tscancellation-bb31b5ef77449e7c9959.tmp* --locale en --noGetErrOnBackgroundUpdate --canUseWatchEvents --validateDefaultNpmLocation --useNodeIpc
+41215 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/MacOS/Code - OSS Helper (Plugin) /Users/roblou/code/vscode/extensions/node_modules/typescript/lib/typingsInstaller.js --globalTypingsCacheLocation /Users/roblou/Library/Caches/typescript/6.0 --enableTelemetry --typesMapLocation /Users/roblou/code/vscode/extensions/node_modules/typescript/lib/typesMap.json --validateDefaultNpmLocation
+41222 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/MacOS/Code - OSS Helper (Plugin) --nolazy --inspect=6011 /Users/roblou/.vscode-oss-dev/extensions/dbaeumer.vscode-eslint-3.0.24/server/out/eslintServer.js --node-ipc --clientProcessId=41174
+41337 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/MacOS/Code - OSS Helper (Plugin) --nolazy --inspect=6040 /Users/roblou/code/vscode/extensions/json-language-features/server/out/node/jsonServerMain --node-ipc --clientProcessId=41174
+
+## Clear stale Code OSS app instance and failed dap-cli session
+$ npx dap-cli close s18-renderer || true
+{"ok":true,"data":{"id":"sess_usLXh1nlekwk1vJV","name":"s18-renderer","adapter":"js-debug","lifecycle":"failed","status":"failed","updatedAt":"2026-05-11T17:53:38.499Z","stderrTail":["O [Error]: Cannot connect to the target at localhost:9230: Could not connect to debug target at http://localhost:9230: Could not find any debuggable target","    at zr.acquireConnectionForBrowser (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:93:5401)","    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)","    at async zr.attemptToAttach (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:93:3739)","    at async zr.launch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:93:3332)","    at async Rg.captureLaunch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:9517)","    at async Rg._launch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:9264)","    at async Promise.all (index 10)","    at async Rg._boot (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:8388)","    at async Server.<anonymous> (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:106:3656) {","  _cause: {","    id: 9242,","    format: 'Cannot connect to the target at localhost:9230: Could not connect to debug target at http://localhost:9230: Could not find any debuggable target',","    showUser: true","  }","}"],"cleanupActions":["Signal owned adapter pid 94240 if cleanup is required."],"logPath":"/Users/roblou/.dap-cli/logs/js-debug-94240.log","orphanPids":[],"warnings":[]},"meta":{"command":"close","timestamp":"2026-05-11T17:54:20.930Z"}}
+
+$ pkill -f '/Users/roblou/code/vscode/.build/electron/Code - OSS.app' || true
+
+$ ps -axo pid,command | rg "Code - OSS|remote-debugging-port=9229|remote-debugging-port=9230" || true
+97080 rg Code - OSS|remote-debugging-port=9229|remote-debugging-port=9230
+41058 ./.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS . --disable-extension=vscode.vscode-api-tests --user-data-dir .build/chat-memory-smoke/user-data --remote-debugging-port=9229
+41159 (Code - OSS Helpe)
+41172 (Code - OSS Helpe)
+41174 (Code - OSS Helpe)
+41175 (Code - OSS Helpe)
+41213 (Code - OSS Helpe)
+41214 (Code - OSS Helpe)
+41215 (Code - OSS Helpe)
+41222 (Code - OSS Helpe)
+41337 (Code - OSS Helpe)
+
+## Kill remaining stale Code OSS main process by command pattern
+$ pkill -f '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS' || true
+
+$ ps -axo pid,command | rg "Code - OSS|remote-debugging-port=9229|remote-debugging-port=9230" || true
+97815 rg Code - OSS|remote-debugging-port=9229|remote-debugging-port=9230
+41058 ./.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS . --disable-extension=vscode.vscode-api-tests --user-data-dir .build/chat-memory-smoke/user-data --remote-debugging-port=9229
+97082 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (GPU).app/Contents/MacOS/Code - OSS Helper (GPU) --type=gpu-process --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --gpu-preferences=SAAAAAAAAAAgAAAEAAAAAAAAAAAAAGAAAwAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAQAAAAAAAAABAAAAAAAAAACAAAAAAAAAAIAAAAAAAAAA== --shared-files --field-trial-handle=1718379636,r,5087254468192516268,12004091450697473260,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708994745248135 --seatbelt-client=52
+97083 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/MacOS/Code - OSS Helper --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=network --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --shared-files --field-trial-handle=1718379636,r,5087254468192516268,12004091450697473260,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708995682289984 --seatbelt-client=52
+97098 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/MacOS/Code - OSS Helper --type=utility --utility-sub-type=node.mojom.NodeService --lang=en-US --service-sandbox-type=none --nolazy --inspect=5878 --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --shared-files --field-trial-handle=1718379636,r,5087254468192516268,12004091450697473260,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708996619331833
+
+## Terminate stale Code OSS PID 41058 and helpers
+$ kill 41058 || true
+kill: kill 41058 failed: no such process
+
+$ pkill -f '/Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper' || true
+
+$ ps -axo pid,command | rg "Code - OSS|remote-debugging-port=9229|remote-debugging-port=9230" || true
+98806 rg Code - OSS|remote-debugging-port=9229|remote-debugging-port=9230
+
+> code-oss-dev@1.121.0 electron
+> node build/lib/electron.ts
+
+
+(node:1172) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[10:54:44] Synchronizing built-in extensions...
+[10:54:44] You can manage built-in extensions with the [36m--builtin[39m flag
+[10:54:44] [34m[github][39m ms-vscode.js-debug-companion@1.1.3 [32m✔︎[39m
+[10:54:44] [34m[github][39m ms-vscode.js-debug@1.117.0 [32m✔︎[39m
+[10:54:44] [34m[github][39m ms-vscode.vscode-js-profile-table@1.0.10 [32m✔︎[39m
+
+DevTools listening on ws://127.0.0.1:9230/devtools/browser/b8dddf9c-af4b-403a-b989-01f4f71b1473
+[90m[main 2026-05-11T17:54:46.596Z][0m StorageMainService: creating application shared storage
+[90m[main 2026-05-11T17:54:46.690Z][0m [CSS_DEV] DONE, 362 css modules (71ms)
+[90m[main 2026-05-11T17:54:46.739Z][0m update#setState disabled
+[90m[main 2026-05-11T17:54:46.803Z][0m [shared storage] Creating shared storage database at '/Users/roblou/.vscode-oss-shared/sharedStorage/state.vscdb' (wasCreated: false)
+[90m[main 2026-05-11T17:54:46.804Z][0m [shared storage] Initializing fallback application storage (path: /Users/roblou/code/vscode/.build/chat-memory-smoke/user-data/User/globalStorage/state.vscdb)
+[90m[main 2026-05-11T17:54:46.838Z][0m [shared storage] Fallback application storage initialized with 82 items
+[1141:0511/105447.836591:INFO:CONSOLE:293] "%c[Extension Host] %cdebugger listening on port 5870 color: blue color:", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/workbench/services/extensions/electron-browser/localProcessExtensionHost.js (293)
+[1141:0511/105447.854217:INFO:CONSOLE:99] "%c INFO color: #33f Started local extension host with pid 1280.", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/platform/log/common/log.js (99)
+[1141:0511/105447.918033:INFO:CONSOLE:99] "%c INFO color: #33f [AccountPolicyGate] apply: state=inactive, reason=undefined, isRestricted=false", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/platform/log/common/log.js (99)
+[1141:0511/105447.998537:INFO:CONSOLE:99] "%c INFO color: #33f [AgentHost:renderer] Acquiring MessagePort to agent host...", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/platform/log/common/log.js (99)
+[90m[main 2026-05-11T17:54:47.999Z][0m AgentHostProcessManager: agent host started
+[1141:0511/105448.014795:INFO:CONSOLE:99] "%c INFO color: #33f [AgentHost:renderer] MessagePort acquired, creating client...", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/platform/log/common/log.js (99)
+[1141:0511/105448.014899:INFO:CONSOLE:99] "%c INFO color: #33f [AgentHost:renderer] Direct MessagePort connection established", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/platform/log/common/log.js (99)
+[1141:0511/105448.158710:INFO:CONSOLE:222] "%c[Extension Host] %cdebugger inspector at devtools://devtools/bundled/js_app.html?v8only=true&ws=127.0.0.1:5870/1e754068-ec47-4ef8-9db7-8a110cfef9d2 color: blue color:", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/workbench/services/extensions/electron-browser/localProcessExtensionHost.js (222)
+[1141:0511/105448.243064:INFO:CONSOLE:99] "%c  ERR color: #f33 Ignoring python.analysis.indexing.followSymlinkedFolders as python.analysis.indexing is true", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/platform/log/common/log.js (99)
+[1141:0511/105448.288252:INFO:CONSOLE:99] "%c  ERR color: #f33 Ignoring python.analysis.indexing.followSymlinkedFolders as python.analysis.indexing is true", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/platform/log/common/log.js (99)
+[1141:0511/105448.349094:INFO:CONSOLE:13] "Overwriting grammar scope name to file mapping for scope source.python.
+Old grammar file: file:///Users/roblou/code/vscode/extensions/python/syntaxes/MagicPython.tmLanguage.json.
+New grammar file: file:///Users/roblou/.vscode-oss-dev/extensions/ms-python.vscode-pylance-2026.2.1/grammars/PylancePython.tmLanguage", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/workbench/services/textMate/common/TMScopeRegistry.js (13)
+[1141:0511/105448.470425:INFO:CONSOLE:13] "Overwriting grammar scope name to file mapping for scope source.python.
+Old grammar file: file:///Users/roblou/code/vscode/extensions/python/syntaxes/MagicPython.tmLanguage.json.
+New grammar file: file:///Users/roblou/.vscode-oss-dev/extensions/ms-python.vscode-pylance-2026.2.1/grammars/PylancePython.tmLanguage", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/workbench/services/textMate/common/TMScopeRegistry.js (13)
+[1141:0511/105450.420322:INFO:CONSOLE:99] "%c INFO color: #33f [AgentHost] No token resolved for resource: https://api.github.com", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/platform/log/common/log.js (99)
+[1141:0511/105450.827341:INFO:CONSOLE:73] "%c[Extension Host] %cCreated lock file at /Users/roblou/.claude/ide/24941.lock %c(at console.<anonymous> (file:///Users/roblou/code/vscode/out/vs/workbench/api/common/extHostConsoleForwarder.js:43:14)) color: blue color:  color: grey", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/base/common/console.js (73)
+[1141:0511/105450.827422:INFO:CONSOLE:73] "%c[Extension Host] %cSet CLAUDE_CODE_SSE_PORT=24941 in terminal environment (in-memory) %c(at console.<anonymous> (file:///Users/roblou/code/vscode/out/vs/workbench/api/common/extHostConsoleForwarder.js:43:14)) color: blue color:  color: grey", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/base/common/console.js (73)
+[1141:0511/105452.919982:INFO:CONSOLE:99] "%c INFO color: #33f [AccountPolicyGate] apply: state=inactive, reason=undefined, isRestricted=false", source: vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/platform/log/common/log.js (99)
+
+## CDP target list after clean launch
+$ curl -sS http://127.0.0.1:9230/json/list
+[ {
+   "description": "",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@578703fd6889c9d1898e15fdba5e6343562b218f/inspector.html?ws=127.0.0.1:9230/devtools/page/895122D9D60A59F2372717289ECF1445",
+   "id": "895122D9D60A59F2372717289ECF1445",
+   "title": "index.ts — dap-cli",
+   "type": "page",
+   "url": "vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/code/electron-browser/workbench/workbench-dev.html",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:9230/devtools/page/895122D9D60A59F2372717289ECF1445"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@578703fd6889c9d1898e15fdba5e6343562b218f/inspector.html?ws=127.0.0.1:9230/devtools/page/E90574687965DF6B04ACAF87618FBF2A",
+   "id": "E90574687965DF6B04ACAF87618FBF2A",
+   "title": "",
+   "type": "worker",
+   "url": "",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:9230/devtools/page/E90574687965DF6B04ACAF87618FBF2A"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@578703fd6889c9d1898e15fdba5e6343562b218f/inspector.html?ws=127.0.0.1:9230/devtools/page/EE75DBFED48E5DF9F8B9A643E9120D47",
+   "id": "EE75DBFED48E5DF9F8B9A643E9120D47",
+   "title": "",
+   "type": "worker",
+   "url": "",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:9230/devtools/page/EE75DBFED48E5DF9F8B9A643E9120D47"
+} ]
+
+## Attach pwa-chrome renderer session after clean launch
+$ npx dap-cli attach --adapter js-debug --type pwa-chrome --name s18-renderer --port 9230 --url 'vscode-file://vscode-app/Users/roblou/code/vscode/out/vs/code/electron-browser/workbench/workbench-dev.html' --json '{"webRoot":"/Users/roblou/code/vscode","browserAttachLocation":"workspace"}'
+{"ok":true,"data":{"sessionId":"sess_GqgIQDvkKwb8mrlZ","name":"s18-renderer","lifecycle":"running","capabilities":{"supportsConfigurationDoneRequest":true,"supportsFunctionBreakpoints":false,"supportsConditionalBreakpoints":true,"supportsHitConditionalBreakpoints":true,"supportsEvaluateForHovers":true,"supportsReadMemoryRequest":true,"supportsWriteMemoryRequest":true,"exceptionBreakpointFilters":[{"filter":"all","label":"Caught Exceptions","default":false,"supportsCondition":true,"description":"Breaks on all throw errors, even if they're caught later.","conditionDescription":"error.name == \"MyError\""},{"filter":"uncaught","label":"Uncaught Exceptions","default":false,"supportsCondition":true,"description":"Breaks only on errors or promise rejections that are not handled.","conditionDescription":"error.name == \"MyError\""}],"supportsStepBack":false,"supportsSetVariable":true,"supportsRestartFrame":true,"supportsGotoTargetsRequest":false,"supportsStepInTargetsRequest":true,"supportsCompletionsRequest":true,"supportsModulesRequest":false,"additionalModuleColumns":[],"supportedChecksumAlgorithms":[],"supportsRestartRequest":true,"supportsExceptionOptions":false,"supportsValueFormattingOptions":true,"supportsExceptionInfoRequest":true,"supportTerminateDebuggee":true,"supportsDelayedStackTraceLoading":true,"supportsLoadedSourcesRequest":true,"supportsLogPoints":true,"supportsTerminateThreadsRequest":false,"supportsSetExpression":true,"supportsTerminateRequest":false,"completionTriggerCharacters":[".","[","\"","'"],"supportsBreakpointLocationsRequest":true,"supportsClipboardContext":true,"supportsExceptionFilterOptions":true,"supportsEvaluationOptions":false,"supportsDebuggerProperties":false,"supportsSetSymbolOptions":false,"supportsANSIStyling":true},"eventCursor":4},"meta":{"command":"attach","timestamp":"2026-05-11T17:55:18.449Z"}}
+
+## Sessions after attach retry
+$ npx dap-cli sessions --show-children
+{"ok":true,"data":[{"id":"sess_GqgIQDvkKwb8mrlZ","name":"s18-renderer","adapter":"js-debug","lifecycle":"running","status":"running","updatedAt":"2026-05-11T17:55:18.447Z"},{"id":"sess_XuyNdmDAAhLhyD5W","name":"s18-renderer#0E62516364E9E9F4C2EB0327F4CE1FD8","adapter":"js-debug","lifecycle":"attaching","status":"running","updatedAt":"2026-05-11T17:55:18.449Z","parent_session_id":"sess_GqgIQDvkKwb8mrlZ","targetable":false}],"meta":{"command":"sessions","timestamp":"2026-05-11T17:55:18.888Z"}}
+
+## Status after attach retry
+$ npx dap-cli status --name s18-renderer
+{"ok":true,"data":{"id":"sess_GqgIQDvkKwb8mrlZ","name":"s18-renderer","adapter":"js-debug","lifecycle":"running","status":"running","updatedAt":"2026-05-11T17:55:18.447Z","stderrTail":[],"cleanupActions":["Signal owned adapter pid 3086 if cleanup is required."],"logPath":"/Users/roblou/.dap-cli/logs/js-debug-3086.log"},"meta":{"command":"status","timestamp":"2026-05-11T17:55:19.333Z"}}
+
+## Evaluate help
+$ npx dap-cli evaluate --help
+Usage: dap-cli evaluate [options]
+
+Evaluate an expression (auto-uses topmost frame of most-recently-stopped thread
+when paused)
+
+Options:
+  --expression <expr>  expression
+  --frame-id <number>  frame id (auto-resolved to topmost paused frame when
+                       omitted)
+  --context <context>  evaluation context
+  --name <name>        session name or id
+  -h, --help           display help for command
+
+## Probe 1: auto-frame evaluate with nothing paused
+$ npx dap-cli evaluate --name s18-renderer --expression 'navigator.userAgent'
+{"ok":true,"data":{"type":"string","result":"'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) code-oss-dev/1.121.0 Chrome/142.0.7444.265 Electron/39.8.8 Safari/537.36'","variablesReference":0},"meta":{"command":"evaluate","timestamp":"2026-05-11T17:55:35.419Z","warnings":["evaluate: session not paused; sending evaluate without --frame-id (uses adapter REPL context)"]}}
+exit_code=0
+
+## Probe 2: explicit REPL-context evaluate with nothing paused
+$ npx dap-cli evaluate --name s18-renderer --context repl --expression 'navigator.userAgent'
+{"ok":true,"data":{"type":"string","result":"'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) code-oss-dev/1.121.0 Chrome/142.0.7444.265 Electron/39.8.8 Safari/537.36'","variablesReference":0},"meta":{"command":"evaluate","timestamp":"2026-05-11T17:55:35.847Z","warnings":["evaluate: session not paused; sending evaluate without --frame-id (uses adapter REPL context)"]}}
+exit_code=0
+
+## Status after probes
+$ npx dap-cli status --name s18-renderer
+{"ok":true,"data":{"id":"sess_GqgIQDvkKwb8mrlZ","name":"s18-renderer","adapter":"js-debug","lifecycle":"running","status":"running","updatedAt":"2026-05-11T17:55:18.447Z","stderrTail":[],"cleanupActions":["Signal owned adapter pid 3086 if cleanup is required."],"logPath":"/Users/roblou/.dap-cli/logs/js-debug-3086.log"},"meta":{"command":"status","timestamp":"2026-05-11T17:55:36.317Z"}}
+[Event.buffer][onDidBlurMainWindow] potential LEAK detected: 1 events buffered for 60s without being consumed. Buffered here:
+    at Object.buffer (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:261:27)
+    at Object.fromService (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:785:44)
+    at CodeApplication.initChannels (file:///Users/roblou/code/vscode/out/vs/code/electron-main/app.js:880:44)
+    at file:///Users/roblou/code/vscode/out/vs/code/electron-main/app.js:434:63
+    at InstantiationService.invokeFunction (file:///Users/roblou/code/vscode/out/vs/platform/instantiation/common/instantiationService.js:78:14)
+    at CodeApplication.startup (file:///Users/roblou/code/vscode/out/vs/code/electron-main/app.js:434:29)
+    at async CodeMain.startup (file:///Users/roblou/code/vscode/out/vs/code/electron-main/main.js:85:7)
+
+## Mandatory cleanup
+$ npx dap-cli close s18-renderer || true
+{"ok":true,"data":{"id":"sess_GqgIQDvkKwb8mrlZ","name":"s18-renderer","adapter":"js-debug","lifecycle":"running","status":"running","updatedAt":"2026-05-11T17:55:18.447Z","stderrTail":[],"cleanupActions":["Signal owned adapter pid 3086 if cleanup is required."],"logPath":"/Users/roblou/.dap-cli/logs/js-debug-3086.log","orphanPids":[],"warnings":[]},"meta":{"command":"close","timestamp":"2026-05-11T17:55:57.871Z"}}
+
+$ npx dap-cli stop-controller || true
+{"ok":true,"data":{"stopped":true},"meta":{"command":"stop-controller","timestamp":"2026-05-11T17:55:58.337Z"}}
+
+$ pkill -f 'scripts/code.sh' || true
+
+$ pgrep -f 'scripts/code.sh'
+pgrep_exit_code=1
+
+## Extra cleanup verification for detached Code OSS app
+$ lsof -nP -iTCP:9230 -sTCP:LISTEN || true
+COMMAND    PID   USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+Code\x20- 1141 roblou   38u  IPv4 0xbd1d8cfb50498e59      0t0  TCP 127.0.0.1:9230 (LISTEN)
+
+$ ps -axo pid,command | rg "remote-debugging-port=9230|Code - OSS" || true
+ 1234 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler --no-rate-limit --monitor-self-annotation=ptype=crashpad-handler --database=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data/Crashpad --annotation=_companyName=Microsoft --annotation=_productName=Code - OSS Dev --annotation=_version=1.121.0 --annotation=plat=OS X --annotation=prod=Electron --annotation=ver=39.8.8 --handshake-fd=23
+ 6533 rg remote-debugging-port=9230|Code - OSS
+ 1141 ./.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS . --disable-extension=vscode.vscode-api-tests --user-data-dir .build/chat-memory-smoke/user-data --remote-debugging-port=9230
+ 1235 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (GPU).app/Contents/MacOS/Code - OSS Helper (GPU) --type=gpu-process --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --gpu-preferences=SAAAAAAAAAAgAAAEAAAAAAAAAAAAAGAAAwAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAQAAAAAAAAABAAAAAAAAAACAAAAAAAAAAIAAAAAAAAAA== --shared-files --field-trial-handle=1718379636,r,4916703272938677667,8191879483416235162,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708988185955192 --seatbelt-client=35
+ 1236 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/MacOS/Code - OSS Helper --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=network --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --shared-files --field-trial-handle=1718379636,r,4916703272938677667,8191879483416235162,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708989122997041 --seatbelt-client=35
+ 1253 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Renderer).app/Contents/MacOS/Code - OSS Helper (Renderer) --type=renderer --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --app-path=/Users/roblou/code/vscode --enable-sandbox --enable-blink-features=HighlightAPI --max-active-webgl-contexts=32 --remote-debugging-port=9230 --disable-blink-features=FontMatchingCTMigration,StandardizedBrowserZoom, --lang=en-US --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=4 --time-ticks-at-unix-epoch=-1778220035869887 --launch-time-ticks=302050865789 --shared-files --field-trial-handle=1718379636,r,4916703272938677667,8191879483416235162,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708990060038890 --vscode-window-config=vscode:24b3a9f5-665c-4ddd-ac1e-04a750128ea4 --seatbelt-client=58
+ 1277 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/MacOS/Code - OSS Helper --type=utility --utility-sub-type=node.mojom.NodeService --lang=en-US --service-sandbox-type=none --nolazy --experimental-network-inspection --inspect=5879 --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --shared-files --field-trial-handle=1718379636,r,4916703272938677667,8191879483416235162,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708990997080739
+ 1278 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/MacOS/Code - OSS Helper --type=utility --utility-sub-type=node.mojom.NodeService --lang=en-US --service-sandbox-type=none --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --shared-files --field-trial-handle=1718379636,r,4916703272938677667,8191879483416235162,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708991934122588
+ 1280 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/MacOS/Code - OSS Helper (Plugin) --type=utility --utility-sub-type=node.mojom.NodeService --lang=en-US --service-sandbox-type=none --dns-result-order=ipv4first --experimental-network-inspection --nolazy --inspect=127.0.0.1:5870 --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --shared-files --field-trial-handle=1718379636,r,4916703272938677667,8191879483416235162,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708992871164437
+ 1283 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/MacOS/Code - OSS Helper --type=utility --utility-sub-type=node.mojom.NodeService --lang=en-US --service-sandbox-type=none --nolazy --inspect=5878 --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --shared-files --field-trial-handle=1718379636,r,4916703272938677667,8191879483416235162,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708993808206286
+ 1329 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/MacOS/Code - OSS Helper (Plugin) --max-old-space-size=3072 /Users/roblou/code/vscode/extensions/node_modules/typescript/lib/tsserver.js --serverMode partialSemantic --useInferredProjectPerProjectRoot --disableAutomaticTypingAcquisition --cancellationPipeName /var/folders/ps/jz4h0kxs5_n_8z67tzzrvzn40000gn/T/vscode-typescript501/91006df663c28d0a3779/tscancellation-3d201dadb7c95d84d7ba.tmp* --locale en --noGetErrOnBackgroundUpdate --canUseWatchEvents --validateDefaultNpmLocation --useNodeIpc
+ 1330 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/MacOS/Code - OSS Helper (Plugin) --max-old-space-size=3072 /Users/roblou/code/vscode/extensions/node_modules/typescript/lib/tsserver.js --useInferredProjectPerProjectRoot --enableTelemetry --cancellationPipeName /var/folders/ps/jz4h0kxs5_n_8z67tzzrvzn40000gn/T/vscode-typescript501/91006df663c28d0a3779/tscancellation-458a13a89b852ab39e97.tmp* --locale en --noGetErrOnBackgroundUpdate --canUseWatchEvents --validateDefaultNpmLocation --useNodeIpc
+ 1331 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/MacOS/Code - OSS Helper (Plugin) /Users/roblou/code/vscode/extensions/node_modules/typescript/lib/typingsInstaller.js --globalTypingsCacheLocation /Users/roblou/Library/Caches/typescript/6.0 --enableTelemetry --typesMapLocation /Users/roblou/code/vscode/extensions/node_modules/typescript/lib/typesMap.json --validateDefaultNpmLocation
+ 1357 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/MacOS/Code - OSS Helper (Plugin) --nolazy --inspect=6011 /Users/roblou/.vscode-oss-dev/extensions/dbaeumer.vscode-eslint-3.0.24/server/out/eslintServer.js --node-ipc --clientProcessId=1280
+ 1465 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/MacOS/Code - OSS Helper (Plugin) --nolazy --inspect=6913 /Users/roblou/code/vscode/extensions/json-language-features/server/out/node/jsonServerMain --node-ipc --clientProcessId=1280
+
+$ pkill -f '/Users/roblou/code/vscode/.build/electron/Code - OSS.app' || true
+[1141:0511/105558.499972:INFO:third_party/crashpad/crashpad/client/crashpad_client_mac.cc:313] restarting handler
+
+$ pkill -f '.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS' || true
+[1141:0511/105558.515711:ERROR:content/browser/gpu/gpu_process_host.cc:999] GPU process exited unexpectedly: exit_code=15
+[1141:0511/105558.515845:WARNING:content/browser/gpu/gpu_process_host.cc:1441] The GPU process has crashed 1 time(s)
+[1141:0511/105558.519957:ERROR:content/browser/network_service_instance_impl.cc:613] Network service crashed, restarting service.
+[0511/105558.524925:FATAL:third_party/crashpad/crashpad/handler/mac/exception_handler_server.cc:76] Check failed: kr == KERN_SUCCESS. mach_port_request_notification: (os/kern) invalid capability (20)
+[1141:0511/105558.525966:INFO:third_party/crashpad/crashpad/client/crashpad_client_mac.cc:307] restarting handler in 0.974s
+[91m[main 2026-05-11T17:55:58.530Z][0m [UtilityProcess type: shared-process, pid: 1277]: crashed with code 15 and reason 'killed'
+
+$ lsof -nP -iTCP:9230 -sTCP:LISTEN || true
+[91m[main 2026-05-11T17:55:58.531Z][0m [UtilityProcessWorker]: terminated unexpectedly with code 15, signal: unknown
+[90m[main 2026-05-11T17:55:58.538Z][0m Extension host with pid 1280 exited with code: 15, signal: unknown.
+[91m[main 2026-05-11T17:55:58.538Z][0m [UtilityProcess id: 1, type: extensionHost, pid: 1280]: crashed with code 15 and reason 'killed'
+[91m[main 2026-05-11T17:55:58.540Z][0m AgentHostProcessManager: agent host terminated unexpectedly with code 15
+[93m[main 2026-05-11T17:55:58.540Z][0m [UtilityProcess type: agentHost, pid: 1283]: unable to kill the process
+[90m[main 2026-05-11T17:55:58.541Z][0m AgentHostProcessManager: agent host started
+Renderer process killed - see https://www.electronjs.org/docs/tutorial/application-debugging for potential debugging information.
+[91m[main 2026-05-11T17:55:58.547Z][0m CodeWindow: renderer process gone (reason: killed, code: 15)
+COMMAND    PID   USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+Code\x20- 1141 roblou   38u  IPv4 0xbd1d8cfb50498e59      0t0  TCP 127.0.0.1:9230 (LISTEN)
+
+$ ps -axo pid,command | rg "remote-debugging-port=9230|Code - OSS" || true
+ 6544 rg remote-debugging-port=9230|Code - OSS
+ 1141 ./.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS . --disable-extension=vscode.vscode-api-tests --user-data-dir .build/chat-memory-smoke/user-data --remote-debugging-port=9230
+ 6538 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (GPU).app/Contents/MacOS/Code - OSS Helper (GPU) --type=gpu-process --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --gpu-preferences=SAAAAAAAAAAgAAAEAAAAAAAAAAAAAGAAAwAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAQAAAAAAAAABAAAAAAAAAACAAAAAAAAAAIAAAAAAAAAA== --shared-files --field-trial-handle=1718379636,r,4916703272938677667,8191879483416235162,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708994745248135 --seatbelt-client=52
+ 6539 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/MacOS/Code - OSS Helper --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=network --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --shared-files --field-trial-handle=1718379636,r,4916703272938677667,8191879483416235162,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708995682289984 --seatbelt-client=52
+ 6541 /Users/roblou/code/vscode/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/MacOS/Code - OSS Helper --type=utility --utility-sub-type=node.mojom.NodeService --lang=en-US --service-sandbox-type=none --nolazy --inspect=5878 --user-data-dir=/Users/roblou/code/vscode/.build/chat-memory-smoke/user-data --standard-schemes=vscode-webview,vscode-file --enable-sandbox --secure-schemes=vscode-webview,vscode-file --cors-schemes=vscode-webview,vscode-file --fetch-schemes=vscode-webview,vscode-file --service-worker-schemes=vscode-webview --code-cache-schemes=vscode-webview,vscode-file --shared-files --field-trial-handle=1718379636,r,4916703272938677667,8191879483416235162,262144 --enable-features=DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,PdfUseShowSaveFilePicker,ScreenCaptureKitPickerScreen,ScreenCaptureKitStreamPickerSonoma --disable-features=CalculateNativeWinOcclusion,LocalNetworkAccessChecks,MacWebContentsOcclusion,ScreenAIOCREnabled,SpareRendererForSitePerProcess,TimeoutHangingVideoCaptureStarts,TraceSiteInstanceGetProcessCreation --variations-seed-version --trace-process-track-uuid=3190708996619331833
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at CodeWindow.send (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1059:31)
+    at file:///Users/roblou/code/vscode/out/vs/platform/lifecycle/electron-main/lifecycleMainService.js:287:14
+    at new Promise (<anonymous>)
+    at LifecycleMainService.onBeforeUnloadWindowInRenderer (file:///Users/roblou/code/vscode/out/vs/platform/lifecycle/electron-main/lifecycleMainService.js:277:12)
+    at LifecycleMainService.doUnload (file:///Users/roblou/code/vscode/out/vs/platform/lifecycle/electron-main/lifecycleMainService.js:250:29)
+    at LifecycleMainService.unload (file:///Users/roblou/code/vscode/out/vs/platform/lifecycle/electron-main/lifecycleMainService.js:238:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/lifecycle/electron-main/lifecycleMainService.js:192:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+[1141:0511/105559.211461:WARNING:content/browser/gpu/gpu_process_host.cc:1021] Reinitialized the GPU process after a crash. The reported initialization time was 61 ms
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100260)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Protocol.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.electron.js:8:19)
+    at ChannelServer.sendBuffer (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:245:21)
+    at ChannelServer.send (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:241:17)
+    at ChannelServer.sendResponse (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:231:32)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/parts/ipc/common/ipc.js:316:45)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:73:101)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:62:87)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter._deliverQueue (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:801:12)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:821:12)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/common/log.js:550:32)
+    at LoggerMainService.deregisterLogger (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:31:11)
+    at LoggerMainService.deregisterLoggers (file:///Users/roblou/code/vscode/out/vs/platform/log/electron-main/loggerService.js:63:14)
+    at CodeWindow.dispose (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:1158:28)
+    at UniqueContainer.value (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:140:12)
+    at Emitter._deliver (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:792:16)
+    at Emitter.fire (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:817:12)
+    at BrowserWindow.fn (file:///Users/roblou/code/vscode/out/vs/base/common/event.js:395:36)
+    at BrowserWindow.emit (node:events:531:35)
+    at CodeWindow.destroyWindow (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:711:18)
+    at CodeWindow.onWindowError (file:///Users/roblou/code/vscode/out/vs/platform/windows/electron-main/windowImpl.js:663:22)
+
+## Final detached Code OSS cleanup
+$ kill 1141 || true
+kill: kill 1141 failed: no such process
+
+$ pkill -f 'Code - OSS Helper' || true
+
+$ lsof -nP -iTCP:9230 -sTCP:LISTEN || true
+
+$ ps -axo pid,command | rg "remote-debugging-port=9230|Code - OSS" || true
+ 7986 rg remote-debugging-port=9230|Code - OSS
+
+$ pgrep -f 'scripts/code.sh'
+pgrep_exit_code=1

@@ -38,6 +38,7 @@ const scripts: Record<string, FakeStep[]> = {
 	'playwright-inspection': createPlaywrightInspectionScript(),
 	'execution-control': createExecutionControlScript(),
 	'auto-thread-resolve': createAutoThreadResolveScript(),
+	'auto-thread-resolve-continue-fails': createAutoThreadResolveContinueFailsScript(),
 	'failed-threads': createFailedThreadsScript(),
 	'failed-step-out': createFailedStepOutScript(),
 	'expect-launch-overrides': createLifecycleScript('launch', { request: 'launch', program: 'flag.js', cwd: 'flag-cwd' }),
@@ -332,6 +333,26 @@ const scripts: Record<string, FakeStep[]> = {
 		{ command: 'configurationDone' },
 		{ event: 'stopped', body: { reason: 'entry', threadId: 1 } },
 		{ command: 'evaluate', expectedArguments: { expression: 'import os', context: undefined }, body: { result: 'optout-ok', variablesReference: 0 } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	],
+	'pause-without-stopped': [
+		// Phase 17 S-08 Bug 2: pause is acked but no `stopped` event arrives.
+		// Models the js-debug-bootloader silent-misroute symptom — the
+		// adapter says "ok" but the targeted thread never actually halts.
+		// The controller should attach a `pause_no_stopped_event` warning to
+		// the response so the caller sees a diagnostic instead of an opaque
+		// silent success.
+		{ command: 'initialize', body: { supportsConfigurationDoneRequest: true } },
+		{ command: 'launch' },
+		{ event: 'initialized' },
+		{ command: 'configurationDone' },
+		{ event: 'stopped', body: { reason: 'entry', threadId: 1, allThreadsStopped: true } },
+		{ command: 'continue', body: { allThreadsContinued: true } },
+		{ event: 'continued', body: { threadId: 1, allThreadsContinued: true } },
+		{ command: 'pause' },
+		// Intentionally no `stopped` event after pause.
 		{ command: 'disconnect' },
 		{ event: 'terminated' },
 		{ close: true },
@@ -677,6 +698,21 @@ function createAutoThreadResolveScript(): FakeStep[] {
 		{ command: 'threads', body: { threads: [{ id: 1, name: 'main' }] } },
 		{ command: 'continue', expectedArguments: { threadId: 1 }, body: { allThreadsContinued: true } },
 		{ event: 'continued', body: { threadId: 1, allThreadsContinued: true } },
+		{ command: 'disconnect' },
+		{ event: 'terminated' },
+		{ close: true },
+	];
+}
+
+function createAutoThreadResolveContinueFailsScript(): FakeStep[] {
+	// Same paused-on-entry single-thread shape as auto-thread-resolve, but the
+	// continue request returns success:false. Lets the integration suite assert
+	// that the auto-resolve warning emitted by the CLI survives into the failure
+	// envelope's meta.warnings instead of being dropped.
+	return [
+		...createLifecycleScript('launch').slice(0, 5),
+		{ command: 'threads', body: { threads: [{ id: 1, name: 'main' }] } },
+		{ command: 'continue', expectedArguments: { threadId: 1 }, success: false, message: 'simulated continue failure' },
 		{ command: 'disconnect' },
 		{ event: 'terminated' },
 		{ close: true },

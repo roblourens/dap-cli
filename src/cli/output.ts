@@ -3,6 +3,7 @@ import type { CliError } from './errors.js';
 export interface JsonMeta {
   command: string;
   timestamp: string;
+  warnings?: readonly string[];
 }
 
 export interface JsonSuccess<T> {
@@ -41,6 +42,7 @@ export interface JsonErrorPayload {
 export interface JsonMetaInput {
   command: string;
   timestamp?: Date;
+  warnings?: readonly string[];
 }
 
 export interface JsonWritable {
@@ -61,10 +63,14 @@ export function toJsonString(envelope: JsonSuccess<unknown> | JsonFailure): stri
 }
 
 export function createMeta(input: JsonMetaInput): JsonMeta {
-  return {
+  const meta: JsonMeta = {
     command: input.command,
     timestamp: (input.timestamp ?? new Date()).toISOString(),
   };
+  if (input.warnings !== undefined && input.warnings.length > 0) {
+    meta.warnings = input.warnings;
+  }
+  return meta;
 }
 
 export function toJsonErrorPayload(error: CliError): JsonErrorPayload {

@@ -40,6 +40,13 @@ export interface StartControllerServerOptions {
    * the OS still owns the pid.
    */
   isProcessAlive?: (pid: number) => boolean;
+  /**
+   * Phase 17 S-08 Bug 2 test seam. Override the per-pause wait for a
+   * `stopped` event in {@link ControllerServer.maybeAttachPauseWarning}.
+   * Defaults to 2_000ms in production. Tests inject a small value (e.g.
+   * 50ms) so the warning path runs fast.
+   */
+  pauseStoppedWaitTimeoutMs?: number;
 }
 
 export interface ControllerStatus {
@@ -676,7 +683,62 @@ export class ControllerServer {
       }
     }
     this.maybeTrackBreakpoints(runtime, requestParams, responseBody);
+    responseBody = await this.maybeAttachPauseWarning(runtime, requestParams.command, responseBody);
     return responseBody;
+  }
+
+  /**
+   * Phase 17 S-08 Bug 2: a `pause` request can be acknowledged by the
+   * adapter (`success: true`) without the targeted thread actually halting
+   * — observed against a js-debug attach where `Debugger.pause` was sent
+   * to the bootloader root with no CDP `sessionId`, so it landed on a
+   * target with no user-pauseable code and never produced a `stopped`
+   * event. The CLI then sat at "pause returned ok" while every follow-up
+   * (`stack`, `vars`) failed with `thread_not_paused`.
+   *
+   * This post-success hook waits up to 2_000ms for `manager.status(...).
+   * paused === true` (which captures both parent and child stopped events
+   * via {@link ChildSessionCoordinator.recomputeParentPausedState}). If
+   * the deadline elapses, we surface a `pause_no_stopped_event` warning
+   * on the response so the caller sees a diagnostic instead of an opaque
+   * silent success. The DAP `pause` response body is normally `{}`, so
+   * adding a `warnings` field is purely additive.
+   *
+   * Kept under the 5s controller IPC budget; in the happy case the wait
+   * resolves in ~50–500ms (one poll tick after the stopped event lands).
+   */
+  private async maybeAttachPauseWarning(runtime: DapSessionRuntime, command: string, responseBody: unknown): Promise<unknown> {
+    if (command !== 'pause') {
+      return responseBody;
+    }
+    const manager = this.requireSessionManager();
+    const sessionId = runtime.sessionId;
+    const timeoutMs = this.options.pauseStoppedWaitTimeoutMs ?? 2_000;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      let paused: boolean | undefined;
+      try {
+        paused = manager.status(sessionId).paused;
+      } catch {
+        return responseBody;
+      }
+      if (paused === true) {
+        return responseBody;
+      }
+      await new Promise<void>(resolve => { setTimeout(resolve, 75).unref?.(); });
+    }
+    const warning = {
+      message: 'pause_no_stopped_event',
+      diagnostics: [
+        'pause was acknowledged but no `stopped` event arrived within 2s.',
+        'The targeted thread may belong to a parent (e.g. js-debug bootloader root) that has no user-pauseable code, or to a worker without an active CDP session.',
+        'Run `dap-cli sessions --json` to find the user-code child session and target it explicitly with `--name <child>`.',
+      ],
+    };
+    if (isRecord(responseBody)) {
+      return { ...responseBody, warnings: [warning] };
+    }
+    return { warnings: [warning] };
   }
 
   /**

@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import type { JsonWritable } from './output.js';
+import type { OutputWriter } from './outputWriter.js';
 import { resolveOutputMode } from './outputMode.js';
 import { createOutputWriter } from './outputWriter.js';
 import { registerControllerCommands } from './commands/controller.js';
@@ -17,6 +18,12 @@ export interface ProgramOptions {
   stderr?: JsonWritable;
 }
 
+const PROGRAM_OUTPUT_WRITER = Symbol('dap-cli.programOutputWriter');
+
+export function getProgramOutputWriter(program: Command): OutputWriter | undefined {
+  return (program as unknown as Record<symbol, OutputWriter | undefined>)[PROGRAM_OUTPUT_WRITER];
+}
+
 export function createProgram(options: ProgramOptions = {}): Command {
   const program = new Command();
   const stdout = options.stdout ?? process.stdout;
@@ -26,6 +33,7 @@ export function createProgram(options: ProgramOptions = {}): Command {
     errorStream: stderr,
     resolveMode: () => resolveOutputMode({ cliHuman: getProgramHumanOption(program), isStdoutTTY: stdout.isTTY === true, env: process.env }),
   });
+  (program as unknown as Record<symbol, OutputWriter>)[PROGRAM_OUTPUT_WRITER] = output;
 
   program
     .name('dap-cli')

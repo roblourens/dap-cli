@@ -106,6 +106,58 @@ describe('output writer', () => {
     expect(stream.output).not.toContain('Timestamp:');
     expect(stream.output).not.toContain('{"ok":true');
   });
+
+  test('JSON warnings fold into meta.warnings instead of stderr', () => {
+    const stream = new MemoryStream();
+    const errorStream = new MemoryStream();
+    const writer = createOutputWriter({ stream, errorStream, resolveMode: () => 'json' });
+
+    writer.warn('stack: --thread-id not provided; using stopped thread 1');
+    writer.warn('breakpoints set: foo');
+    writer.success({ ok: 1 }, { command: 'stack', timestamp: new Date('2026-05-05T00:00:00.000Z') });
+
+    expect(errorStream.output).toBe('');
+    const envelope = JSON.parse(stream.output) as { meta: { warnings?: string[] } };
+    expect(envelope.meta.warnings).toEqual([
+      'stack: --thread-id not provided; using stopped thread 1',
+      'breakpoints set: foo',
+    ]);
+  });
+
+  test('JSON warnings fold into meta.warnings on failure envelopes too', () => {
+    const stream = new MemoryStream();
+    const errorStream = new MemoryStream();
+    const writer = createOutputWriter({ stream, errorStream, resolveMode: () => 'json' });
+
+    writer.warn('evaluate: hint');
+    writer.failure(usageError('Bad'), { command: 'evaluate', timestamp: new Date('2026-05-05T00:00:00.000Z') });
+
+    expect(errorStream.output).toBe('');
+    const envelope = JSON.parse(stream.output) as { ok: false; meta: { warnings?: string[] } };
+    expect(envelope.meta.warnings).toEqual(['evaluate: hint']);
+  });
+
+  test('JSON envelope omits warnings entirely when none were emitted', () => {
+    const stream = new MemoryStream();
+    const writer = createOutputWriter({ stream, resolveMode: () => 'json' });
+
+    writer.success({ ok: 1 }, { command: 'status', timestamp: new Date('2026-05-05T00:00:00.000Z') });
+
+    const envelope = JSON.parse(stream.output) as { meta: Record<string, unknown> };
+    expect(envelope.meta).not.toHaveProperty('warnings');
+  });
+
+  test('human mode keeps emitting warnings to stderr immediately', () => {
+    const stream = new MemoryStream();
+    const errorStream = new MemoryStream();
+    const writer = createOutputWriter({ stream, errorStream, resolveMode: () => 'human' });
+
+    writer.warn('stack: --thread-id not provided; using stopped thread 1');
+    writer.success({ ok: 1 }, { command: 'stack', timestamp: new Date('2026-05-05T00:00:00.000Z') });
+
+    expect(errorStream.output).toBe('stack: --thread-id not provided; using stopped thread 1\n');
+    expect(stream.output).not.toContain('--thread-id');
+  });
 });
 
 describe('human failure rendering', () => {

@@ -10,7 +10,9 @@ let client: ControllerClient | undefined;
 
 beforeEach(async () => {
   tempEnv = await createTempDapCliEnv('dap-cli-pyeval-routing-');
-  server = await startControllerServer({ dapCliHome: tempEnv.dapCliHome });
+  // Phase 17 S-08 Bug 2: short pauseStoppedWaitTimeoutMs so the
+  // pause-warning test runs fast. Other tests in this file don't pause.
+  server = await startControllerServer({ dapCliHome: tempEnv.dapCliHome, pauseStoppedWaitTimeoutMs: 100 });
   client = await createControllerClient({ dapCliHome: tempEnv.dapCliHome });
 });
 
@@ -117,5 +119,36 @@ describe('routeDapRequest — Python evaluate auto-wrap (Phase 16-01)', () => {
     expect(captured!.data?.exec_form).toBe('exec("@@@ not python @@@")');
     expect(captured!.data?.original_expression).toBe('@@@ not python @@@');
     expect(captured!.adapter?.descriptorId).toBe('debugpy');
+  });
+});
+
+interface PauseResponseWithWarnings {
+  warnings?: Array<{ message: string; diagnostics?: string[] }>;
+}
+
+// Phase 17 S-08 Bug 2 (17-S08-FINDINGS.md): a `pause` request can be
+// acknowledged by the adapter without producing a `stopped` event (observed
+// against js-debug attach where Debugger.pause was sent without a CDP
+// sessionId, landing on the bootloader root). The controller's
+// post-success hook waits up to `pauseStoppedWaitTimeoutMs` for paused
+// state to flip true, then attaches a `pause_no_stopped_event` warning.
+describe('routeDapRequest — pause without stopped event (Phase 17 S-08 Bug 2)', () => {
+  test('pause that is acked but produces no stopped event surfaces pause_no_stopped_event warning', async () => {
+    await startScriptedSession('pause-silent', 'pause-without-stopped', 'js-debug');
+    // Continue first so the session is running before pause.
+    await client!.request('dap.request', {
+      command: 'continue',
+      args: { threadId: 1 },
+      name: 'pause-silent',
+    });
+    const response = await client!.request<PauseResponseWithWarnings>('dap.request', {
+      command: 'pause',
+      args: { threadId: 1 },
+      name: 'pause-silent',
+    });
+    expect(response.warnings).toBeDefined();
+    expect(response.warnings!.length).toBe(1);
+    expect(response.warnings![0]!.message).toBe('pause_no_stopped_event');
+    expect(response.warnings![0]!.diagnostics).toBeDefined();
   });
 });

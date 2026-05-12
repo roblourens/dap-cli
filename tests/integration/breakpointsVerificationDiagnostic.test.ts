@@ -6,7 +6,7 @@ import { createCliTestEnv, runCli, type CliTestEnv } from '../helpers/runCli.js'
 interface JsonEnvelope<T> {
   ok: true;
   data: T;
-  meta: { command: string; timestamp: string };
+  meta: { command: string; timestamp: string; warnings?: readonly string[] };
 }
 
 interface VerificationDiagnostic {
@@ -67,14 +67,15 @@ describe('breakpoints set verification diagnostic (Phase 12 plan 02)', () => {
 
     const set = await runCli(['breakpoints', 'set', '--name', 'verifyB', '--source', path.resolve('tmp/bp-verify-source.js'), '--line', '10'], { env: testEnv.env });
     expect(set.exitCode, JSON.stringify(set)).toBe(0);
-    const diag = parseEnvelope<BreakpointsSetData>(set.stdout).data.verificationDiagnostic;
+    const setBEnvelope = parseEnvelope<BreakpointsSetData>(set.stdout);
+    const diag = setBEnvelope.data.verificationDiagnostic;
     expect(diag).toBeDefined();
     expect(diag!.loadedSourcesCount).toBe(0);
     expect(diag!.matchingLoadedSources).toEqual([]);
     expect(diag!.childSessionCount).toBe(0);
     expect(diag!.hint).toMatch(/wrong process/);
     expect(diag!.recipe).toBe('dap-cli dap loaded-sources --name verifyB');
-    expect(set.stderr).toContain(diag!.hint);
+    expect(setBEnvelope.meta.warnings?.some(w => w.includes(diag!.hint))).toBe(true);
   });
 
   test('c: unverified + loaded sources but no match → source-maps hint', async () => {
@@ -83,13 +84,14 @@ describe('breakpoints set verification diagnostic (Phase 12 plan 02)', () => {
 
     const set = await runCli(['breakpoints', 'set', '--name', 'verifyC', '--source', path.resolve('tmp/bp-verify-source.js'), '--line', '10'], { env: testEnv.env });
     expect(set.exitCode, JSON.stringify(set)).toBe(0);
-    const diag = parseEnvelope<BreakpointsSetData>(set.stdout).data.verificationDiagnostic;
+    const setCEnvelope = parseEnvelope<BreakpointsSetData>(set.stdout);
+    const diag = setCEnvelope.data.verificationDiagnostic;
     expect(diag).toBeDefined();
     expect(diag!.loadedSourcesCount).toBe(1);
     expect(diag!.matchingLoadedSources).toEqual([]);
     expect(diag!.hint).toMatch(/none match/);
     expect(diag!.hint).toMatch(/source maps/);
-    expect(set.stderr).toContain(diag!.hint);
+    expect(setCEnvelope.meta.warnings?.some(w => w.includes(diag!.hint))).toBe(true);
   });
 
   test('d: unverified + matching loaded source → line-numbers hint', async () => {
@@ -100,12 +102,13 @@ describe('breakpoints set verification diagnostic (Phase 12 plan 02)', () => {
     // so the CLI must pass --source with that basename to trigger a basename match.
     const set = await runCli(['breakpoints', 'set', '--name', 'verifyD', '--source', path.resolve('tmp/bp-verify-source.js'), '--line', '10'], { env: testEnv.env });
     expect(set.exitCode, JSON.stringify(set)).toBe(0);
-    const diag = parseEnvelope<BreakpointsSetData>(set.stdout).data.verificationDiagnostic;
+    const setDEnvelope = parseEnvelope<BreakpointsSetData>(set.stdout);
+    const diag = setDEnvelope.data.verificationDiagnostic;
     expect(diag).toBeDefined();
     expect(diag!.loadedSourcesCount).toBe(1);
     expect(diag!.matchingLoadedSources).toHaveLength(1);
     expect(diag!.hint).toMatch(/Check breakpoint line numbers/);
-    expect(set.stderr).toContain(diag!.hint);
+    expect(setDEnvelope.meta.warnings?.some(w => w.includes(diag!.hint))).toBe(true);
   });
 
   test('e: unverified + adapter without supportsLoadedSourcesRequest → degraded diagnostic', async () => {
@@ -114,12 +117,13 @@ describe('breakpoints set verification diagnostic (Phase 12 plan 02)', () => {
 
     const set = await runCli(['breakpoints', 'set', '--name', 'verifyE', '--source', path.resolve('tmp/bp-verify-source.js'), '--line', '10'], { env: testEnv.env });
     expect(set.exitCode, JSON.stringify(set)).toBe(0);
-    const diag = parseEnvelope<BreakpointsSetData>(set.stdout).data.verificationDiagnostic;
+    const setEEnvelope = parseEnvelope<BreakpointsSetData>(set.stdout);
+    const diag = setEEnvelope.data.verificationDiagnostic;
     expect(diag).toBeDefined();
     expect(diag!.loadedSourcesCount).toBe(-1);
     expect(diag!.matchingLoadedSources).toEqual([]);
     expect(diag!.hint).toMatch(/does not support loadedSources/);
-    expect(set.stderr).toContain(diag!.hint);
+    expect(setEEnvelope.meta.warnings?.some(w => w.includes(diag!.hint))).toBe(true);
   });
 });
 

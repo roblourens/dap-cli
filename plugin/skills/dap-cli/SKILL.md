@@ -55,8 +55,8 @@ dap-cli stop-controller
 ```bash
 dap-cli start                               # start the controller
 dap-cli stop-controller                     # stop the controller
-dap-cli sessions                            # list sessions (bare list, not envelope)
-dap-cli sessions --show-children            # include js-debug child sessions
+dap-cli sessions                            # list sessions (envelope; data is an array of session objects)
+dap-cli sessions --show-children            # include js-debug child sessions (envelope; data is an array)
 dap-cli close                               # stop and remove the active session
 dap-cli cleanup                             # stop sessions, clear stale state
 dap-cli cleanup --purge                     # also wipe DAP_CLI_HOME caches
@@ -70,7 +70,7 @@ dap-cli launch --program app.js --stop-on-entry
 dap-cli launch --program main.py
 
 # launch.json discovery and use (--workspace defaults to cwd)
-dap-cli launch --list-configs                              # bare list
+dap-cli launch --list-configs                              # discover names (envelope; data is a string array)
 dap-cli attach --config "Attach Worker"
 dap-cli attach --workspace /elsewhere --config "Attach Worker"
 
@@ -228,7 +228,7 @@ dap-cli close
 ## Example: attach to a workspace launch.json config
 
 ```bash
-dap-cli launch --list-configs                                 # discover names (bare list)
+dap-cli launch --list-configs                                 # discover names (envelope; data is a string array)
 dap-cli attach --config "Attach Worker"
 # wrong-process smoke test — confirm you're talking to the user's process, not an adapter helper
 dap-cli evaluate --expression "process.pid"
@@ -282,7 +282,7 @@ dap-cli continue --name web-demo
 
 ## Common gotchas
 
-- **`--list-configs` and `sessions` return bare lists**, not the standard envelope.
+- **Array-shaped `data` fields.** `sessions`, `sessions --show-children`, and `launch --list-configs` all return the standard `{ok, data, meta}` envelope, but `data` is an array (of session objects, or of config-name strings for `--list-configs`) rather than an object with named fields. Don't assume `data.sessions` or `data.configs` — iterate `data` directly.
 - **Don't set `DAP_CLI_HOME` to a fresh per-task dir.** The adapter cache (js-debug, debugpy) lives there. A clean home means every adapter resolution fails with `js_debug_not_found`. Use the default `~/.dap-cli/`.
 - **Compounds.** Member session names are derived as `<compound>/<member>`; use `dap-cli sessions` to discover exact names before targeting a member. Closing one member closes the group unless `stopAll: false`.
 - **`--json-overrides` cannot bypass `--config` auto-route.** A `'{"request":"launch"}'` override is silently overwritten by the auto-routed `request` field.

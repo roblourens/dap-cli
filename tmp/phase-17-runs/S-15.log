@@ -1,0 +1,984 @@
+# S-15 transcript
+date: 2026-05-11T17:36:49Z
+
+## Required skill read: requested dap-cli path
+$ sed -n '1,240p' ~/.copilot/skills/dap-cli/SKILL.md
+sed: /Users/roblou/.copilot/skills/dap-cli/SKILL.md: No such file or directory
+
+## Fallback skill read: repo dap-cli path
+$ sed -n '1,240p' /Users/roblou/code/dap-cli/skills/dap-cli/SKILL.md
+---
+name: dap-cli
+description: "Use when: an agent needs to debug, inspect, or control a local program from shell commands with dap-cli; trigger for DAP debugging, breakpoints, stack/variables inspection, launch.json debugging, js-debug, debugpy, Chrome debugging, Playwright interop, or poll-then-inspect debug loops. Assumes dap-cli is already on PATH."
+---
+
+# Debug Adapter Control with dap-cli
+
+`dap-cli` is an agent-facing CLI for the Debug Adapter Protocol. It's language-agnostic — any DAP adapter (js-debug, debugpy, custom) works the same way. The CLI is assumed to be on `PATH`; if it isn't, the user installed it as `npx dap-cli`.
+
+The model is intentionally simple:
+
+- **Polling, not streaming.** Drive the target with commands; poll `status` for state.
+- **JSON envelope by default.** Every reply is `{ ok, data, error?, meta }`. JSON is emitted automatically when stdout is not a TTY.
+- **Refs are scoped to the current stop.** After `continue` / `next` / `step-in` / `step-out`, reacquire `threads` / `stack` / `scopes` / `variables` before reusing IDs.
+
+## Quick start
+
+```bash
+# start the persistent controller (once per machine — nothing else auto-starts it)
+dap-cli start
+
+# launch a Node target paused at entry
+dap-cli launch --program app.js --stop-on-entry
+
+# set a breakpoint, continue, poll for the stop
+dap-cli breakpoints set --source app.js --line 12
+dap-cli continue
+dap-cli status
+
+# inspect when paused — IDs come from these calls, never guess them
+dap-cli threads
+dap-cli stack
+dap-cli scopes --frame-id 10
+dap-cli variables --variables-reference 100
+dap-cli evaluate --expression "user.email"
+
+# clean up
+dap-cli close
+dap-cli stop-controller
+```
+
+## Standard loop
+
+1. `dap-cli start` if you get `controller_unavailable`.
+2. **Prefer `--config` over raw `--adapter` flags** when the project has a `.vscode/launch.json` — the config carries adapter-specific fields (`outFiles`, `webRoot`, `runtimeArgs`) you'd otherwise have to reconstruct.
+3. Poll `status` for stop detection.
+4. When stopped: `threads` → `stack` → `scopes` → `variables`. `--thread-id` and `--frame-id` are auto-resolved when there is exactly one candidate; `--variables-reference` and `--source-reference` always need a value from a fresh call.
+5. Drive with `evaluate` / `continue` / `next` / `step-in` / `step-out`. Poll again after every resume.
+6. Clean up with `close` / `cleanup` / `stop-controller`.
+
+## Commands
+
+### Lifecycle
+
+```bash
+dap-cli start                               # start the controller
+dap-cli stop-controller                     # stop the controller
+dap-cli sessions                            # list sessions (envelope; data is an array of session objects)
+dap-cli sessions --show-children            # include js-debug child sessions (envelope; data is an array)
+dap-cli close                               # stop and remove the active session
+dap-cli cleanup                             # stop sessions, clear stale state
+dap-cli cleanup --purge                     # also wipe DAP_CLI_HOME caches
+```
+
+### Launch / attach
+
+```bash
+# raw launch — adapter and type inferred from --program extension
+dap-cli launch --program app.js --stop-on-entry
+dap-cli launch --program main.py
+
+# launch.json discovery and use (--workspace defaults to cwd)
+dap-cli launch --list-configs                              # discover names (envelope; data is a string array)
+dap-cli attach --config "Attach Worker"
+dap-cli attach --workspace /elsewhere --config "Attach Worker"
+
+# layer extra fields onto a named config without abandoning --config
+dap-cli launch --config "Attach to App" \
+  --json-overrides '{"sourceMaps":true,"resolveSourceMapLocations":["**","!**/node_modules/**"]}'
+dap-cli launch --config "Attach to App" \
+  --resolve-source-maps '**' '!**/node_modules/**'
+dap-cli launch --config "Attach to App" \
+  --out-files 'dist/**/*.js'
+
+# raw launch payload (no --config auto-route)
+dap-cli launch --adapter js-debug --type pwa-node --json '{"program":"app.js","stopOnEntry":true}'
+```
+
+`launch` and `attach` map directly to the DAP `request` field — there is no `--request` flag. With `--config`, a verb mismatch auto-routes (warns + sets `autoRouted` on the response). Raw `--json` payloads do not auto-route.
+
+### Inspection
+
+```bash
+dap-cli status
+dap-cli events --after-cursor 0 --limit 20    # optional, for richer history
+dap-cli events --include stopped --include output
+dap-cli threads
+dap-cli stack                                 # --thread-id auto-resolved
+dap-cli scopes --frame-id 10
+dap-cli variables --variables-reference 100
+dap-cli evaluate --expression "value + 1"     # auto-frame on a paused session
+dap-cli evaluate --expression "value > 10" --frame-id 10 --context repl
+dap-cli capabilities
+```
+
+### Stepping
+
+```bash
+dap-cli continue                              # --thread-id auto-resolved
+dap-cli next
+dap-cli step-in
+dap-cli step-out
+dap-cli pause
+```
+
+### Breakpoints
+
+```bash
+# set is replacement-semantic per source — send the full desired set for a file each time
+dap-cli breakpoints set --source app.js --line 12
+dap-cli breakpoints set --source app.js --line 22 --condition "count === 1"
+dap-cli breakpoints set --source app.js --line 22 --hit-condition 2
+dap-cli breakpoints set --source app.js --line 22 --log-message "count={count}"
+
+# inspect / clear (controller-side tracking)
+dap-cli breakpoints list
+dap-cli breakpoints list --source app.js
+dap-cli breakpoints clear --source app.js     # DAP empty-list semantics for one source
+dap-cli breakpoints clear                     # clear every tracked source
+```
+
+### Raw DAP
+
+For DAP requests not exposed as first-class commands:
+
+```bash
+dap-cli request stackTrace --json '{"threadId":1}'
+dap-cli dap loaded-sources
+dap-cli dap set-variable --json '{"variablesReference":100,"name":"x","value":"42"}'
+dap-cli dap set-expression --json '{"frameId":10,"expression":"x","value":"42"}'
+```
+
+### Output mode
+
+```bash
+dap-cli sessions --human                 # human-readable (default on TTY only if DAP_CLI_HUMAN=1)
+dap-cli status --no-human                # force JSON on a TTY
+DAP_CLI_HUMAN=1 dap-cli status
+```
+
+Non-TTY stdout always gets JSON. The command-level `--json <json>` is request payload input, not an output-format switch.
+
+## Multiple sessions
+
+`--name <session>` lets you target one of several sessions explicitly. When omitted, commands act on the active session (the most recent one, or whatever was set with `dap-cli use <name>`).
+
+```bash
+# explicit, scriptable
+dap-cli launch --program app.js --name api
+dap-cli launch --program worker.js --name worker
+dap-cli status --name api
+dap-cli close api
+
+# implicit (active-session shorthand)
+dap-cli use api
+dap-cli status
+```
+
+Always pass `--name` in scripts and agent playbooks; rely on the active session only for one-off interactive use.
+
+## JSON envelope
+
+```json
+{ "ok": true,  "data": { /* … */ }, "meta": { "command": "status", "timestamp": "…" } }
+{ "ok": false, "error": { "code": "adapter_not_found", "category": "usage", "exitCode": 2, "diagnostics": [] }, "meta": { /* … */ } }
+```
+
+Read `error.code`, `error.category`, `error.diagnostics`, `stderrTail`, and `logPath` before retrying. If a request fails because execution resumed, restart at `status` and reacquire IDs on the next stop.
+
+## Breakpoint verification is asynchronous
+
+The `verified` flag in the immediate `breakpoints set` response is a snapshot, not a verdict. Adapters often return `verified: false` initially and upgrade once the runtime loads the source.
+
+1. Set the bp. If `verified: true`, you're done.
+2. If `verified: false`, **don't conclude failure.** Continue and poll `status`. If a stop arrives with `reason: "breakpoint"`, your bp resolved.
+3. Only after the program has plausibly run past the line *without* stopping should you read `verificationDiagnostic` and treat it as a binding failure.
+
+The success payload carries `verificationDiagnostic` when any bp is unverified:
+
+```json
+{
+  "verificationDiagnostic": {
+    "unverifiedCount": 1,
+    "loadedSourcesCount": 0,
+    "matchingLoadedSources": [],
+    "hint": "1 of 1 breakpoints unverified; debuggee has loaded 0 sources — likely attached to the wrong process. Run: dap-cli dap loaded-sources",
+    "recipe": "dap-cli dap loaded-sources"
+  }
+}
+```
+
+`recipe` is the literal next command to run. Hint cases:
+
+- 0 sources loaded → likely attached to the wrong process.
+- Loaded but no path/basename match → check source maps / outFiles.
+- Matching loaded source → check breakpoint line numbers.
+- Adapter doesn't advertise `supportsLoadedSourcesRequest` → fall back to event inspection.
+
+An empty `loaded-sources` result with `childSessionCount > 0` is **normal** for multi-process js-debug (children carry the sources, not the parent).
+
+## Example: launch a Node target, break, inspect, continue
+
+```bash
+dap-cli start
+dap-cli launch --program app.js --stop-on-entry
+dap-cli breakpoints set --source app.js --line 12
+dap-cli continue
+dap-cli status
+# stopped → inspect
+dap-cli stack
+dap-cli scopes --frame-id 1000
+dap-cli variables --variables-reference 1001
+dap-cli evaluate --expression "user.email"
+dap-cli continue
+dap-cli close
+```
+
+## Example: attach to a workspace launch.json config
+
+```bash
+dap-cli launch --list-configs                                 # discover names (envelope; data is a string array)
+dap-cli attach --config "Attach Worker"
+# wrong-process smoke test — confirm you're talking to the user's process, not an adapter helper
+dap-cli evaluate --expression "process.pid"
+lsof -i :9229 | grep LISTEN                                   # PIDs should match
+```
+
+If the resolved config has `request: "attach"`, use `dap-cli attach` (or let `--config` auto-route from `launch`). Picking the wrong verb is the highest-impact footgun: an adapter helper process spawns, every `breakpoints set` returns `verified: false`, and `dap loaded-sources` returns `[]` — looks like a source-map bug; isn't.
+
+## Example: js-debug pwa-chrome with multi-renderer events
+
+## Required skill read: launch
+$ sed -n '1,240p' /Users/roblou/code/vscode/.agents/skills/launch/SKILL.md
+---
+name: launch
+description: "Launch and automate VS Code (Code OSS) using @playwright/cli via Chrome DevTools Protocol. Use when you need to interact with the VS Code UI, automate the chat panel, test UI features, or take screenshots of VS Code. Triggers include 'automate VS Code', 'interact with chat', 'test the UI', 'take a screenshot', 'launch Code OSS with debugging'."
+metadata:
+  allowed-tools: Bash(npx @playwright/cli:*)
+---
+
+# VS Code Automation
+
+Automate VS Code (Code OSS) using `@playwright/cli`. VS Code is built on Electron/Chromium and exposes a Chrome DevTools Protocol (CDP) port that `@playwright/cli` can attach to, enabling the same snapshot-interact workflow used for web pages.
+
+## Prerequisites
+
+- **`@playwright/cli` is available via devDependencies.** Run `npm install` at the repo root, then use `npx @playwright/cli` to invoke commands. Alternatively, install globally with `npm install -g @playwright/cli`.
+- **For Code OSS (VS Code dev build):** The repo must be built before launching. `./scripts/code.sh` runs the build automatically if needed, or set `VSCODE_SKIP_PRELAUNCH=1` to skip the compile step if you've already built.
+- **CSS selectors are internal implementation details.** Selectors like `.interactive-input-part`, `.interactive-input-editor`, and `.part.auxiliarybar` used in `eval` commands are VS Code internals that may change across versions. If they stop working, use `npx @playwright/cli snapshot` to re-discover the current DOM structure.
+
+## Core Workflow
+
+1. **Launch** Code OSS with remote debugging enabled
+2. **Attach** npx @playwright/cli to the CDP port
+3. **Snapshot** to discover interactive elements
+4. **Interact** using element refs
+5. **Re-snapshot** after navigation or state changes
+
+> **📸 Take screenshots for a paper trail.** Use `npx @playwright/cli screenshot --filename=<path>` at key moments — after launch, before/after interactions, and when something goes wrong. Screenshots provide visual proof of what the UI looked like and are invaluable for debugging failures or documenting what was accomplished.
+>
+> Save screenshots inside a timestamped subfolder so each run is isolated and nothing gets overwritten:
+>
+> ```bash
+> # Create a timestamped folder for this run's screenshots
+> SCREENSHOT_DIR="/tmp/code-oss-screenshots/$(date +%Y-%m-%dT%H-%M-%S)"
+> mkdir -p "$SCREENSHOT_DIR"
+>
+> # Save a screenshot
+> npx @playwright/cli screenshot --filename="$SCREENSHOT_DIR/after-launch.png"
+> ```
+
+```bash
+# Launch Code OSS with remote debugging
+# NOTE: unset ELECTRON_RUN_AS_NODE if running from a Claude Code terminal
+unset ELECTRON_RUN_AS_NODE
+./scripts/code.sh --remote-debugging-port=9224
+
+# Wait for Code OSS to start, retry until attached
+for i in 1 2 3 4 5; do npx @playwright/cli attach --cdp=http://127.0.0.1:9224 2>/dev/null && break || sleep 3; done
+
+# Verify you're connected to the right target (not about:blank)
+# If `tab-list` shows the wrong target, run `npx @playwright/cli close` and reattach
+npx @playwright/cli tab-list
+
+# Discover UI elements
+npx @playwright/cli snapshot
+
+# Focus the chat input (macOS)
+npx @playwright/cli press Control+Meta+i
+```
+
+## Attaching
+
+```bash
+# Attach to a specific CDP port
+npx @playwright/cli attach --cdp=http://127.0.0.1:9222
+```
+
+After `attach`, all subsequent commands target the connected app without needing to reattach.
+
+## Tab Management
+
+Electron apps often have multiple windows or webviews. Use tab commands to list and switch between them:
+
+```bash
+# List all available targets (windows, webviews, etc.)
+npx @playwright/cli tab-list
+
+# Switch to a specific tab by index
+npx @playwright/cli tab-select 2
+```
+
+## Launching Code OSS (VS Code Dev Build)
+
+The VS Code repository includes `scripts/code.sh` which launches Code OSS from source. It passes all arguments through to the Electron binary, so `--remote-debugging-port` works directly:
+
+```bash
+cd <repo-root>  # the root of your VS Code checkout
+./scripts/code.sh --remote-debugging-port=9224
+```
+
+Wait for the window to fully initialize, then attach:
+
+```bash
+# Wait for Code OSS to start, retry until attached
+for i in 1 2 3 4 5; do npx @playwright/cli attach --cdp=http://127.0.0.1:9224 2>/dev/null && break || sleep 3; done
+
+# Verify you're connected to the right target (not about:blank)
+# If `tab-list` shows the wrong target, run `npx @playwright/cli close` and reattach
+npx @playwright/cli tab-list
+npx @playwright/cli snapshot
+```
+
+**Tips:**
+- Unset `ELECTRON_RUN_AS_NODE` before launching if it's set in your shell (e.g., in Claude Code terminals): `unset ELECTRON_RUN_AS_NODE && ./scripts/code.sh --remote-debugging-port=9224`
+- Set `VSCODE_SKIP_PRELAUNCH=1` to skip the compile step if you've already built: `VSCODE_SKIP_PRELAUNCH=1 ./scripts/code.sh --remote-debugging-port=9224` (from the repo root)
+- Code OSS uses the default user data directory. Unlike VS Code Insiders, you don't typically need `--user-data-dir` since there's usually only one Code OSS instance running.
+- If you see "Sent env to running instance. Terminating..." it means Code OSS is already running and forwarded your args to the existing instance. Quit Code OSS and relaunch with the flag, or use `--user-data-dir=/tmp/code-oss-debug` to force a new instance.
+
+## Launching the Agents App (Agents Window)
+
+The Agents app is a separate workbench mode launched with the `--agents` flag. It uses a dedicated user data directory to avoid conflicts with the main Code OSS instance.
+
+```bash
+cd <repo-root>  # the root of your VS Code checkout
+./scripts/code.sh --agents --remote-debugging-port=9224
+```
+
+Wait for the window to fully initialize, then attach:
+
+```bash
+# Wait for Agents app to start, retry until attached
+for i in 1 2 3 4 5; do npx @playwright/cli attach --cdp=http://127.0.0.1:9224 2>/dev/null && break || sleep 3; done
+
+# Verify you're connected to the right target (not about:blank)
+npx @playwright/cli tab-list
+npx @playwright/cli snapshot
+```
+
+**Tips:**
+- The `--agents` flag launches the Agents workbench instead of the standard VS Code workbench.
+- Set `VSCODE_SKIP_PRELAUNCH=1` to skip the compile step if you've already built.
+
+## Launching VS Code Extensions for Debugging
+
+To debug a VS Code extension via npx @playwright/cli, launch VS Code Insiders with `--extensionDevelopmentPath` and `--remote-debugging-port`. Use `--user-data-dir` to avoid conflicting with an already-running instance.
+
+```bash
+# Build the extension first
+cd <extension-repo-root>  # e.g., the root of your extension checkout
+npm run compile
+
+# Launch VS Code Insiders with the extension and CDP
+code-insiders \
+  --extensionDevelopmentPath="<extension-repo-root>" \
+  --remote-debugging-port=9223 \
+  --user-data-dir=/tmp/vscode-ext-debug
+
+# Wait for VS Code to start, retry until attached
+for i in 1 2 3 4 5; do npx @playwright/cli attach --cdp=http://127.0.0.1:9223 2>/dev/null && break || sleep 3; done
+
+# Verify you're connected to the right target (not about:blank)
+# If `tab-list` shows the wrong target, run `npx @playwright/cli close` and reattach
+npx @playwright/cli tab-list
+npx @playwright/cli snapshot
+```
+
+**Key flags:**
+- `--extensionDevelopmentPath=<path>` — loads your extension from source (must be compiled first)
+- `--remote-debugging-port=9223` — enables CDP (use 9223 to avoid conflicts with other apps on 9222)
+- `--user-data-dir=<path>` — uses a separate profile so it starts a new process instead of sending to an existing VS Code instance
+
+**Without `--user-data-dir`**, VS Code detects the running instance, forwards the args to it, and exits immediately — you'll see "Sent env to running instance. Terminating..." and CDP never starts.
+
+## Restarting After Code Changes
+
+**After making changes to Code OSS source code, you must restart to pick up the new build.** The workbench loads the compiled JavaScript at startup — changes are not hot-reloaded.
+
+### Restart Workflow
+
+1. **Rebuild** the changed code
+2. **Kill** the running Code OSS instance
+3. **Relaunch** with the same flags
+
+```bash
+# 1. Ensure your build is up to date.
+#    Normally you can skip a manual step here and let ./scripts/code.sh in step 3
+#    trigger the build when needed (or run `npm run watch` in another terminal).
+
+# 2. Kill the Code OSS instance listening on the debug port (if running)
+pids=$(lsof -t -i :9224)
+if [ -n "$pids" ]; then
+	kill $pids
+fi
+
+# 3. Relaunch
+./scripts/code.sh --remote-debugging-port=9224
+
+# 4. Reattach npx @playwright/cli
+for i in 1 2 3 4 5; do npx @playwright/cli attach --cdp=http://127.0.0.1:9224 2>/dev/null && break || sleep 3; done
+npx @playwright/cli tab-list
+npx @playwright/cli snapshot
+```
+
+> **Tip:** If you're iterating frequently, run `npm run watch` in a separate terminal so compilation happens automatically. You still need to kill and relaunch Code OSS to load the new build.
+
+## Interacting with Monaco Editor (Chat Input, Code Editors)
+
+VS Code uses Monaco Editor for all text inputs including the Copilot Chat input. Monaco editors require specific npx @playwright/cli techniques — standard `click`, `fill`, and `type` commands may not work depending on the VS Code build.
+
+### The Universal Pattern: Focus via Keyboard Shortcut + `press`
+
+This works on **all** VS Code builds (Code OSS, Insiders, stable):
+
+```bash
+# 1. Open and focus the chat input with the keyboard shortcut
+# macOS:
+npx @playwright/cli press Control+Meta+i
+# Linux / Windows:
+npx @playwright/cli press Control+Alt+i
+
+# 2. Type using individual press commands
+npx @playwright/cli press H
+npx @playwright/cli press e
+npx @playwright/cli press l
+npx @playwright/cli press l
+npx @playwright/cli press o
+npx @playwright/cli press Space  # Use "Space" for spaces
+npx @playwright/cli press w
+npx @playwright/cli press o
+npx @playwright/cli press r
+npx @playwright/cli press l
+npx @playwright/cli press d
+
+# Verify text appeared (optional)
+npx @playwright/cli eval '
+(() => {
+  const sidebar = document.querySelector(".part.auxiliarybar");
+  const viewLines = sidebar.querySelectorAll(".interactive-input-editor .view-line");
+  return Array.from(viewLines).map(vl => vl.textContent).join("|");
+})()'
+
+# 3. Send the message (same on all platforms)
+npx @playwright/cli press Enter
+```
+
+**Chat focus shortcut by platform:**
+- **macOS:** `Ctrl+Cmd+I` → `npx @playwright/cli press Control+Meta+i`
+- **Linux:** `Ctrl+Alt+I` → `npx @playwright/cli press Control+Alt+i`
+- **Windows:** `Ctrl+Alt+I` → `npx @playwright/cli press Control+Alt+i`
+
+This shortcut focuses the chat input and sets `document.activeElement` to a `DIV` with class `native-edit-context` — VS Code's native text editing surface that correctly processes key events from `npx @playwright/cli press`.
+
+11:import { createServer as doCreateServer, IServerAPI } from './remoteExtensionHostAgentServer.js';
+69:export function createServer(address: string | net.AddressInfo | null): Promise<IServerAPI> {
+
+## dap-cli help
+$ npx dap-cli --help
+Usage: dap-cli [options] [command]
+
+A Debug Adapter Protocol CLI for agents. Control debug sessions from shell
+commands.
+
+Options:
+  -V, --version                output the version number
+  --human                      render human-readable output (default when stdout
+                               is a TTY and DAP_CLI_HUMAN is set)
+  --no-human                   render machine-readable JSON output even if
+                               DAP_CLI_HUMAN is set or stdout is a TTY
+  -h, --help                   display help for command
+
+Commands:
+  start                        Start the persistent controller for debug
+                               sessions
+  status [options]             Poll session status (running, stopped,
+                               terminated)
+  stop [options]               Stop a debug session, or stop the controller when
+                               no session is selected
+  stop-controller              Shut down the persistent controller (does not
+                               affect on-disk session records)
+  sessions [options]           List known debug sessions (child sessions are
+                               hidden by default; use --show-children to include
+                               them)
+  use <name>                   Set the active debug session
+  detach [options]             Detach from a debug session
+  close [options] [name]       Close a debug session
+  cleanup [options]            Clean up stale session state
+  launch [options]             Start a DAP launch session using an adapter id,
+                               named launch config, or fake adapter
+  attach [options]             Start a DAP attach session using an adapter id,
+                               named launch config, or fake adapter
+  request [options] <command>  Send raw DAP request with JSON arguments (escape
+                               hatch)
+  capabilities [options]       Return adapter capabilities for a fake/custom
+                               session
+  events [options]             Poll recent DAP events with cursor-based
+                               pagination
+  dap                          Send generated DAP requests by protocol command
+                               name
+  breakpoints                  Manage source breakpoints
+  threads [options]            List active threads in a paused session
+  stack [options]              Get stack frames for a thread (auto-resolves to
+                               the stopped thread if --thread-id omitted)
+  scopes [options]             List scopes for a stack frame (requires frame-id
+                               from stack command)
+  variables [options]          Inspect variables for a scope (requires
+                               variables-reference from scopes command)
+  source [options]             Return source content
+  evaluate [options]           Evaluate an expression (auto-uses topmost frame
+                               of most-recently-stopped thread when paused)
+  continue [options]           Continue execution (auto-resolves to the stopped
+                               thread if --thread-id omitted)
+  pause [options]              Pause execution (auto-resolves to the unique
+                               thread if --thread-id omitted)
+  next [options]               Step over (auto-resolves to the stopped thread if
+                               --thread-id omitted)
+  step-in [options]            Step in (auto-resolves to the stopped thread if
+                               --thread-id omitted)
+  step-out [options]           Step out (auto-resolves to the stopped thread if
+                               --thread-id omitted)
+  help [command]               display help for command
+
+
+Examples:
+  $ dap-cli start
+  $ dap-cli launch --adapter js-debug --program ./app.js
+  $ dap-cli status
+  $ dap-cli events --after-cursor 0
+  $ dap-cli threads
+  $ dap-cli stack --thread-id 1
+
+
+## dap-cli attach help
+$ npx dap-cli attach --help
+Usage: dap-cli attach [options]
+
+Start a DAP attach session using an adapter id, named launch config, or fake
+adapter
+
+Options:
+  --adapter <adapter>                 adapter id (inferred from --type or
+                                      --program when omitted)
+  --config <name>                     named .vscode/launch.json configuration
+  --workspace <path>                  workspace root for .vscode/launch.json
+                                      discovery and variable substitution
+  --list-configs                      list VS Code launch configurations and
+                                      compounds without starting a session
+  --json <json>                       raw adapter-native attach configuration
+                                      JSON (default: "{}")
+  --script <script>                   fake adapter script
+  --name <name>                       session name (default: "default")
+  --program <path>                    program path override
+  --cwd <path>                        working directory override
+  --runtime-executable <path>         runtime executable override
+  --runtime-args <arg...>             runtime argument overrides
+  --url <url>                         URL override for browser adapters
+  --port <port>                       debug port override
+  --python <path>                     Python executable override
+  --type <type>                       adapter-native debug type (inferred from
+                                      --adapter or --program when omitted)
+  --args <arg...>                     program argument overrides
+  --source-maps <boolean>             source map enablement override
+  --out-files <pattern...>            source map output file patterns
+  --resolve-source-maps <pattern...>  set resolveSourceMapLocations on the
+                                      resolved config (variadic; mirrors
+                                      --out-files)
+  --json-overrides <json>             extra JSON object merged on top of
+                                      --config (between named-config and --json
+                                      layers)
+  --stop-on-entry                     halt at the first program statement
+                                      (adapter must support stopOnEntry)
+  --no-use                            do not make the new session active
+  -h, --help                          display help for command
+
+## dap-cli break help
+$ npx dap-cli break --help
+Usage: dap-cli [options] [command]
+
+A Debug Adapter Protocol CLI for agents. Control debug sessions from shell
+commands.
+
+Options:
+  -V, --version                output the version number
+  --human                      render human-readable output (default when stdout
+                               is a TTY and DAP_CLI_HUMAN is set)
+  --no-human                   render machine-readable JSON output even if
+                               DAP_CLI_HUMAN is set or stdout is a TTY
+  -h, --help                   display help for command
+
+Commands:
+  start                        Start the persistent controller for debug
+                               sessions
+  status [options]             Poll session status (running, stopped,
+                               terminated)
+  stop [options]               Stop a debug session, or stop the controller when
+                               no session is selected
+  stop-controller              Shut down the persistent controller (does not
+                               affect on-disk session records)
+  sessions [options]           List known debug sessions (child sessions are
+                               hidden by default; use --show-children to include
+                               them)
+  use <name>                   Set the active debug session
+  detach [options]             Detach from a debug session
+  close [options] [name]       Close a debug session
+  cleanup [options]            Clean up stale session state
+  launch [options]             Start a DAP launch session using an adapter id,
+                               named launch config, or fake adapter
+  attach [options]             Start a DAP attach session using an adapter id,
+                               named launch config, or fake adapter
+  request [options] <command>  Send raw DAP request with JSON arguments (escape
+                               hatch)
+  capabilities [options]       Return adapter capabilities for a fake/custom
+                               session
+  events [options]             Poll recent DAP events with cursor-based
+                               pagination
+  dap                          Send generated DAP requests by protocol command
+                               name
+  breakpoints                  Manage source breakpoints
+  threads [options]            List active threads in a paused session
+  stack [options]              Get stack frames for a thread (auto-resolves to
+                               the stopped thread if --thread-id omitted)
+  scopes [options]             List scopes for a stack frame (requires frame-id
+                               from stack command)
+  variables [options]          Inspect variables for a scope (requires
+                               variables-reference from scopes command)
+  source [options]             Return source content
+  evaluate [options]           Evaluate an expression (auto-uses topmost frame
+                               of most-recently-stopped thread when paused)
+  continue [options]           Continue execution (auto-resolves to the stopped
+                               thread if --thread-id omitted)
+  pause [options]              Pause execution (auto-resolves to the unique
+                               thread if --thread-id omitted)
+  next [options]               Step over (auto-resolves to the stopped thread if
+                               --thread-id omitted)
+  step-in [options]            Step in (auto-resolves to the stopped thread if
+                               --thread-id omitted)
+  step-out [options]           Step out (auto-resolves to the stopped thread if
+                               --thread-id omitted)
+  help [command]               display help for command
+
+
+Examples:
+  $ dap-cli start
+  $ dap-cli launch --adapter js-debug --program ./app.js
+  $ dap-cli status
+  $ dap-cli events --after-cursor 0
+  $ dap-cli threads
+  $ dap-cli stack --thread-id 1
+
+~/code/vscode ~/code/vscode
+
+> code-oss-dev@1.121.0 electron
+> node build/lib/electron.ts
+
+
+(node:23141) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[10:37:08] Synchronizing built-in extensions...
+[10:37:08] You can manage built-in extensions with the [36m--builtin[39m flag
+[10:37:08] [34m[github][39m ms-vscode.js-debug-companion@1.1.3 [32m✔︎[39m
+[10:37:08] [34m[github][39m ms-vscode.js-debug@1.117.0 [32m✔︎[39m
+[10:37:08] [34m[github][39m ms-vscode.vscode-js-profile-table@1.0.10 [32m✔︎[39m
+
+> code-oss-dev@1.121.0 gulp
+> node --experimental-strip-types --max-old-space-size=8192 ./node_modules/gulp/bin/gulp.js node
+
+[10:37:09] Using gulpfile ~/code/vscode/gulpfile.mjs
+[10:37:09] Starting 'node'...
+[10:37:09] Downloading node.js 22.22.1 darwin arm64 from https://nodejs.org...
+[10:37:09] Using SHA256 checksum for checking integrity: 679ad4966339e4ef4900f57996714864e4211b898825bb840c3086c419fbcef2
+[10:37:11] Finished 'node' after 1.59 s
+~/code/vscode
+Starting server: /Users/roblou/code/vscode/out/server-main.js --inspect=5872 --port=8898 --without-connection-token
+Server bound to ::1:8898 (IPv6)
+Extension host agent listening on 8898
+
+[bootstrap-import] Initialized node_modules redirector for: /Users/roblou/code/vscode/remote/node_modules
+Ignoring option 'inspect': not supported for server.
+[10:37:12] 
+
+
+
+
+[reconnection-grace-time] No CLI argument provided, using default: 10800000ms (10800s)
+Web UI available at http://localhost:8898
+[10:37:12] Extension host agent started.
+
+## Inspector/listener check
+$ lsof -nP -iTCP:5872 -sTCP:LISTEN || true
+$ lsof -nP -iTCP:8898 -sTCP:LISTEN || true
+COMMAND   PID   USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+node    23241 roblou   16u  IPv6 0xac71fa9e9e9c3a3b      0t0  TCP [::1]:8898 (LISTEN)
+$ pgrep -af scripts/code-server.sh || true
+23115
+$ pgrep -af out/server-main.js || true
+23241
+
+## Help snippets
+$ npx dap-cli attach --help | sed -n '1,160p'
+Usage: dap-cli attach [options]
+
+Start a DAP attach session using an adapter id, named launch config, or fake
+adapter
+
+Options:
+  --adapter <adapter>                 adapter id (inferred from --type or
+                                      --program when omitted)
+  --config <name>                     named .vscode/launch.json configuration
+  --workspace <path>                  workspace root for .vscode/launch.json
+                                      discovery and variable substitution
+  --list-configs                      list VS Code launch configurations and
+                                      compounds without starting a session
+  --json <json>                       raw adapter-native attach configuration
+                                      JSON (default: "{}")
+  --script <script>                   fake adapter script
+  --name <name>                       session name (default: "default")
+  --program <path>                    program path override
+  --cwd <path>                        working directory override
+  --runtime-executable <path>         runtime executable override
+  --runtime-args <arg...>             runtime argument overrides
+  --url <url>                         URL override for browser adapters
+  --port <port>                       debug port override
+  --python <path>                     Python executable override
+  --type <type>                       adapter-native debug type (inferred from
+                                      --adapter or --program when omitted)
+  --args <arg...>                     program argument overrides
+  --source-maps <boolean>             source map enablement override
+  --out-files <pattern...>            source map output file patterns
+  --resolve-source-maps <pattern...>  set resolveSourceMapLocations on the
+                                      resolved config (variadic; mirrors
+                                      --out-files)
+  --json-overrides <json>             extra JSON object merged on top of
+                                      --config (between named-config and --json
+                                      layers)
+  --stop-on-entry                     halt at the first program statement
+                                      (adapter must support stopOnEntry)
+  --no-use                            do not make the new session active
+  -h, --help                          display help for command
+
+$ npx dap-cli launch --help | sed -n '1,160p'
+Usage: dap-cli launch [options]
+
+Start a DAP launch session using an adapter id, named launch config, or fake
+adapter
+
+Options:
+  --adapter <adapter>                 adapter id (inferred from --type or
+                                      --program when omitted)
+  --config <name>                     named .vscode/launch.json configuration
+  --workspace <path>                  workspace root for .vscode/launch.json
+                                      discovery and variable substitution
+  --list-configs                      list VS Code launch configurations and
+                                      compounds without starting a session
+  --json <json>                       raw adapter-native launch configuration
+                                      JSON (default: "{}")
+  --script <script>                   fake adapter script
+  --name <name>                       session name (default: "default")
+  --program <path>                    program path override
+  --cwd <path>                        working directory override
+  --runtime-executable <path>         runtime executable override
+  --runtime-args <arg...>             runtime argument overrides
+  --url <url>                         URL override for browser adapters
+  --port <port>                       debug port override
+  --python <path>                     Python executable override
+  --type <type>                       adapter-native debug type (inferred from
+                                      --adapter or --program when omitted)
+  --args <arg...>                     program argument overrides
+  --source-maps <boolean>             source map enablement override
+  --out-files <pattern...>            source map output file patterns
+  --resolve-source-maps <pattern...>  set resolveSourceMapLocations on the
+                                      resolved config (variadic; mirrors
+                                      --out-files)
+  --json-overrides <json>             extra JSON object merged on top of
+                                      --config (between named-config and --json
+                                      layers)
+  --stop-on-entry                     halt at the first program statement
+                                      (adapter must support stopOnEntry)
+  --no-use                            do not make the new session active
+  -h, --help                          display help for command
+
+## Attach attempt to requested inspector port
+$ npx dap-cli attach --type node --port 5872 --name s15-code-server --workspace /Users/roblou/code/vscode --json-overrides ... --json
+error: option '--json <json>' argument missing
+
+Usage: dap-cli attach [options]
+
+Start a DAP attach session using an adapter id, named launch config, or fake
+adapter
+
+Options:
+  --adapter <adapter>                 adapter id (inferred from --type or
+                                      --program when omitted)
+  --config <name>                     named .vscode/launch.json configuration
+  --workspace <path>                  workspace root for .vscode/launch.json
+                                      discovery and variable substitution
+  --list-configs                      list VS Code launch configurations and
+                                      compounds without starting a session
+  --json <json>                       raw adapter-native attach configuration
+                                      JSON (default: "{}")
+  --script <script>                   fake adapter script
+  --name <name>                       session name (default: "default")
+  --program <path>                    program path override
+  --cwd <path>                        working directory override
+  --runtime-executable <path>         runtime executable override
+  --runtime-args <arg...>             runtime argument overrides
+  --url <url>                         URL override for browser adapters
+  --port <port>                       debug port override
+  --python <path>                     Python executable override
+  --type <type>                       adapter-native debug type (inferred from
+                                      --adapter or --program when omitted)
+  --args <arg...>                     program argument overrides
+  --source-maps <boolean>             source map enablement override
+  --out-files <pattern...>            source map output file patterns
+  --resolve-source-maps <pattern...>  set resolveSourceMapLocations on the
+                                      resolved config (variadic; mirrors
+                                      --out-files)
+  --json-overrides <json>             extra JSON object merged on top of
+                                      --config (between named-config and --json
+                                      layers)
+  --stop-on-entry                     halt at the first program statement
+                                      (adapter must support stopOnEntry)
+  --no-use                            do not make the new session active
+  -h, --help                          display help for command
+{"ok":false,"error":{"code":"usage_error","category":"usage","message":"error: option '--json <json>' argument missing","exitCode":2,"diagnostics":["error: option '--json <json>' argument missing"]},"meta":{"command":"attach node","timestamp":"2026-05-11T17:37:34.216Z"}}
+attach_exit=2
+
+## Attach attempt retry with explicit attach JSON
+$ npx dap-cli attach --type node --port 5872 --name s15-code-server --workspace /Users/roblou/code/vscode --json ... --json-overrides ...
+{"ok":false,"error":{"code":"controller_unavailable","category":"controller","message":"dap-cli controller is unavailable.","exitCode":3,"diagnostics":["Run `dap-cli start` and retry the command."]},"meta":{"command":"attach node","timestamp":"2026-05-11T17:37:42.495Z"}}
+attach_exit=3
+
+## Start dap-cli controller
+$ npx dap-cli start
+{"ok":true,"data":{"started":true,"reused":false,"pid":26808,"endpoint":{"kind":"ipc","path":"/Users/roblou/.dap-cli/state/controller.sock"},"stateDir":"/Users/roblou/.dap-cli/state","logDir":"/Users/roblou/.dap-cli/logs","buildId":"0.0.0:dist:1778518506391.6257:281290"},"meta":{"command":"start","timestamp":"2026-05-11T17:37:52.211Z"}}
+start_exit=0
+
+## Attach attempt after controller start
+$ npx dap-cli attach --type node --port 5872 --name s15-code-server --workspace /Users/roblou/code/vscode --json ... --json-overrides ...
+{"ok":false,"error":{"code":"adapter_transport_closed","category":"adapter","message":"DAP transport closed.","exitCode":6,"diagnostics":["The adapter transport closed before dap-cli received the expected DAP response.","Session sess_N_ynXPdWLH8IK1Jo may be stale or the debuggee may have exited.","Adapter log: /Users/roblou/.dap-cli/logs/js-debug-26900.log.","Run `dap-cli close sess_N_ynXPdWLH8IK1Jo` and relaunch the session."],"sessionId":"sess_N_ynXPdWLH8IK1Jo","request":{"command":"configurationDone","seq":3},"adapter":{"descriptorId":"js-debug","pid":26900,"stderrTail":["Error: Could not connect to debug target at http://127.0.0.1:5872: Could not find any debuggable target","    at /Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:91:49334","    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)","    at async n (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:96:3635)","    at async eu.launch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:94:31431)","    at async Rg.captureLaunch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:9517)","    at async Rg._launch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:9264)","    at async Promise.all (index 4)","    at async Rg._boot (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:8388)","    at async Server.<anonymous> (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:106:3656)"],"logPath":"/Users/roblou/.dap-cli/logs/js-debug-26900.log"}},"meta":{"command":"attach node","timestamp":"2026-05-11T17:37:55.869Z"}}
+attach_exit=6
+
+## Sessions after attach attempt
+$ npx dap-cli sessions --json
+error: unknown option '--json'
+
+Usage: dap-cli sessions [options]
+
+List known debug sessions (child sessions are hidden by default; use
+--show-children to include them)
+
+Options:
+  --show-children  include child sessions (e.g. js-debug pwa-chrome page-level
+                   children) in the listing
+  --all            alias for --show-children
+  -h, --help       display help for command
+{"ok":false,"error":{"code":"usage_error","category":"usage","message":"error: unknown option '--json'","exitCode":2,"diagnostics":["error: unknown option '--json'"]},"meta":{"command":"sessions","timestamp":"2026-05-11T17:37:56.291Z"}}
+
+## HTTP trigger and post-failure evidence
+$ curl -i --max-time 5 http://localhost:8898/ | sed -n '1,40p'
+[10:38:13] [CSS_DEV] DONE, 362 css modules (101ms)
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0HTTP/1.1 200 OK
+Content-Type: text/html
+Content-Security-Policy: default-src 'self'; img-src 'self' https: data: blob:; media-src 'self'; script-src 'self' 'unsafe-eval'  blob: 'nonce-1nline-m4p' 'sha256-HuyBNEnumn/Bw3njx2R0EXAv9HicWHLQQd9NJ9ruyrk=' 'sha256-F0KUJfXmQP/RkPxdpiv13cJWG2nligDmP6HezEIl+hY=' 'sha256-84JejY8u492F9B2k8/pSduaDf9hDE8Ws+C/InY3uwc8=' 'sha256-yxwQ9j8YGPsfU554CNGiSCW08z5yqDVvuQmssjoPsm8=' 'sha256-2Q+j4hfT09+1+imS46J2YlkCtHWQt0/BE79PXjJ0ZJ8=' 'sha256-/r7rqQ+yrxt57sxLuQ6AMYcy/lUpvAIzHjIJt/OeLWU=' http://localhost:8898; child-src 'self'; frame-src 'self' https://*.vscode-cdn.net data:; worker-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: https:; font-src 'self' blob:; manifest-src 'self';
+Date: Mon, 11 May 2026 17:38:13 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+<!-- Copyright (C) Microsoft Corporation. All rights reserved. -->
+<!DOCTYPE html>
+<html>
+	<head>
+		<script>
+			performance.mark('code/didStartRenderer');
+		</script>
+		<meta charset="utf-8" />
+
+		<!-- Mobile tweaks -->
+		<meta name="mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-title" content="Code">
+		<link rel="apple-touch-icon" href="/oss-dev/static/resources/server/code-192.png" />
+
+		<!-- Disable pinch zooming -->
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
+
+		<!-- Workbench Configuration -->
+		<meta id="vscode-workbench-web-configuration" data-settings="{&quot;remoteAuthority&quot;:&quot;localhost:8898&quot;,&quot;serverBasePath&quot;:&quot;/&quot;,&quot;developmentOptions&quot;:{&quot;logLevel&quot;:3},&quot;enableWorkspaceTrust&quot;:true,&quot;productConfiguration&quot;:{&quot;embedderIdentifier&quot;:&quot;server-distro&quot;},&quot;callbackRoute&quot;:&quot;/oss-dev/callback&quot;}">
+
+		<!-- Workbench Auth Session -->
+		<meta id="vscode-workbench-auth-session" data-settings="">
+
+		<!-- Builtin Extensions (running out of sources) -->
+		<meta id="vscode-workbench-builtin-extensions" data-settings="undefined">
+
+		<!-- Workbench Icon/Manifest/CSS -->
+		<link rel="icon" href="/oss-dev/static/resources/server/favicon.ico" type="image/x-icon" />
+		<link rel="manifest" href="/oss-dev/static/resources/server/manifest.json" crossorigin="use-credentials" />
+
+$ curl --max-time 3 http://127.0.0.1:5872/json/list || true
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+curl: (7) Failed to connect to 127.0.0.1 port 5872 after 0 ms: Couldn't connect to server
+
+$ npx dap-cli sessions || true
+{"ok":true,"data":[{"id":"sess_N_ynXPdWLH8IK1Jo","name":"s15-code-server","adapter":"js-debug","lifecycle":"failed","status":"failed","updatedAt":"2026-05-11T17:37:55.863Z"}],"meta":{"command":"sessions","timestamp":"2026-05-11T17:38:13.832Z"}}
+
+$ lsof -nP -iTCP:5872 -sTCP:LISTEN || true
+$ lsof -nP -iTCP:8898 -sTCP:LISTEN || true
+COMMAND   PID   USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+node    23241 roblou   16u  IPv6 0xac71fa9e9e9c3a3b      0t0  TCP [::1]:8898 (LISTEN)
+$ ps -p 23241 -o pid,ppid,command || true
+  PID  PPID COMMAND
+23241 23236 /Users/roblou/code/vscode/.build/node/v22.22.1/darwin-arm64/node /Users/roblou/code/vscode/out/server-main.js --inspect=5872 --port=8898 --without-connection-token
+
+## Mandatory cleanup
+$ npx dap-cli close sess_N_ynXPdWLH8IK1Jo || true
+{"ok":true,"data":{"id":"sess_N_ynXPdWLH8IK1Jo","name":"s15-code-server","adapter":"js-debug","lifecycle":"failed","status":"failed","updatedAt":"2026-05-11T17:37:55.863Z","stderrTail":["Error: Could not connect to debug target at http://127.0.0.1:5872: Could not find any debuggable target","    at /Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:91:49334","    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)","    at async n (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:96:3635)","    at async eu.launch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:94:31431)","    at async Rg.captureLaunch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:9517)","    at async Rg._launch (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:9264)","    at async Promise.all (index 4)","    at async Rg._boot (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:100:8388)","    at async Server.<anonymous> (/Users/roblou/.dap-cli/adapters/js-debug/src/dapDebugServer.js:106:3656)"],"cleanupActions":["Signal owned adapter pid 26900 if cleanup is required."],"logPath":"/Users/roblou/.dap-cli/logs/js-debug-26900.log","orphanPids":[],"warnings":[]},"meta":{"command":"close","timestamp":"2026-05-11T17:38:26.496Z"}}
+$ npx dap-cli stop-controller || true
+{"ok":true,"data":{"stopped":true},"meta":{"command":"stop-controller","timestamp":"2026-05-11T17:38:26.938Z"}}
+$ pkill -f 'scripts/code-server.sh' || true
+$ pkill -f 'scripts/code.sh' || true
+$ pgrep -f 'scripts/code-server.sh'
+pgrep_code_server_exit=1
+
+## Cleanup verification and extra orphan cleanup if needed
+$ pgrep -af 'scripts/code-server.sh' || true
+$ pgrep -af 'scripts/code.sh' || true
+$ pgrep -af 'out/server-main.js.*--port=8898' || true
+23241
+$ pkill -f 'out/server-main.js.*--port=8898' || true
+$ lsof -nP -iTCP:8898 -sTCP:LISTEN || true
+$ lsof -nP -iTCP:5872 -sTCP:LISTEN || true
+$ pgrep -af 'scripts/code-server.sh|scripts/code.sh|out/server-main.js.*--port=8898' || true
+
+## Final classification
+scenario: S-15
+status: fail
+summary: code-server served HTTP on 8898, but --inspect=5872 was ignored by the server, leaving no inspector listener for dap-cli to attach to.
+cleanup_verified: true
+$ test -f tmp/phase-17-runs/S-15.log && wc -l tmp/phase-17-runs/S-15.log
+     983 tmp/phase-17-runs/S-15.log

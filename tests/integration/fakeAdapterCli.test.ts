@@ -11,7 +11,7 @@ import { createCliTestEnv, runCli, type CliTestEnv } from '../helpers/runCli.js'
 interface JsonEnvelope<T> {
   ok: true;
   data: T;
-  meta: { command: string; timestamp: string };
+  meta: { command: string; timestamp: string; warnings?: readonly string[] };
 }
 
 interface JsonFailureEnvelope {
@@ -693,13 +693,34 @@ describe('fake adapter controller integration', () => {
 
     const stack = await runCli(['stack', '--name', 'auto-tid', '--levels', '1'], { env: testEnv.env });
     expect(stack.exitCode, JSON.stringify(stack)).toBe(0);
-    expect(parseEnvelope<{ stackFrames: Array<{ id: number }> }>(stack.stdout).data.stackFrames).toEqual([expect.objectContaining({ id: 10 })]);
-    expect(stack.stderr).toContain('--thread-id not provided');
+    const stackEnvelope = parseEnvelope<{ stackFrames: Array<{ id: number }> }>(stack.stdout);
+    expect(stackEnvelope.data.stackFrames).toEqual([expect.objectContaining({ id: 10 })]);
+    expect(stackEnvelope.meta.warnings?.some(w => w.includes('--thread-id not provided'))).toBe(true);
 
     const continued = await runCli(['continue', '--name', 'auto-tid'], { env: testEnv.env });
     expect(continued.exitCode, JSON.stringify(continued)).toBe(0);
-    expect(parseEnvelope<{ allThreadsContinued: boolean }>(continued.stdout).data.allThreadsContinued).toBe(true);
-    expect(continued.stderr).toContain('--thread-id not provided');
+    const continuedEnvelope = parseEnvelope<{ allThreadsContinued: boolean }>(continued.stdout);
+    expect(continuedEnvelope.data.allThreadsContinued).toBe(true);
+    expect(continuedEnvelope.meta.warnings?.some(w => w.includes('--thread-id not provided'))).toBe(true);
+  });
+
+  test('auto-resolve warning survives into the failure envelope when the downstream DAP request fails', async () => {
+    // Regression: previously, main.ts created a separate OutputWriter from the
+    // one used by command handlers, so warnings buffered by `output.warn(...)`
+    // (e.g. `continue: --thread-id not provided; using thread 1`) were dropped
+    // when the handler later threw. The user-visible symptom was the warning
+    // re-appearing on stderr in JSON mode despite the meta.warnings migration.
+    const launch = await runCli(['launch', '--adapter', 'fake', '--script', 'auto-thread-resolve-continue-fails', '--name', 'auto-fail'], { env: testEnv.env });
+    expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+
+    const continued = await runCli(['continue', '--name', 'auto-fail'], { env: testEnv.env });
+    expect(continued.exitCode).not.toBe(0);
+    expect(continued.stderr, 'warning must not leak to stderr in JSON mode').toBe('');
+    const failureEnvelope = JSON.parse(continued.stdout) as JsonFailureEnvelope & { meta: { warnings?: readonly string[] } };
+    expect(failureEnvelope.ok).toBe(false);
+    expect(failureEnvelope.error.code).toBe('dap_request_failed');
+    expect(failureEnvelope.meta.warnings, 'auto-resolve warning must be preserved on failure envelope').toBeDefined();
+    expect(failureEnvelope.meta.warnings!.some(w => w.includes('--thread-id not provided'))).toBe(true);
   });
 
   test('parent status reflects multi-child stop and survives a sibling terminated; --thread-id auto-resolves to the paused child (PAUSED-UNION-01 / PAUSED-ROUTE-01)', async () => {
@@ -855,10 +876,11 @@ describe('fake adapter controller integration', () => {
       // stack auto-resolves --thread-id to the paused child's thread (0).
       const stack = await runCli(['stack', '--name', 'multi', '--levels', '1'], { env: testEnv.env });
       expect(stack.exitCode, JSON.stringify(stack)).toBe(0);
-      const frames = parseEnvelope<{ stackFrames: Array<{ id: number; name: string }> }>(stack.stdout).data.stackFrames;
+      const stackEnvelope = parseEnvelope<{ stackFrames: Array<{ id: number; name: string }> }>(stack.stdout);
+      const frames = stackEnvelope.data.stackFrames;
       expect(frames).toHaveLength(1);
       expect(frames[0]!.id).toBe(200);
-      expect(stack.stderr).toContain('--thread-id not provided');
+      expect(stackEnvelope.meta.warnings?.some(w => w.includes('--thread-id not provided'))).toBe(true);
 
       const evaluate = await runCli(['evaluate', '--name', 'multi', '--expression', 'x', '--frame-id', '200'], { env: testEnv.env });
       expect(evaluate.exitCode, JSON.stringify(evaluate)).toBe(0);

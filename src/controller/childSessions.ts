@@ -28,6 +28,16 @@ export interface ChildSessionCoordinatorOptions {
    * fast. See {@link ChildSessionCoordinator.routeSetBreakpointsThroughParent}.
    */
   setBreakpointsVerificationTimeoutMs?: number;
+  /**
+   * Override the per-child readiness wait used by setBreakpoints fan-out.
+   * Defaults to 3_000ms — kept under the 5s controller IPC budget so a child
+   * stuck mid-handshake (e.g. a js-debug attach to an Electron utility
+   * process whose user-code target never completes `configurationDone`) does
+   * not hang the whole request to `controller_request_timeout`. On timeout,
+   * still-pending children surface as `child_readiness_timeout` warnings on
+   * the response. See Phase 17 S-08 findings (17-S08-FINDINGS.md, Bug 1).
+   */
+  awaitChildrenReadyTimeoutMs?: number;
 }
 
 interface ChildRuntime {
@@ -200,6 +210,50 @@ export class ChildSessionCoordinator {
   public async awaitChildrenReady(): Promise<void> {
     await this.awaitPendingChildren();
     await Promise.allSettled([...this.children.values()].map(child => child.readyPromise));
+  }
+
+  /**
+   * Bounded variant of {@link awaitChildrenReady}. Waits up to
+   * `awaitChildrenReadyTimeoutMs` (default 3_000ms) for every currently-known
+   * child to settle, then returns the list of child session ids whose
+   * `readyPromise` had not yet settled at the deadline. Phase 17 S-08
+   * findings (Bug 1): a js-debug attach to an Electron utility process whose
+   * user-code target never completes `configurationDone` left
+   * `Promise.allSettled` hanging forever, blowing the 5s controller IPC
+   * budget and surfacing as `controller_request_timeout` to the agent. Bounding
+   * the wait lets the request complete and surface a `child_readiness_timeout`
+   * warning per stuck child.
+   */
+  public async awaitChildrenReadyBounded(): Promise<{ pendingChildSessionIds: SessionId[] }> {
+    // Drain reverse-request handlers (which register children into
+    // `this.children`) but do NOT await `bringUps` — those are exactly
+    // the lifecycle promises we want to bound. A stuck handshake would
+    // otherwise leave `awaitPendingChildren` hanging forever, defeating
+    // the timeout below.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    while (this.activeHandlers.length > 0) {
+      const handlers = this.activeHandlers.splice(0, this.activeHandlers.length);
+      await Promise.allSettled(handlers);
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+    const children = [...this.children.values()];
+    if (children.length === 0) {
+      return { pendingChildSessionIds: [] };
+    }
+    const timeoutMs = this.options.awaitChildrenReadyTimeoutMs ?? 3_000;
+    const settled = new Set<SessionId>();
+    await Promise.race([
+      Promise.allSettled(children.map(child => child.readyPromise.then(
+        () => settled.add(child.sessionId),
+        () => settled.add(child.sessionId),
+      ))),
+      new Promise<void>(resolve => { setTimeout(resolve, timeoutMs).unref?.(); }),
+    ]);
+    return {
+      pendingChildSessionIds: children
+        .filter(child => !settled.has(child.sessionId))
+        .map(child => child.sessionId),
+    };
   }
 
   /**
@@ -619,11 +673,17 @@ export class ChildSessionCoordinator {
    * `{ breakpoints: [] }` with no diagnostic.
    */
   private async fanOutSetBreakpoints(args: unknown): Promise<unknown> {
-    await this.awaitChildrenReady();
+    const { pendingChildSessionIds } = await this.awaitChildrenReadyBounded();
     type ChildBreakpointResponse = { breakpoints?: Array<{ verified?: boolean; id?: number; line?: number }> };
     type ChildResult = { sessionId: SessionId; ok: true; response: ChildBreakpointResponse } | { sessionId: SessionId; ok: false; error: unknown };
+    // Phase 17 S-08 Bug 1: only fan out to children whose readyPromise has
+    // settled — a still-pending child surfaces as a `child_readiness_timeout`
+    // warning instead of letting its un-acked request hang the parent
+    // request to controller_request_timeout.
+    const pendingSet = new Set(pendingChildSessionIds);
+    const readyChildren = [...this.children.values()].filter(child => !pendingSet.has(child.sessionId));
     const results: ChildResult[] = await Promise.all(
-      [...this.children.values()].map(async (child): Promise<ChildResult> => {
+      readyChildren.map(async (child): Promise<ChildResult> => {
         try {
           const response = await child.client.request<ChildBreakpointResponse>('setBreakpoints', args);
           return { sessionId: child.sessionId, ok: true, response };
@@ -633,15 +693,18 @@ export class ChildSessionCoordinator {
       }),
     );
 
-    const warnings = results
+    const warnings: Array<{ sessionId: SessionId; message: string }> = results
       .filter((result): result is Extract<ChildResult, { ok: false }> => !result.ok)
       .map(result => ({
         sessionId: result.sessionId,
         message: result.error instanceof Error ? result.error.message : String(result.error),
       }));
+    for (const sessionId of pendingChildSessionIds) {
+      warnings.push({ sessionId, message: 'child_readiness_timeout' });
+    }
 
     if (results.length === 0) {
-      return { breakpoints: [] };
+      return warnings.length > 0 ? { breakpoints: [], warnings } : { breakpoints: [] };
     }
 
     const successes = results.filter((result): result is Extract<ChildResult, { ok: true }> => result.ok);
@@ -792,12 +855,19 @@ export class ChildSessionCoordinator {
       // This is a deviation from plan 05-15 (which assumed children always
       // return `[]`); in practice the page child returns the real array.
       // Per-child failures surface as warnings.
-      await this.awaitPendingChildren();
+      const { pendingChildSessionIds } = await this.awaitChildrenReadyBounded();
       let childResults: ChildResult[] = [];
-      if (this.children.size > 0) {
-        await Promise.allSettled([...this.children.values()].map(child => child.readyPromise));
+      // Phase 17 S-08 Bug 1: only query children whose readyPromise has
+      // settled. A still-pending child (utility-process attach where
+      // `configurationDone` never returns) would otherwise hang this
+      // request past the 5s controller IPC budget and the agent sees a
+      // misleading `controller_request_timeout`. Pending sessionIds are
+      // surfaced as `child_readiness_timeout` warnings below.
+      const pendingSet = new Set(pendingChildSessionIds);
+      const readyChildren = [...this.children.values()].filter(child => !pendingSet.has(child.sessionId));
+      if (readyChildren.length > 0) {
         childResults = await Promise.all(
-          [...this.children.values()].map(async (child): Promise<ChildResult> => {
+          readyChildren.map(async (child): Promise<ChildResult> => {
             try {
               const response = await child.client.request<Response>('setBreakpoints', args);
               return { sessionId: child.sessionId, ok: true, response };
@@ -818,6 +888,9 @@ export class ChildSessionCoordinator {
           sessionId: result.sessionId,
           message: result.error instanceof Error ? result.error.message : String(result.error),
         }));
+      for (const sessionId of pendingChildSessionIds) {
+        childWarnings.push({ sessionId, message: 'child_readiness_timeout' });
+      }
 
       // Index-based child verification: response.breakpoints[i] corresponds
       // to args.breakpoints[i]. The parent's provisional response often
