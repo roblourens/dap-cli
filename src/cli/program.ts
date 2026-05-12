@@ -11,8 +11,17 @@ import { registerGeneratedDapCommands } from './commands/dapGenerated.js';
 import { registerSessionCommands } from './commands/sessions.js';
 
 const require = createRequire(import.meta.url);
-// Path is resolved relative to the bundled dist/index.js, not this source file.
-const packageJson: unknown = require('../package.json');
+// Resolve relative to the bundled dist/index.js first; fall back to the
+// source-relative path so vitest (which loads src/cli/program.ts directly)
+// can also read package.json.
+function loadPackageJson(): unknown {
+  try {
+    return require('../package.json');
+  } catch {
+    return require('../../package.json');
+  }
+}
+const packageJson: unknown = loadPackageJson();
 
 export interface ProgramOptions {
   stdout?: JsonWritable;
