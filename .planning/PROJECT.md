@@ -1,5 +1,17 @@
 # dap-cli
 
+## Current State
+
+**Shipped:** v0.1.0 — 2026-05-12 (npm: `dap-cli@0.1.0`)
+**Audit:** [v0.1.0-MILESTONE-AUDIT.md](v0.1.0-MILESTONE-AUDIT.md) — 34/34 requirements satisfied
+**Archive:** [milestones/v0.1.0-ROADMAP.md](milestones/v0.1.0-ROADMAP.md), [milestones/v0.1.0-REQUIREMENTS.md](milestones/v0.1.0-REQUIREMENTS.md)
+
+v0.1.0 delivers the core agent-facing DAP CLI: persistent controller, language-neutral DAP core with stdio + socket transports, complete typed command surface generated from official protocol metadata, built-in JS (js-debug) + Python (debugpy) + custom adapters, real Chrome/Playwright same-browser handoff with child-session routing, VS Code launch.json + compound execution, paused-state ergonomics with per-child paused-first routing, breakpoint command surface, JSON-by-default-when-piped output mode + opt-in human mode, Python evaluate auto-wrap, and a categorized help command.
+
+## Next Milestone Goals
+
+Define via `/gsd-new-milestone`. Candidate post-v1 themes already in the previous REQUIREMENTS.md: blocking event waits (EVNT-01), event streaming (EVNT-02), VS Code launch.json import flow (CONF-01), adapter config export (CONF-02), additional bundled adapters (ADPT-07), and a TUI/watch mode (UI-01).
+
 ## What This Is
 
 dap-cli is a TypeScript Node.js command-line tool that lets agents debug applications through the Debug Adapter Protocol. It provides a `playwright-cli`-inspired (see [@playwright/cli](https://www.npmjs.com/package/@playwright/cli)), stateful command surface for launching or attaching to debug sessions, setting breakpoints, inspecting paused programs, and calling DAP requests from shell commands.
@@ -103,4 +115,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-08 after Phase 8 gap closure*
+*Last updated: 2026-05-12 after v0.1.0 milestone (initial public release)*
