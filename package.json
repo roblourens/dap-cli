@@ -1,12 +1,38 @@
 {
   "name": "dap-cli",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "type": "module",
-  "description": "Agent-facing Debug Adapter Protocol CLI.",
+  "description": "Agent-facing Debug Adapter Protocol CLI. Control DAP debug sessions, set breakpoints, and inspect paused programs from shell commands.",
   "bin": {
     "dap-cli": "dist/index.js"
   },
+  "license": "MIT",
+  "author": "Rob Lourens <roblourens@gmail.com>",
+  "homepage": "https://github.com/roblourens/dap-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/roblourens/dap-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/roblourens/dap-cli/issues"
+  },
+  "keywords": [
+    "debug",
+    "dap",
+    "debug-adapter-protocol",
+    "debugger",
+    "cli",
+    "agent",
+    "ai",
+    "js-debug",
+    "debugpy",
+    "playwright"
+  ],
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=22"
   },
@@ -20,7 +46,8 @@
     "test:smoke:handoff": "DAP_CLI_RUN_CHROME_PLAYWRIGHT_HANDOFF=1 vitest run tests/integration/playwrightInterop.test.ts",
     "test:smoke": "DAP_CLI_RUN_BROWSER_SMOKES=1 DAP_CLI_RUN_CHROME_PLAYWRIGHT_HANDOFF=1 vitest run tests/integration/jsDebugAdapter.test.ts tests/integration/playwrightInterop.test.ts",
     "lint": "eslint src tests scripts *.config.ts",
-    "check": "npm run typecheck && npm run lint && npm test && npm run build"
+    "check": "npm run typecheck && npm run lint && npm test && npm run build",
+    "prepublishOnly": "npm run check"
   },
   "dependencies": {
     "@vscode/debugprotocol": "^1.68.0",
