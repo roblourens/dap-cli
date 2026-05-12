@@ -51,6 +51,42 @@ export function createProgram(options: ProgramOptions = {}): Command {
   registerGeneratedDapCommands(program, output);
   registerDapAliasCommands(program, output);
 
+  // Replace commander's default `help [command]` with a variadic walker so
+  // `dap-cli help breakpoints set` drills into the subcommand tree (per D-02).
+  program.helpCommand(false);
+  program
+    .command('help [command...]')
+    .description('Display help for a command. Pass multiple words to drill into subcommands (e.g. `dap-cli help breakpoints set`).')
+    .action((commandPath: string[] | undefined) => {
+      const segments = Array.isArray(commandPath) ? commandPath : [];
+      if (segments.length === 0) {
+        program.outputHelp();
+        return;
+      }
+      let current: Command = program;
+      const matched: string[] = [];
+      for (const segment of segments) {
+        const next = current.commands.find(child => child.name() === segment);
+        if (!next) {
+          const knownPath = matched.length === 0 ? 'dap-cli' : `dap-cli ${matched.join(' ')}`;
+          const requestedPath = `dap-cli ${segments.join(' ')}`;
+          const message = `Unknown help target: ${requestedPath}. \`${segment}\` is not a subcommand of \`${knownPath}\`.`;
+          // Render the parent's help so the user sees what IS available, then
+          // fail through commander's exitOverride so main.ts emits a real
+          // usage_error envelope (NOT a help-dispatch one).
+          current.outputHelp({ error: true });
+          const error = new Error(message);
+          error.name = 'CommanderError';
+          (error as Error & { code: string; exitCode: number }).code = 'commander.unknownCommand';
+          (error as Error & { code: string; exitCode: number }).exitCode = 2;
+          throw error;
+        }
+        matched.push(segment);
+        current = next;
+      }
+      current.outputHelp();
+    });
+
   program.addHelpText('after', `
 
 Examples:
