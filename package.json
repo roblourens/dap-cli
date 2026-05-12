@@ -1,7 +1,10 @@
 {
-  "name": "dap-cli",
+  "name": "@roblourens/dap-cli",
   "version": "0.1.0",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Agent-facing Debug Adapter Protocol CLI. Control DAP debug sessions, set breakpoints, and inspect paused programs from shell commands.",
   "bin": {
     "dap-cli": "dist/index.js"
