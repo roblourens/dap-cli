@@ -77,7 +77,17 @@ function isCommanderError(error: unknown): error is Error {
 }
 
 function isCommanderHelp(error: unknown): boolean {
-  return isCommanderError(error) && 'code' in error && error.code === 'commander.helpDisplayed';
+  if (!isCommanderError(error)) {
+    return false;
+  }
+  const code = 'code' in error ? (error as { code?: unknown }).code : undefined;
+  if (code === 'commander.helpDisplayed' || code === 'commander.help') {
+    return true;
+  }
+  // Defensive fallback: commander help paths are documented to exit 0;
+  // other CommanderError flavors (unknown option, missing arg, ...) exit non-zero.
+  const exitCode = 'exitCode' in error ? (error as { exitCode?: unknown }).exitCode : undefined;
+  return exitCode === 0;
 }
 
 function getCommandName(args: readonly string[]): string {
