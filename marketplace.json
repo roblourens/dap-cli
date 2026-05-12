@@ -1,0 +1,25 @@
+{
+  "name": "dap-cli",
+  "owner": {
+    "name": "roblourens"
+  },
+  "categories": [
+    {
+      "id": "debugging",
+      "label": "Debugging",
+      "description": "Debug Adapter Protocol tooling for driving debug sessions from the CLI."
+    }
+  ],
+  "plugins": [
+    {
+      "name": "dap-cli",
+      "source": "./dap-cli/",
+      "description": "Agent skill for driving dap-cli — DAP debugging, breakpoints, stack/variables inspection, launch.json configs, js-debug, debugpy, Playwright interop.",
+      "version": "0.1.0",
+      "categories": ["debugging"],
+      "status": "stable",
+      "maintainers": ["roblourens"],
+      "keywords": ["debugging", "dap", "debug-adapter-protocol", "js-debug", "debugpy", "playwright"]
+    }
+  ]
+}
