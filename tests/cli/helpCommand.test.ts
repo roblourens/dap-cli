@@ -93,7 +93,7 @@ describe('dap-cli help command', () => {
     ];
     expect(envelopes).toHaveLength(1);
 
-    const parsed = JSON.parse(envelopes[0]) as {
+    const parsed = JSON.parse(envelopes[0]!) as {
       ok: false;
       error: { code: string; message: string };
     };
@@ -130,8 +130,8 @@ describe('dap-cli help command', () => {
     }).sort((a, b) => a.start - b.start);
 
     for (let i = 0; i < offsets.length; i++) {
-      const { heading, start } = offsets[i];
-      const end = i + 1 < offsets.length ? offsets[i + 1].start : text.length;
+      const { heading, start } = offsets[i]!;
+      const end = i + 1 < offsets.length ? offsets[i + 1]!.start : text.length;
       const section = text.slice(start, end);
       const expected = HELP_CATEGORIES.find(c => c.heading === heading)!.commands;
       for (const cmd of expected) {

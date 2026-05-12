@@ -89,7 +89,7 @@ describe('wrapForExec', () => {
       // Shape: exec("...") — single argument JSON-encoded string.
       const match = wrapped.match(/^exec\((.*)\)$/s);
       expect(match, `wrapped form should be exec(...) for ${JSON.stringify(src)}`).not.toBeNull();
-      const inner = match![1];
+      const inner = match![1]!;
       // Inner literal must be a valid JSON string that decodes to the original source.
       expect(JSON.parse(inner)).toBe(src);
     }

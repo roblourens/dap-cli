@@ -36,7 +36,7 @@ describe('--json-overrides and --resolve-source-maps (Phase 10 plan 02)', () => 
       '--json-overrides', 'not-json',
     ], { env: testEnv.env });
     expect(result.exitCode).not.toBe(0);
-    const env = result.envelope as JsonFailure;
+    const env = result.envelope as unknown as JsonFailure;
     expect(env.error.code).toBe('invalid_json');
   });
 
@@ -46,7 +46,7 @@ describe('--json-overrides and --resolve-source-maps (Phase 10 plan 02)', () => 
       '--json-overrides', '"a-string"',
     ], { env: testEnv.env });
     expect(result.exitCode).not.toBe(0);
-    expect((result.envelope as JsonFailure).error.code).toBe('invalid_json');
+    expect((result.envelope as unknown as JsonFailure).error.code).toBe('invalid_json');
   });
 
   test('--json-overrides rejects a JSON array', async () => {
@@ -55,7 +55,7 @@ describe('--json-overrides and --resolve-source-maps (Phase 10 plan 02)', () => 
       '--json-overrides', '[1,2]',
     ], { env: testEnv.env });
     expect(result.exitCode).not.toBe(0);
-    expect((result.envelope as JsonFailure).error.code).toBe('invalid_json');
+    expect((result.envelope as unknown as JsonFailure).error.code).toBe('invalid_json');
   });
 
   test('--json-overrides without --config layers fields onto the launch payload', async () => {

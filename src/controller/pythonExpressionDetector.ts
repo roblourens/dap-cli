@@ -37,7 +37,7 @@ export function looksLikePythonStatement(source: string): boolean {
 	// statement-introducing delimiter.
 	const keywordMatch = /^([A-Za-z_][A-Za-z0-9_]*)/.exec(trimmed);
 	if (keywordMatch !== null) {
-		const word = keywordMatch[1];
+		const word = keywordMatch[1]!;
 		if (STATEMENT_KEYWORDS.has(word)) {
 			const after = trimmed.charAt(word.length);
 			if (after === '' || after === ' ' || after === '\t' || after === '\n' || after === '(' || after === ':') {
