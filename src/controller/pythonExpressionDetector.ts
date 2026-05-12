@@ -71,7 +71,7 @@ export function looksLikePythonStatement(source: string): boolean {
 					mode = (c + c + c) as StringMode;
 					i += 2;
 				} else {
-					mode = c as StringMode;
+					mode = c;
 				}
 				continue;
 			}

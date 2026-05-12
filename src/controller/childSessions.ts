@@ -620,9 +620,9 @@ export class ChildSessionCoordinator {
    */
   private recomputeParentPausedState(): void {
     const snapshots = [...this.children.values()].map(child => ({
-      stoppedThreadIds: child.stoppedThreadIds as ReadonlySet<number>,
+      stoppedThreadIds: child.stoppedThreadIds,
       allThreadsStopped: child.allThreadsStopped,
-      knownThreadIds: child.knownThreadIds as ReadonlySet<number>,
+      knownThreadIds: child.knownThreadIds,
       lifecycleEnded: child.lifecycleEnded,
       lastStoppedReason: child.lastStoppedReason,
     }));

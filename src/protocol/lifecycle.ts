@@ -178,7 +178,7 @@ function parseStoppedState(body: unknown): DapStoppedState {
 function rejectWhenStartRequestFails(startRequest: Promise<unknown>): Promise<never> {
   return startRequest.then(
     () => new Promise<never>(() => undefined),
-    error => Promise.reject(error),
+    (error: unknown) => Promise.reject(error instanceof Error ? error : new Error(typeof error === 'string' ? error : JSON.stringify(error))),
   );
 }
 

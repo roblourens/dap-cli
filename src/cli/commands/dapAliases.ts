@@ -1,7 +1,7 @@
 import path from 'node:path';
 import type { Command } from 'commander';
 import type { OutputWriter } from '../outputWriter.js';
-import { sessionError, usageError } from '../errors.js';
+import { usageError } from '../errors.js';
 import { getDapGeneratedCommand } from '../../generated/dapCommandRegistry.js';
 import { parseIntegerOption, parseIntegerValues, parseRequiredIntegerOption, requireGeneratedCommand, sendGeneratedDapRequest } from './dapGenerated.js';
 import { createControllerClient, type ControllerClient } from '../../controller/client.js';
@@ -438,7 +438,7 @@ async function resolveAutoFrameId(output: OutputWriter, name: string | undefined
     }
 
     let threadId: number | undefined;
-    const stoppedThreadIds = Array.isArray(status.stoppedThreadIds) ? status.stoppedThreadIds : [];
+    const stoppedThreadIds: readonly number[] = Array.isArray(status.stoppedThreadIds) ? status.stoppedThreadIds : [];
     if (stoppedThreadIds.length > 0) {
       threadId = stoppedThreadIds[0];
       if (stoppedThreadIds.length > 1) {
@@ -598,10 +598,9 @@ async function countChildSessions(client: ControllerClient, parentName: string |
   }
   try {
     const list = await client.request<ReadonlyArray<SessionsListEntry>>('sessions.list', { includeChildren: true });
-    if (!Array.isArray(list)) {
-      return 0;
-    }
-    const parent = list.find(entry => typeof entry === 'object' && entry !== null && (entry as { name?: string }).name === parentName);
+    // Re-bind through the typed annotation: Array.isArray's predicate widens to any[].
+    const entries: ReadonlyArray<SessionsListEntry> = Array.isArray(list) ? list : [];
+    const parent = entries.find(entry => typeof entry === 'object' && entry !== null && (entry as { name?: string }).name === parentName);
     if (parent === undefined) {
       return 0;
     }
@@ -609,7 +608,7 @@ async function countChildSessions(client: ControllerClient, parentName: string |
     if (typeof parentId !== 'string') {
       return 0;
     }
-    return list.filter(entry => entry.parent_session_id === parentId).length;
+    return entries.filter(entry => entry.parent_session_id === parentId).length;
   } catch {
     return 0;
   }

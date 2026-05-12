@@ -776,7 +776,7 @@ export class ControllerServer {
     }
   }
 
-  private async handleListBreakpoints(params: unknown): Promise<{ sources: Array<{ source: unknown; breakpoints: readonly unknown[]; requested: readonly unknown[] }> }> {
+  private handleListBreakpoints(params: unknown): { sources: Array<{ source: unknown; breakpoints: readonly unknown[]; requested: readonly unknown[] }> } {
     const target = getOptionalStringParam(params, 'name');
     const source = getOptionalStringParam(params, 'source');
     const runtime = this.resolveRuntime(target);

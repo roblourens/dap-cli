@@ -15,7 +15,7 @@ beforeEach(async () => {
   process.stderr.write = ((chunk: string | Uint8Array) => {
     stderrCaptured += typeof chunk === 'string' ? chunk : chunk.toString();
     return true;
-  }) as typeof process.stderr.write;
+  });
 });
 
 afterEach(async () => {

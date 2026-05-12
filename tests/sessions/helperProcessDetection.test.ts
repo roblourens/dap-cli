@@ -11,7 +11,7 @@ function makeEventCache(): FakeEventCache {
 }
 
 function processEvent(systemProcessId: unknown): DapEventMessage {
-  return { type: 'event', seq: 1, event: 'process', body: { systemProcessId } as unknown as Record<string, unknown> };
+  return { type: 'event', seq: 1, event: 'process', body: { systemProcessId } };
 }
 
 async function flushMicrotasks(): Promise<void> {
