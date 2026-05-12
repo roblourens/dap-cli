@@ -133,6 +133,13 @@ Use these entry points:
 - `/gsd-execute-phase` for planned phase work
 
 Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
+
+### Branching
+
+- **One dev branch per phase.** Branch name: `phase-<NN>-<short-slug>`. Created at the start of `/gsd-discuss-phase` or `/gsd-plan-phase`, used through `/gsd-execute-phase` and `/gsd-verify-work`. `gsd-executor` continues to make atomic commits on this branch.
+- **Squash-merge into `main` when the phase is complete.** After verification passes, squash the dev branch into a single commit on `main`: `phase <NN>: <title>` with a short summary body.
+- **Quick fixes go directly to `main`.** If the change fits in one commit, use `/gsd-fast` or `/gsd-quick` and commit straight to `main` — no dev branch.
+- **Never force-push `main`.** Pre-cleanup history is preserved at tag `pre-rewrite-backup` and branch `main-backup-2026-05-11`.
 <!-- GSD:workflow-end -->
 
 

@@ -60,6 +60,14 @@ Agents can reliably control a DAP debug session from repeatable CLI commands and
 - **Extensibility**: Additional adapters must be configurable - users should be able to point dap-cli at any compatible debug adapter.
 - **Implementation integrity**: Use mcp-debugger as product-shape inspiration.
 
+## Branching Workflow
+
+- **One dev branch per phase.** Created at the start of `/gsd-discuss-phase` (or `/gsd-plan-phase` if discuss is skipped) and used through `/gsd-execute-phase` and `/gsd-verify-work`. Naming: `phase-<NN>-<short-slug>`.
+- **Squash-merge into `main` when the phase is complete.** After `/gsd-verify-work` passes (and optionally `/gsd-ship`), squash the dev branch into `main` as a single commit. Commit message: `phase <NN>: <title>` plus a short summary of what shipped.
+- **Quick fixes go directly to `main`.** If it fits in one commit, use `/gsd-fast` or `/gsd-quick` and commit straight to `main` — no dev branch needed.
+- **Keep dev branches around briefly** after squash so `/gsd-undo` and `git bisect` still have the per-commit granularity from `gsd-executor`. Tag pre-squash tips if you want long-term access.
+- **Never force-push `main`.** History on `main` is append-only after the initial cleanup. The pre-cleanup tip is preserved at tag `pre-rewrite-backup` and branch `main-backup-2026-05-11`.
+
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
