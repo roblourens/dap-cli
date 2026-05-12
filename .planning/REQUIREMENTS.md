@@ -49,6 +49,12 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [x] **AGNT-04**: Documentation includes agent-oriented workflows that interleave dap-cli commands with `playwright-cli` ([`@playwright/cli`](https://www.npmjs.com/package/@playwright/cli)) commands. ([`@playwright/test`](https://www.npmjs.com/package/@playwright/test) is also covered as an alternative driver.)
 - [x] **AGNT-05**: Documentation includes examples for polling session status instead of relying on event streaming in v1.
 
+### Help / CLI Discoverability
+
+- [ ] **HELP-01**: `dap-cli help` and `dap-cli help <path...>` exit 0 and emit no JSON envelope on either stream (the spurious `(outputHelp)` `usage_error` payload is gone).
+- [ ] **HELP-02**: `dap-cli help <cmd> <subcmd>` drills into the subcommand tree and prints the deepest match's help (e.g. `dap-cli help breakpoints set` prints the help for `breakpoints set`, not `breakpoints`); unknown drill-down paths produce a clean `usage_error` envelope.
+- [ ] **HELP-03**: `dap-cli help` groups top-level commands under category headings (Controller lifecycle / Sessions / Launch & attach / Breakpoints / Paused-state inspection / Execution control / DAP protocol escape hatches) instead of one flat list.
+
 ### Verification
 
 - [x] **TEST-01**: Protocol framing, request sequencing, event caching, and session state are covered by deterministic fake-adapter tests.

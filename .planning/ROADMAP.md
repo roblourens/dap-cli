@@ -435,3 +435,18 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 — docs describe verified behavior)*
 - [ ] 18-02-PLAN.md — Update `docs/AGENT-WORKFLOWS.md`, in-repo `skills/dap-cli/SKILL.md`, `skills/dap-cli/references/javascript-typescript.md` (and README.md if it carries the old recipe) to present "parent rolls up child paused state, dap-cli routes to the paused child" as a guarantee; remove prior hedge language; preserve Phase 15-02's `child_session_not_targetable` contract for direct child addressing; pin with new `docsValidation.test.ts` grep gate on the literal phrase "paused child" (PAUSED-DOC-01)
+
+### Phase 19: Cleanup help command output, drill-down for subcommands, categorized command grouping
+
+**Goal:** Three concrete papercut fixes on `dap-cli help`. (1) Stop emitting a bogus `{"ok":false,...,"message":"(outputHelp)"}` envelope at the bottom of every help invocation — root cause is `isCommanderHelp()` only matching `commander.helpDisplayed`, while commander v14's `help` subcommand throws with `commander.help`/`exitCode 0`. (2) Make `dap-cli help <cmd> <subcmd>` (e.g. `dap-cli help breakpoints set`) drill into the subcommand tree instead of printing the parent's help; today only `<cmd> <subcmd> -h` works. (3) Group the long flat top-level command list into seven readable categories using commander v14's `helpGroup()`: Controller lifecycle, Sessions, Launch & attach, Breakpoints, Paused-state inspection, Execution control, DAP protocol escape hatches. No new commands, no behavioral changes to debug functionality.
+**Requirements**: HELP-01, HELP-02, HELP-03
+**Depends on:** Phase 18
+**Plans:** 2 plans
+
+Plans:
+
+**Wave 1**
+- [ ] 19-01-PLAN.md — Fix `isCommanderHelp` to recognize `commander.help` (kill the spurious envelope, HELP-01); register a custom variadic `help [command...]` walker in `program.ts` so drill-down works (HELP-02); add `tests/cli/helpCommand.test.ts` with 5 tests covering both fixes plus a `--help` regression check.
+
+**Wave 2** *(blocked on Wave 1 — drill-down regression test relies on plan 01's harness)*
+- [ ] 19-02-PLAN.md — Apply commander v14 `helpGroup()` to every public top-level command across `controller.ts`, `sessions.ts`, `dapCore.ts`, `dapAliases.ts`, `dapGenerated.ts` per the locked D-03 mapping; extend `tests/cli/helpCommand.test.ts` with category-membership and hidden-command regression tests (HELP-03).
