@@ -11,7 +11,8 @@ import { registerGeneratedDapCommands } from './commands/dapGenerated.js';
 import { registerSessionCommands } from './commands/sessions.js';
 
 const require = createRequire(import.meta.url);
-const packageJson: unknown = require('../../package.json');
+// Path is resolved relative to the bundled dist/index.js, not this source file.
+const packageJson: unknown = require('../package.json');
 
 export interface ProgramOptions {
   stdout?: JsonWritable;
