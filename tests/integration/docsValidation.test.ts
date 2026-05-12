@@ -5,7 +5,7 @@ import { createProgram } from '../../src/cli/program.js';
 
 const docsToValidate = [
   'README.md',
-  'skills/dap-cli/references/agent-workflows.md',
+  'plugin/skills/dap-cli/references/agent-workflows.md',
   'docs/playwright-interop.md',
   'docs/adapter-setup.md',
 ];
@@ -31,14 +31,14 @@ describe('documentation command examples', () => {
 
 describe('Phase 16 docs (PYEVAL-02 / VERB-DOC-01 / PWDOC-01)', () => {
   test('agent-workflows.md documents Python evaluate auto-wrap', async () => {
-    const content = await fs.readFile(path.join(process.cwd(), 'skills/dap-cli/references/agent-workflows.md'), 'utf8');
+    const content = await fs.readFile(path.join(process.cwd(), 'plugin/skills/dap-cli/references/agent-workflows.md'), 'utf8');
     expect(content).toContain('evaluate_requires_exec');
     expect(content).toContain('exec(');
     expect(content).toContain('debugpy');
   });
 
   test('agent-workflows.md documents launch-vs-attach verb selection', async () => {
-    const content = await fs.readFile(path.join(process.cwd(), 'skills/dap-cli/references/agent-workflows.md'), 'utf8');
+    const content = await fs.readFile(path.join(process.cwd(), 'plugin/skills/dap-cli/references/agent-workflows.md'), 'utf8');
     expect(content).toContain('dap-cli launch');
     expect(content).toContain('dap-cli attach');
     expect(content).toMatch(/no .{0,15}--request.{0,15}flag/i);
@@ -53,9 +53,9 @@ describe('Phase 16 docs (PYEVAL-02 / VERB-DOC-01 / PWDOC-01)', () => {
 
 describe('Phase 18 docs (PAUSED-DOC-01)', () => {
   const phase18Files = [
-    'skills/dap-cli/references/agent-workflows.md',
-    'skills/dap-cli/SKILL.md',
-    'skills/dap-cli/references/javascript-typescript.md',
+    'plugin/skills/dap-cli/references/agent-workflows.md',
+    'plugin/skills/dap-cli/SKILL.md',
+    'plugin/skills/dap-cli/references/javascript-typescript.md',
   ];
 
   for (const file of phase18Files) {
