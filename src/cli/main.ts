@@ -27,6 +27,10 @@ export async function main(args: readonly string[], program: Command | undefined
     writeOut: chunk => { streams.stdout.write(chunk); },
     writeErr: chunk => { streams.stderr.write(chunk); },
   });
+  // Propagate to subcommands so `subcmd.outputHelp()` (used by the variadic
+  // `help` walker in program.ts) routes through the captured streams instead
+  // of process.stdout.
+  configureSubcommandOutputs(activeProgram, streams);
 
   try {
     await activeProgram.parseAsync([...args], { from: 'user' });
@@ -74,6 +78,16 @@ function selectRenderableError(error: CliError, program: Command, streams: CliSt
 
 function isCommanderError(error: unknown): error is Error {
   return error instanceof Error && error.name === 'CommanderError';
+}
+
+function configureSubcommandOutputs(command: Command, streams: CliStreams): void {
+  for (const child of command.commands) {
+    child.configureOutput({
+      writeOut: chunk => { streams.stdout.write(chunk); },
+      writeErr: chunk => { streams.stderr.write(chunk); },
+    });
+    configureSubcommandOutputs(child, streams);
+  }
 }
 
 function isCommanderHelp(error: unknown): boolean {
