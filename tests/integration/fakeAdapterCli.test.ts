@@ -970,6 +970,42 @@ describe('fake adapter controller integration', () => {
         name: 'disconnect-body-demo',
         status: 'terminated',
       });
+      expect(fakeSocket.requests.find(request => request.command === 'disconnect')?.arguments).toEqual({ terminateDebuggee: true });
+    } finally {
+      await fakeSocket.close();
+    }
+  });
+
+  test('detach --name sends shaped disconnect arguments to the adapter', async () => {
+    const lifecycleScript = createFakeAdapterScript('attach-stopped');
+    const fakeSocket = await startFakeSocketAdapter({
+      ...lifecycleScript,
+      steps: lifecycleScript.steps.map(step => step.kind === 'expectRequest' && step.command === 'disconnect'
+        ? { ...step, expectedArguments: { terminateDebuggee: false } }
+        : step),
+    }, 'attach');
+
+    try {
+      await writeAdapterConfig(testEnv.dapCliHome, {
+        adapters: {
+          'detach-body-fake': {
+            id: 'detach-body-fake',
+            label: 'detach-body-fake',
+            transport: { kind: 'socket', host: '127.0.0.1', port: fakeSocket.port },
+          },
+        },
+      });
+
+      const attach = await runCli(['attach', '--adapter', 'detach-body-fake', '--name', 'detach-body-demo'], { env: testEnv.env });
+      expect(attach.exitCode, JSON.stringify(attach)).toBe(0);
+
+      const detach = await runCli(['detach', '--name', 'detach-body-demo'], { env: testEnv.env });
+      expect(detach.exitCode, JSON.stringify(detach)).toBe(0);
+      expect(parseEnvelope<{ name: string; status: string }>(detach.stdout).data).toMatchObject({
+        name: 'detach-body-demo',
+        status: 'terminated',
+      });
+      expect(fakeSocket.requests.find(request => request.command === 'disconnect')?.arguments).toEqual({ terminateDebuggee: false });
     } finally {
       await fakeSocket.close();
     }

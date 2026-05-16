@@ -278,13 +278,14 @@ export function createFakeAdapterTransport(script: FakeAdapterScript, mode?: 'la
   };
 }
 
-export async function startFakeSocketAdapter(script: FakeAdapterScript, mode?: 'launch' | 'attach'): Promise<{ port: number; close(): Promise<void> }> {
+export async function startFakeSocketAdapter(script: FakeAdapterScript, mode?: 'launch' | 'attach'): Promise<{ port: number; requests: DapRequestMessage[]; close(): Promise<void> }> {
   if (mode !== undefined) {
     validateScriptForMode(script, mode);
   }
+  const requests: DapRequestMessage[] = [];
   const server = net.createServer(socket => {
     socket.on('error', () => undefined);
-    runFakeAdapterScript(script, socket, socket, process.stderr);
+    runFakeAdapterScript(script, socket, socket, process.stderr, request => requests.push(request));
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -302,11 +303,12 @@ export async function startFakeSocketAdapter(script: FakeAdapterScript, mode?: '
 
   return {
     port: address.port,
+    requests,
     close: () => new Promise(resolve => server.close(() => resolve())),
   };
 }
 
-export function runFakeAdapterScript(script: FakeAdapterScript, input: NodeJS.ReadableStream, output: NodeJS.WritableStream, stderr: NodeJS.WritableStream): void {
+export function runFakeAdapterScript(script: FakeAdapterScript, input: NodeJS.ReadableStream, output: NodeJS.WritableStream, stderr: NodeJS.WritableStream, onRequest?: (request: DapRequestMessage) => void): void {
   const parser = new DapMessageParser();
   const remainingSteps = [...script.steps];
 
@@ -319,6 +321,7 @@ export function runFakeAdapterScript(script: FakeAdapterScript, input: NodeJS.Re
       if (message.type !== 'request') {
         continue;
       }
+      onRequest?.(message);
 
       const step = remainingSteps.shift();
       if (step?.kind !== 'expectRequest' || step.command !== message.command) {
