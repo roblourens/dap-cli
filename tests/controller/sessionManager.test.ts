@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -1544,6 +1545,43 @@ describe('ChildSessionCoordinator', () => {
 // the test can simulate "process refuses to die" without leaving real
 // processes behind.
 describe('ControllerServer.terminateRuntime (H-8)', () => {
+  test.each([
+    { method: 'sessions.stop', mode: 'launch' as const, script: 'stopped-on-entry', sessionName: 'disconnect-stop-demo', terminateDebuggee: true },
+    { method: 'sessions.detach', mode: 'attach' as const, script: 'attach-stopped', sessionName: 'disconnect-detach-demo', terminateDebuggee: false },
+  ])('$method sends shaped disconnect args', async ({ method, mode, sessionName, terminateDebuggee }) => {
+    const { startControllerServer } = await import('../../src/controller/server.js');
+    const { createControllerClient } = await import('../../src/controller/client.js');
+    const fakeAdapter = await startDisconnectRecordingSocketAdapter(mode);
+    const server = await startControllerServer({ dapCliHome });
+
+    try {
+      const client = await createControllerClient({ dapCliHome, timeoutMs: 30_000 });
+      try {
+        await client.request('dap.start', {
+          mode,
+          name: sessionName,
+          use: true,
+          descriptor: {
+            id: `fake-${mode}-disconnect`,
+            label: `fake-${mode}-disconnect`,
+            transport: { kind: 'socket', host: '127.0.0.1', port: fakeAdapter.port },
+          },
+        });
+
+        await expect(client.request(method, { name: sessionName })).resolves.toMatchObject({
+          name: sessionName,
+          status: 'terminated',
+        });
+        expect(fakeAdapter.disconnectArguments).toEqual([{ terminateDebuggee }]);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await server.stop().catch(() => undefined);
+      await fakeAdapter.close();
+    }
+  }, 20_000);
+
   test('sessions.close on a fake-adapter session reports orphanPids when isProcessAlive stays true', async () => {
     const { startControllerServer } = await import('../../src/controller/server.js');
     const { createControllerClient } = await import('../../src/controller/client.js');
@@ -1652,3 +1690,59 @@ describe('ControllerServer.terminateRuntime (H-8)', () => {
     }
   }, 20_000);
 });
+
+async function startDisconnectRecordingSocketAdapter(mode: 'launch' | 'attach'): Promise<{ port: number; disconnectArguments: unknown[]; close(): Promise<void> }> {
+  const disconnectArguments: unknown[] = [];
+  let serverSeq = 1;
+  const server = net.createServer(socket => {
+    const parser = new DapMessageParser();
+    socket.on('error', () => undefined);
+    socket.on('data', (chunk: Buffer) => {
+      for (const message of parser.push(chunk)) {
+        if (message.type !== 'request') {
+          continue;
+        }
+
+        if (message.command === 'disconnect') {
+          disconnectArguments.push(message.arguments);
+        }
+
+        const body = message.command === 'initialize'
+          ? { supportsConfigurationDoneRequest: true }
+          : undefined;
+        const response: DapResponseMessage = body === undefined
+          ? { seq: serverSeq++, type: 'response', request_seq: message.seq, success: true, command: message.command }
+          : { seq: serverSeq++, type: 'response', request_seq: message.seq, success: true, command: message.command, body };
+        socket.write(encodeDapMessage(response));
+
+        if (message.command === mode) {
+          const initialized: DapEventMessage = { seq: serverSeq++, type: 'event', event: 'initialized' };
+          socket.write(encodeDapMessage(initialized));
+        }
+        if (message.command === 'configurationDone') {
+          const stopped: DapEventMessage = { seq: serverSeq++, type: 'event', event: 'stopped', body: { reason: 'entry', threadId: 1 } };
+          socket.write(encodeDapMessage(stopped));
+        }
+      }
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+
+  const address = server.address();
+  if (typeof address !== 'object' || address === null) {
+    throw new Error('Disconnect recording socket adapter did not bind to a TCP port.');
+  }
+
+  return {
+    port: address.port,
+    disconnectArguments,
+    close: () => new Promise(resolve => server.close(() => resolve())),
+  };
+}

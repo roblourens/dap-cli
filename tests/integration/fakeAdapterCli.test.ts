@@ -110,6 +110,7 @@ describe('fake adapter controller integration', () => {
     expect(use.exitCode).toBe(0);
 
     const stop = await runCli(['stop', '--name', 'demo'], { env: testEnv.env });
+    expect(stop.exitCode, JSON.stringify(stop)).toBe(0);
     expect(parseEnvelope<{ name: string; status: string }>(stop.stdout).data.status).toBe('terminated');
 
     const cleanup = await runCli(['cleanup'], { env: testEnv.env });
@@ -936,6 +937,40 @@ describe('fake adapter controller integration', () => {
       await client.request('sessions.detach', { name: 'socket-demo' });
     } finally {
       await client.close();
+      await fakeSocket.close();
+    }
+  });
+
+  test('stop --name succeeds when the adapter requires shaped disconnect arguments', async () => {
+    const lifecycleScript = createFakeAdapterScript('stopped-on-entry');
+    const fakeSocket = await startFakeSocketAdapter({
+      ...lifecycleScript,
+      steps: lifecycleScript.steps.map(step => step.kind === 'expectRequest' && step.command === 'disconnect'
+        ? { ...step, expectedArguments: { terminateDebuggee: true } }
+        : step),
+    });
+
+    try {
+      await writeAdapterConfig(testEnv.dapCliHome, {
+        adapters: {
+          'disconnect-body-fake': {
+            id: 'disconnect-body-fake',
+            label: 'disconnect-body-fake',
+            transport: { kind: 'socket', host: '127.0.0.1', port: fakeSocket.port },
+          },
+        },
+      });
+
+      const launch = await runCli(['launch', '--adapter', 'disconnect-body-fake', '--name', 'disconnect-body-demo'], { env: testEnv.env });
+      expect(launch.exitCode, JSON.stringify(launch)).toBe(0);
+
+      const stop = await runCli(['stop', '--name', 'disconnect-body-demo'], { env: testEnv.env });
+      expect(stop.exitCode, JSON.stringify(stop)).toBe(0);
+      expect(parseEnvelope<{ name: string; status: string }>(stop.stdout).data).toMatchObject({
+        name: 'disconnect-body-demo',
+        status: 'terminated',
+      });
+    } finally {
       await fakeSocket.close();
     }
   });
