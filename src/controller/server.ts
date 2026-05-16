@@ -343,12 +343,12 @@ export class ControllerServer {
     }
     if (request.method === 'sessions.stop') {
       const target = getOptionalStringParam(request.params, 'name');
-      await this.disconnectRuntimeForTarget(target);
+      await this.disconnectRuntimeForTarget(target, { terminateDebuggee: true });
       return manager.stopSession(target);
     }
     if (request.method === 'sessions.detach') {
       const target = getOptionalStringParam(request.params, 'name');
-      await this.disconnectRuntimeForTarget(target);
+      await this.disconnectRuntimeForTarget(target, { terminateDebuggee: false });
       return manager.detachSession(target);
     }
     if (request.method === 'sessions.close') {
@@ -980,7 +980,7 @@ export class ControllerServer {
     });
   }
 
-  private async disconnectRuntimeForTarget(target: string | undefined): Promise<void> {
+  private async disconnectRuntimeForTarget(target: string | undefined, opts: { terminateDebuggee: boolean }): Promise<void> {
     let status: SessionStatus;
     try {
       status = this.requireSessionManager().status(target);
@@ -996,7 +996,7 @@ export class ControllerServer {
     if (runtime.children !== undefined) {
       await runtime.children.dispose().catch(() => undefined);
     }
-    await runtime.lifecycle.disconnect().catch(() => undefined);
+    await runtime.lifecycle.disconnect({ terminateDebuggee: opts.terminateDebuggee }).catch(() => undefined);
     await runtime.client.close().catch(() => undefined);
     await runtime.adapter.close().catch(() => undefined);
     this.runtimes.delete(status.id);

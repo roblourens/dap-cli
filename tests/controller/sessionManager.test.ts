@@ -1546,8 +1546,8 @@ describe('ChildSessionCoordinator', () => {
 // processes behind.
 describe('ControllerServer.terminateRuntime (H-8)', () => {
   test.each([
-    { method: 'sessions.stop', mode: 'launch' as const, script: 'stopped-on-entry', sessionName: 'disconnect-stop-demo', terminateDebuggee: true },
-    { method: 'sessions.detach', mode: 'attach' as const, script: 'attach-stopped', sessionName: 'disconnect-detach-demo', terminateDebuggee: false },
+    { method: 'sessions.stop' as const, mode: 'launch' as const, script: 'stopped-on-entry', sessionName: 'disconnect-stop-demo', terminateDebuggee: true },
+    { method: 'sessions.detach' as const, mode: 'attach' as const, script: 'attach-stopped', sessionName: 'disconnect-detach-demo', terminateDebuggee: false },
   ])('$method sends shaped disconnect args', async ({ method, mode, sessionName, terminateDebuggee }) => {
     const { startControllerServer } = await import('../../src/controller/server.js');
     const { createControllerClient } = await import('../../src/controller/client.js');
