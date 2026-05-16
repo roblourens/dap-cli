@@ -121,6 +121,7 @@ None yet.
 | ID | Slug | Date | Summary |
 |----|------|------|---------|
 | 260504-rp5 | reverse-duplicate-name-session-disambigu | 2026-05-04 | Reject duplicate `--name` at session create time (`session_name_in_use`); resolver prefers live records over terminated when matching by name. Reverses earlier `session_ambiguous` design. |
+| 260516-lmy | here-s-an-error-that-was-reported-by-an- | 2026-05-16 | Shape ordinary stop/detach DAP disconnect payloads so js-debug never receives undefined disconnect args, with controller and CLI regression coverage. |
 
 ## Session Continuity
 
