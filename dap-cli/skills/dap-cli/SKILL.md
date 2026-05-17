@@ -295,3 +295,4 @@ dap-cli continue --name web-demo
 - General agent workflows (adapter inference, Python evaluate auto-wrap, child sessions, output contract) → [references/agent-workflows.md](./references/agent-workflows.md)
 - JS / TS / browser → [references/javascript-typescript.md](./references/javascript-typescript.md)
 - Python → [references/python.md](./references/python.md)
+- Go / Delve → [references/go-delve.md](./references/go-delve.md)
