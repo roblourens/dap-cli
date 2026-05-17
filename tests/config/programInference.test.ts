@@ -47,6 +47,13 @@ describe('inferAdapterAndType', () => {
     expect(result.inferred).toEqual({ adapter: false, type: true });
   });
 
+  test('adapter-only delve defaults type to go', () => {
+    const result = inferAdapterAndType({ adapter: 'delve' });
+    expect(result.adapterId).toBe('delve');
+    expect(result.type).toBe('go');
+    expect(result.inferred).toEqual({ adapter: false, type: true });
+  });
+
   test('adapter-only custom adapter returns undefined type (no fabrication)', () => {
     const result = inferAdapterAndType({ adapter: 'my-custom-adapter', program: '/tmp/script.js' });
     expect(result.adapterId).toBe('my-custom-adapter');
@@ -82,6 +89,13 @@ describe('inferAdapterAndType', () => {
     const result = inferAdapterAndType({ program: '/tmp/app.py' });
     expect(result.adapterId).toBe('debugpy');
     expect(result.type).toBe('python');
+    expect(result.inferred).toEqual({ adapter: true, type: true });
+  });
+
+  test('program-only .go maps to delve/go', () => {
+    const result = inferAdapterAndType({ program: '/tmp/app.go' });
+    expect(result.adapterId).toBe('delve');
+    expect(result.type).toBe('go');
     expect(result.inferred).toEqual({ adapter: true, type: true });
   });
 

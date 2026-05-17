@@ -17,6 +17,7 @@ export interface InferAdapterAndTypeResult {
 
 const extensionTable: Record<string, { adapterId: string; type: string }> = {
   '.py': { adapterId: 'debugpy', type: 'python' },
+  '.go': { adapterId: 'delve', type: 'go' },
   '.js': { adapterId: 'js-debug', type: 'pwa-node' },
   '.mjs': { adapterId: 'js-debug', type: 'pwa-node' },
   '.cjs': { adapterId: 'js-debug', type: 'pwa-node' },
@@ -76,6 +77,9 @@ function defaultTypeForAdapter(adapterId: string, program: string | undefined): 
   }
   if (adapterId === 'debugpy') {
     return 'python';
+  }
+  if (adapterId === 'delve') {
+    return 'go';
   }
   return undefined;
 }
