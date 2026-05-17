@@ -83,7 +83,7 @@ Progress: [██████████] 100%
 | Phase 20 P03 | not-recorded-inline | 3 tasks | 11 files |
 | Phase 20 P04 | not-recorded-inline | 3 tasks | 5 files |
 | Phase 20 P05 | not-recorded-inline | 2 tasks | 2 files |
-| Phase 20 P06 | not-recorded-inline | 3 tasks | 5 files |
+| Phase 20 P06 | not-recorded-inline | 3 tasks | 6 files |
 
 ## Accumulated Context
 

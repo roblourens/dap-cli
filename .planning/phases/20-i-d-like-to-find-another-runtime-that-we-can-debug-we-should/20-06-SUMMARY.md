@@ -23,6 +23,7 @@ key-files:
     - .planning/phases/20-i-d-like-to-find-another-runtime-that-we-can-debug-we-should/20-SCENARIOS.md
     - .planning/phases/20-i-d-like-to-find-another-runtime-that-we-can-debug-we-should/20-RESULTS.md
     - .planning/phases/20-i-d-like-to-find-another-runtime-that-we-can-debug-we-should/20-HARDENING-GAPS.md
+    - tests/integration/setupAdapters.test.ts
   modified:
     - scripts/setup-adapters.ts
     - dap-cli/skills/dap-cli/references/go-delve.md
@@ -51,7 +52,7 @@ completed: 2026-05-17
 - **Started:** not recorded by the inline execute runner
 - **Completed:** 2026-05-17T07:10:00Z
 - **Tasks:** 3
-- **Tracked files created/modified:** 5
+- **Tracked files created/modified:** 6
 
 ## Accomplishments
 
@@ -67,6 +68,7 @@ completed: 2026-05-17
 2. **Task 2 repair: Harden setup diagnostics and Go reference** - `c33691d` (fix)
 3. **Task 2 repair: Rebuild partial debugpy virtualenvs** - `e8b3eb0` (fix)
 4. **Tasks 2-3: Capture results, gaps, reruns, and verify-work handoff** - `3bd7ca9` (docs)
+5. **Council follow-up: Cover partial debugpy virtualenv recovery** - `41f8dc8` (test)
 
 ## Files Created/Modified
 
@@ -75,6 +77,7 @@ completed: 2026-05-17
 - `20-HARDENING-GAPS.md` - Product/docs classifications, repair routing, queued follow-up, and verify-work handoff.
 - `scripts/setup-adapters.ts` - Safe spawn failure detail extraction and partial-venv recreation.
 - `dap-cli/skills/dap-cli/references/go-delve.md` - Short-lived stop-on-entry advice, attach disconnect command, and evaluate fallback.
+- `tests/integration/setupAdapters.test.ts` - Scratch recovery coverage for a partial debugpy virtualenv missing pip.
 
 ## Decisions Made
 
@@ -97,6 +100,7 @@ completed: 2026-05-17
 - Plan 20-06 exact Node verifier passed for ten `initial_result:` markers plus rerun audit coverage.
 - Verify-work gate grep checks passed for `Sequence A`, `Sequence B`, `dev/smoke/hand-driven-smoke.md`, and `20-UAT.md`.
 - `npx vitest run tests/integration/docsValidation.test.ts` passed with 9 tests.
+- `tests/integration/setupAdapters.test.ts` passed with 1 focused recovery test after council review called out the coverage gap.
 - Fresh scratch setup replay passed twice after deleting `venv/bin/pip`, proving automatic partial-venv recovery.
 - Editor diagnostics were clean for `scripts/setup-adapters.ts` after both code fixes.
 

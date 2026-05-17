@@ -59,4 +59,5 @@ Focused commands to rerun before `/gsd-verify-work`:
 GOTOOLCHAIN=go1.24.0 npx vitest run tests/integration/delveAdapter.test.ts
 DAP_CLI_RUN_DELVE_ATTACH_SMOKE=1 GOTOOLCHAIN=go1.24.0 npx vitest run tests/integration/delveAdapter.test.ts
 npx vitest run tests/integration/docsValidation.test.ts
+npx vitest run tests/integration/setupAdapters.test.ts
 ```
