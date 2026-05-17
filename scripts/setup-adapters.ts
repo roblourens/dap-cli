@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 
 const jsDebugVersion = '1.117.0';
 const debugpyVersion = '1.8.20';
@@ -86,7 +86,7 @@ async function setupJsDebug(options: { adaptersDir: string; dryRun: boolean }): 
 
   const tarResult = spawnSync('tar', ['xzf', archivePath, '-C', options.adaptersDir], { encoding: 'utf8' });
   if (tarResult.status !== 0) {
-    throw new Error(`Could not extract js-debug archive. ${tarResult.stderr.trim()}`);
+    throw new Error(`Could not extract js-debug archive. ${spawnFailureDetail(tarResult)}`);
   }
 
   if (!await pathExists(entrypoint)) {
@@ -119,14 +119,14 @@ async function setupDebugpy(options: { dapCliHome: string; venvPython: string; d
   if (!await pathExists(options.venvPython)) {
     const venvResult = spawnSync('python3', ['-m', 'venv', venvDir], { encoding: 'utf8' });
     if (venvResult.status !== 0) {
-      throw new Error(`Python 3 required for debugpy setup. Install Python 3 and retry. ${venvResult.stderr.trim()}`);
+      throw new Error(`Python 3 required for debugpy setup. Install Python 3 and retry. ${spawnFailureDetail(venvResult)}`);
     }
   }
 
   const pipPath = getVenvPipPath(venvDir);
   const pipResult = spawnSync(pipPath, ['install', `debugpy==${debugpyVersion}`], { encoding: 'utf8' });
   if (pipResult.status !== 0) {
-    throw new Error(`Could not install debugpy. ${pipResult.stderr.trim()}`);
+    throw new Error(`Could not install debugpy. ${spawnFailureDetail(pipResult)}`);
   }
 
   if (!pythonHasDebugpy(options.venvPython)) {
@@ -206,8 +206,17 @@ function extractDelveArchive(asset: DelveAsset, archivePath: string, delveDir: s
     ? spawnSync('unzip', ['-q', archivePath, '-d', delveDir], { encoding: 'utf8' })
     : spawnSync('tar', ['xzf', archivePath, '-C', delveDir], { encoding: 'utf8' });
   if (extraction.status !== 0) {
-    throw new Error(`Could not extract Delve archive. ${extraction.stderr.trim()}`);
+    throw new Error(`Could not extract Delve archive. ${spawnFailureDetail(extraction)}`);
   }
+}
+
+function spawnFailureDetail(result: SpawnSyncReturns<string>): string {
+  const stderr = result.stderr?.trim();
+  if (stderr) {
+    return stderr;
+  }
+
+  return result.error?.message ?? 'No stderr output.';
 }
 
 function commandSucceeds(command: string, args: readonly string[]): boolean {

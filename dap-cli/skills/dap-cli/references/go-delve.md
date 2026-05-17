@@ -22,6 +22,8 @@ dap-cli launch --adapter delve --type go --name go-debug \
 dap-cli status --name go-debug
 ```
 
+For a short-lived program, add `--stop-on-entry` before installing follow-up breakpoints. Otherwise the debuggee can exit before a fresh agent gets from `launch` to `breakpoints set`.
+
 For `--program main.go`, dap-cli can infer adapter `delve` and type `go` from the `.go` extension. Use explicit adapter/type flags for package directories and when a command must stay obvious to a fresh reader.
 
 `cwd` is the debuggee working directory. `dlvCwd` is Delve's build working directory; set it to the module directory for `mode: "debug"` and `mode: "test"` package builds.
@@ -35,6 +37,8 @@ dap-cli launch --adapter delve --type go --name go-test \
   --json '{"mode":"test","program":"/workspace/my-go-module","cwd":"/workspace/my-go-module","dlvCwd":"/workspace/my-go-module"}'
 ```
 
+Short test binaries can finish just as quickly as short commands. Use `--stop-on-entry` when you need time to set source breakpoints after launch.
+
 Use `mode: "exec"` for a prebuilt binary. Build with symbols first:
 
 ```bash
@@ -44,6 +48,7 @@ dap-cli launch --adapter delve --type go --name go-exec \
 ```
 
 Without `-gcflags=all="-N -l"`, optimized binaries can make source lines, stack frames, locals, and expression evaluation disappointing or misleading.
+Use `--stop-on-entry` for short-lived binaries when follow-up breakpoint commands would otherwise race normal process exit.
 
 ## Safe local PID attach
 
@@ -55,6 +60,10 @@ dap-cli attach --adapter delve --type go --name go-attach \
 ```
 
 The Phase 20 attach verification disconnects with DAP `terminateDebuggee: false`, observes that the target process survives disconnect, then separately cleans up the test-owned child. Do not improvise broad process cleanup when scripting local PID attach.
+
+```bash
+dap-cli request disconnect --name go-attach --json '{"terminateDebuggee":false}'
+```
 
 ## Inspect after a breakpoint hits
 
@@ -72,6 +81,7 @@ dap-cli evaluate --name go-debug --expression 'left + right'
 ```
 
 After any resume or step, poll `status` again and reacquire stack/scopes/variables IDs. Never reuse references from an earlier stop.
+If Delve rejects a real-project `evaluate` request with `dap_request_failed`, keep the stop and inspect `scopes` plus `variables` for paused locals before deciding the value is unavailable.
 
 ## Negative diagnostics
 
