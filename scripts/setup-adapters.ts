@@ -116,14 +116,16 @@ async function setupDebugpy(options: { dapCliHome: string; venvPython: string; d
   }
 
   const venvDir = path.dirname(path.dirname(options.venvPython));
-  if (!await pathExists(options.venvPython)) {
+  const pipPath = getVenvPipPath(venvDir);
+  const venvReady = await pathExists(options.venvPython) && await pathExists(pipPath);
+  if (!venvReady) {
+    await fs.rm(venvDir, { recursive: true, force: true });
     const venvResult = spawnSync('python3', ['-m', 'venv', venvDir], { encoding: 'utf8' });
     if (venvResult.status !== 0) {
       throw new Error(`Python 3 required for debugpy setup. Install Python 3 and retry. ${spawnFailureDetail(venvResult)}`);
     }
   }
 
-  const pipPath = getVenvPipPath(venvDir);
   const pipResult = spawnSync(pipPath, ['install', `debugpy==${debugpyVersion}`], { encoding: 'utf8' });
   if (pipResult.status !== 0) {
     throw new Error(`Could not install debugpy. ${spawnFailureDetail(pipResult)}`);
