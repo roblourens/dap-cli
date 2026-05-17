@@ -6,6 +6,7 @@ import { createProgram } from '../../src/cli/program.js';
 const docsToValidate = [
   'README.md',
   'dap-cli/skills/dap-cli/references/agent-workflows.md',
+  'dap-cli/skills/dap-cli/references/go-delve.md',
   'docs/playwright-interop.md',
   'docs/adapter-setup.md',
 ];
@@ -64,6 +65,22 @@ describe('Phase 18 docs (PAUSED-DOC-01)', () => {
       expect(content).toMatch(/paused child/i);
     });
   }
+});
+
+describe('Phase 20 docs (Go / Delve)', () => {
+  test('adapter setup docs retain Delve provisioning and attach diagnostics', async () => {
+    const content = await fs.readFile(path.join(process.cwd(), 'docs/adapter-setup.md'), 'utf8');
+    expect(content).toContain('Delve');
+    expect(content).toContain('delve_not_found');
+    expect(content).toContain('processId');
+  });
+
+  test('skill entry points retain the Go Delve reference', async () => {
+    const skill = await fs.readFile(path.join(process.cwd(), 'dap-cli/skills/dap-cli/SKILL.md'), 'utf8');
+    const workflows = await fs.readFile(path.join(process.cwd(), 'dap-cli/skills/dap-cli/references/agent-workflows.md'), 'utf8');
+    expect(skill).toContain('go-delve.md');
+    expect(workflows).toContain('go-delve.md');
+  });
 });
 
 function collectCommandPaths(): Set<string> {
