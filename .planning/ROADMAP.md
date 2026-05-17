@@ -52,7 +52,7 @@ Run `/gsd-new-milestone` to scope the next milestone.
 **Goal:** Integrate Go debugging through Delve's native `dlv dap` server as dap-cli's next built-in runtime, provision it deterministically, prove launch/attach/state inspection through substantial real-adapter coverage, validate it on screened public Go projects, and harden the workflow through fresh-agent retries.
 **Requirements**: None discovered (`.planning/REQUIREMENTS.md` is absent for Phase 20; plans use goal-derived must-haves without fabricating requirement IDs.)
 **Depends on:** Phase 19
-**Plans:** 5/6 plans executed
+**Plans:** 6/6 plans complete
 
 Plans:
 - [x] 20-01-PLAN.md — Finalize the Go/Delve choice and add deterministic Delve provisioning plus descriptor diagnostics.
@@ -60,4 +60,4 @@ Plans:
 - [x] 20-03-PLAN.md — Build Go fixtures and substantial real Delve launch/test/exec/local-attach integration coverage.
 - [x] 20-04-PLAN.md — Document Go/Delve setup and agent workflows, then pin them with docs validation.
 - [x] 20-05-PLAN.md — Screen and debug safe public Go repositories with reproducible external-validation ledgers.
-- [ ] 20-06-PLAN.md — Run the fresh-agent hardening/fix-retry loop and preserve the mandatory later verify-work hand smoke gate.
+- [x] 20-06-PLAN.md — Run the fresh-agent hardening/fix-retry loop and preserve the mandatory later verify-work hand smoke gate.
