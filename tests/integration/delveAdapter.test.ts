@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
@@ -10,6 +10,7 @@ import type { DapEventMessage } from '../../src/protocol/dapMessages.js';
 import { createCliTestEnv, type CliTestEnv } from '../helpers/runCli.js';
 
 let testEnv: CliTestEnv;
+const runDelveAttachSmoke = process.env.DAP_CLI_RUN_DELVE_ATTACH_SMOKE === '1';
 
 beforeEach(async () => {
   testEnv = await createCliTestEnv('dap-cli-delve-');
@@ -86,6 +87,31 @@ describe('Delve adapter integration', () => {
       expectedEvaluateResult: '5',
     });
   }, 60_000);
+
+  test.skipIf(!runDelveAttachSmoke)('attaches to a local Go PID without terminating the target on disconnect', async () => {
+    const target = await startAttachTarget();
+    try {
+      await runDelveBreakpointSmoke({
+        startRequest: 'attach',
+        startArgs: {
+          type: 'go',
+          request: 'attach',
+          name: 'go-attach-smoke',
+          mode: 'local',
+          processId: target.process.pid,
+        },
+        sourcePath: target.sourcePath,
+        breakpointLine: 9,
+        expectedLocalNames: ['left', 'right'],
+        evaluateExpression: 'left + right',
+        expectedEvaluateResult: '15',
+        terminateDebuggeeOnDisconnect: false,
+      });
+      expect(target.process.exitCode).toBeNull();
+    } finally {
+      target.process.kill('SIGTERM');
+    }
+  }, 60_000);
 });
 
 interface BreakpointSmokeOptions {
@@ -96,6 +122,12 @@ interface BreakpointSmokeOptions {
   expectedLocalNames: readonly string[];
   evaluateExpression: string;
   expectedEvaluateResult: string;
+  terminateDebuggeeOnDisconnect?: boolean;
+}
+
+interface AttachTarget {
+  process: ChildProcessWithoutNullStreams;
+  sourcePath: string;
 }
 
 async function runDelveBreakpointSmoke(options: BreakpointSmokeOptions): Promise<void> {
@@ -161,7 +193,7 @@ async function runDelveBreakpointSmoke(options: BreakpointSmokeOptions): Promise
     expect(evaluated.result).toContain(options.expectedEvaluateResult);
 
     await client.request('continue', { threadId });
-    await client.request('disconnect', { terminateDebuggee: true });
+    await client.request('disconnect', { terminateDebuggee: options.terminateDebuggeeOnDisconnect ?? true });
   } finally {
     disposeOutputListener();
     await client.close().catch(() => undefined);
@@ -171,6 +203,46 @@ async function runDelveBreakpointSmoke(options: BreakpointSmokeOptions): Promise
 
 function fixturePath(name: string): string {
   return path.join(process.cwd(), 'tests', 'fixtures', name);
+}
+
+async function startAttachTarget(): Promise<AttachTarget> {
+  const fixtureDir = fixturePath('simple-go-attach');
+  const binaryPath = path.join(testEnv.dapCliHome, process.platform === 'win32' ? 'simple-go-attach.exe' : 'simple-go-attach');
+  const build = spawnSync('go', ['build', '-gcflags=all=-N -l', '-o', binaryPath, '.'], { cwd: fixtureDir, encoding: 'utf8' });
+  expect(build.status, build.stderr).toBe(0);
+
+  const child = spawn(binaryPath, [], { cwd: fixtureDir, stdio: ['pipe', 'pipe', 'pipe'] });
+  await waitForProcessOutput(child, 'simple-go-attach ready');
+  return { process: child, sourcePath: path.join(fixtureDir, 'main.go') };
+}
+
+function waitForProcessOutput(child: ChildProcessWithoutNullStreams, expectedText: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for process output '${expectedText}'.`));
+    }, 10_000);
+    const onData = (chunk: Buffer): void => {
+      if (!chunk.toString('utf8').includes(expectedText)) {
+        return;
+      }
+
+      cleanup();
+      resolve();
+    };
+    const onExit = (): void => {
+      cleanup();
+      reject(new Error('Attach fixture exited before reporting readiness.'));
+    };
+    const cleanup = (): void => {
+      clearTimeout(timeout);
+      child.stdout.off('data', onData);
+      child.off('exit', onExit);
+    };
+
+    child.stdout.on('data', onData);
+    child.once('exit', onExit);
+  });
 }
 
 function waitForEvent(client: DapClient, eventName: string): Promise<DapEventMessage> {
