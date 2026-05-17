@@ -182,15 +182,15 @@ function pythonHasDebugpy(pythonPath: string): boolean {
 function resolveDelveAsset(platform: NodeJS.Platform, architecture: string): DelveAsset {
   const platformAssets: Partial<Record<NodeJS.Platform, Partial<Record<string, DelveAsset>>>> = {
     darwin: {
-      arm64: { archiveName: `dlv_darwin_arm64.tar.gz`, executableName: 'dlv', archiveKind: 'tar.gz' },
-      x64: { archiveName: `dlv_darwin_amd64.tar.gz`, executableName: 'dlv', archiveKind: 'tar.gz' },
+      arm64: { archiveName: `dlv_1.26.3_darwin_arm64.tar.gz`, executableName: 'dlv', archiveKind: 'tar.gz' },
+      x64: { archiveName: `dlv_1.26.3_darwin_amd64.tar.gz`, executableName: 'dlv', archiveKind: 'tar.gz' },
     },
     linux: {
-      arm64: { archiveName: `dlv_linux_arm64.tar.gz`, executableName: 'dlv', archiveKind: 'tar.gz' },
-      x64: { archiveName: `dlv_linux_amd64.tar.gz`, executableName: 'dlv', archiveKind: 'tar.gz' },
+      arm64: { archiveName: `dlv_1.26.3_linux_arm64.tar.gz`, executableName: 'dlv', archiveKind: 'tar.gz' },
+      x64: { archiveName: `dlv_1.26.3_linux_amd64.tar.gz`, executableName: 'dlv', archiveKind: 'tar.gz' },
     },
     win32: {
-      x64: { archiveName: `dlv_windows_amd64.zip`, executableName: 'dlv.exe', archiveKind: 'zip' },
+      x64: { archiveName: `dlv_1.26.3_windows_amd64.zip`, executableName: 'dlv.exe', archiveKind: 'zip' },
     },
   };
   const asset = platformAssets[platform]?.[architecture];
