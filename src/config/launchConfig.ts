@@ -55,6 +55,7 @@ export const launchConfigTypeMap: Record<string, string> = {
   'pwa-chrome': 'js-debug',
   python: 'debugpy',
   debugpy: 'debugpy',
+  go: 'delve',
 };
 
 const maxLaunchJsonBytes = 256 * 1024;
@@ -109,7 +110,7 @@ export function resolveLaunchConfigurationConfig(
     delete resolved[key];
   }
 
-  return resolved;
+  return normalizeGoLaunchConfigProgram(resolved, workspaceFolder);
 }
 
 export async function loadVSCodeLaunchConfig(cwd: string): Promise<LaunchConfiguration[]> {
@@ -288,6 +289,18 @@ export function mapDebugpyFlags(flags: Record<string, unknown>): Record<string, 
   }
 
   return mapped;
+}
+
+export function normalizeGoLaunchConfigProgram(config: Record<string, unknown>, workspaceFolder: string): Record<string, unknown> {
+  if (config.type !== 'go' || config.request === 'attach' || typeof config.program !== 'string' || path.isAbsolute(config.program)) {
+    return config;
+  }
+
+  const cwd = typeof config.cwd === 'string' ? config.cwd : workspaceFolder;
+  return {
+    ...config,
+    program: path.resolve(cwd, config.program),
+  };
 }
 
 function applyPlatformOverlay(config: Record<string, unknown>, platform: NodeJS.Platform): Record<string, unknown> {

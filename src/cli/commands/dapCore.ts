@@ -11,6 +11,7 @@ import {
   listLaunchConfigEntries,
   mapDebugpyFlags,
   mapJsDebugFlags,
+  normalizeGoLaunchConfigProgram,
   applyJsDebugSourceMapDefaults,
   resolveAdapterIdFromType,
   resolveLaunchConfig,
@@ -385,6 +386,9 @@ async function mapConfigForAdapter(adapterId: string, config: Record<string, unk
   }
   if (adapterId === 'debugpy') {
     return mapDebugpyFlags(config);
+  }
+  if (adapterId === 'delve') {
+    return normalizeGoLaunchConfigProgram(config, workspaceFolder);
   }
 
   return config;

@@ -41,7 +41,7 @@ describe('launch config resolution', () => {
     expect(resolveAdapterIdFromType('pwa-chrome')).toBe('js-debug');
     expect(resolveAdapterIdFromType('python')).toBe('debugpy');
     expect(resolveAdapterIdFromType('debugpy')).toBe('debugpy');
-    expect(resolveAdapterIdFromType('go', { go: 'delve' })).toBe('delve');
+    expect(resolveAdapterIdFromType('go')).toBe('delve');
   });
 
   test('reports unknown launch types', () => {
@@ -227,6 +227,48 @@ describe('launch config resolution', () => {
       cascadeTerminateToConfigurations: ['Attach to Extension Host'],
       pauseForSourceMap: false,
       env: { NULL_VALUE: null },
+    });
+  });
+
+  test('preserves Go launch and attach fields while normalizing relative launch programs from cwd', () => {
+    const launch = resolveLaunchConfigurationConfig({
+      type: 'go',
+      name: 'Debug Go app',
+      request: 'launch',
+      mode: 'debug',
+      cwd: '${workspaceFolder}/module',
+      program: 'cmd/app/main.go',
+    }, { workspaceFolder: tempDir });
+    expect(launch).toMatchObject({
+      type: 'go',
+      request: 'launch',
+      mode: 'debug',
+      cwd: path.join(tempDir, 'module'),
+      program: path.join(tempDir, 'module', 'cmd', 'app', 'main.go'),
+    });
+
+    const attach = resolveLaunchConfigurationConfig({
+      type: 'go',
+      name: 'Attach Go app',
+      request: 'attach',
+      mode: 'local',
+      processId: 4242,
+    }, { workspaceFolder: tempDir });
+    expect(attach).toMatchObject({ type: 'go', request: 'attach', mode: 'local', processId: 4242 });
+  });
+
+  test('preserves already absolute Go launch program paths', () => {
+    const program = path.join(tempDir, 'absolute', 'main.go');
+    expect(resolveLaunchConfigurationConfig({
+      type: 'go',
+      name: 'Debug absolute Go app',
+      request: 'launch',
+      mode: 'debug',
+      cwd: '${workspaceFolder}/module',
+      program,
+    }, { workspaceFolder: tempDir })).toMatchObject({
+      cwd: path.join(tempDir, 'module'),
+      program,
     });
   });
 
