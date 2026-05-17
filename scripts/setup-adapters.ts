@@ -9,8 +9,15 @@ import { spawnSync } from 'node:child_process';
 
 const jsDebugVersion = '1.117.0';
 const debugpyVersion = '1.8.20';
+const delveVersion = 'v1.26.3';
 const appDirectoryName = '.dap-cli';
 const jsDebugPackageBoundary = '{"type":"commonjs"}\n';
+
+interface DelveAsset {
+  archiveName: string;
+  executableName: string;
+  archiveKind: 'tar.gz' | 'zip';
+}
 
 interface SetupOptions {
   dryRun: boolean;
@@ -33,6 +40,7 @@ async function main(args: readonly string[]): Promise<number> {
 
   await setupJsDebug({ adaptersDir, dryRun: options.dryRun });
   await setupDebugpy({ dapCliHome, venvPython, dryRun: options.dryRun });
+  await setupDelve({ adaptersDir, dryRun: options.dryRun });
 
   console.log('Adapter setup complete.');
   return 0;
@@ -72,7 +80,7 @@ async function setupJsDebug(options: { adaptersDir: string; dryRun: boolean }): 
 
   await fs.mkdir(options.adaptersDir, { recursive: true });
   const archivePath = path.join(tmpdir(), assetName);
-  await downloadFile(downloadUrl, archivePath);
+  await downloadFile('js-debug', downloadUrl, archivePath, `Run manually: curl -L ${downloadUrl} | tar xzf - -C ${getDapCliAdaptersDir()}`);
   await fs.rm(jsDebugDir, { recursive: true, force: true });
   await fs.mkdir(options.adaptersDir, { recursive: true });
 
@@ -128,8 +136,82 @@ async function setupDebugpy(options: { dapCliHome: string; venvPython: string; d
   console.log(`debugpy v${debugpyVersion} provisioned to ${venvDir}`);
 }
 
+async function setupDelve(options: { adaptersDir: string; dryRun: boolean }): Promise<void> {
+  if (commandSucceeds('dlv', ['version'])) {
+    console.log('Delve already available as usable PATH dlv.');
+    return;
+  }
+
+  const asset = resolveDelveAsset(process.platform, process.arch);
+  const delveDir = path.join(options.adaptersDir, 'delve');
+  const delveBinary = path.join(delveDir, asset.executableName);
+  if (await pathExists(delveBinary)) {
+    console.log(`Delve already available at ${delveBinary}`);
+    return;
+  }
+
+  const downloadUrl = `https://github.com/go-delve/delve/releases/download/${delveVersion}/${asset.archiveName}`;
+  console.log(`Delve missing from PATH; will provision ${delveVersion} from ${downloadUrl} to ${delveDir}`);
+  console.log('Delve release trust: official pinned GitHub release asset; checksum verification is not automated by setup-adapters.');
+  if (options.dryRun) {
+    return;
+  }
+
+  await fs.mkdir(delveDir, { recursive: true });
+  const archivePath = path.join(tmpdir(), asset.archiveName);
+  await downloadFile('Delve', downloadUrl, archivePath, `Download ${downloadUrl}, extract it into ${delveDir}, and retry.`);
+  await fs.rm(delveDir, { recursive: true, force: true });
+  await fs.mkdir(delveDir, { recursive: true });
+  extractDelveArchive(asset, archivePath, delveDir);
+
+  if (!await pathExists(delveBinary)) {
+    throw new Error(`Delve extraction completed but ${delveBinary} was not found.`);
+  }
+
+  if (process.platform !== 'win32') {
+    await fs.chmod(delveBinary, 0o755);
+  }
+
+  console.log(`Delve ${delveVersion} provisioned to ${delveDir}`);
+}
+
 function pythonHasDebugpy(pythonPath: string): boolean {
-  const result = spawnSync(pythonPath, ['-c', 'import debugpy; print(debugpy.__version__)'], { encoding: 'utf8' });
+  return commandSucceeds(pythonPath, ['-c', 'import debugpy; print(debugpy.__version__)']);
+}
+
+function resolveDelveAsset(platform: NodeJS.Platform, architecture: string): DelveAsset {
+  const platformAssets: Partial<Record<NodeJS.Platform, Partial<Record<string, DelveAsset>>>> = {
+    darwin: {
+      arm64: { archiveName: `dlv_darwin_arm64.tar.gz`, executableName: 'dlv', archiveKind: 'tar.gz' },
+      x64: { archiveName: `dlv_darwin_amd64.tar.gz`, executableName: 'dlv', archiveKind: 'tar.gz' },
+    },
+    linux: {
+      arm64: { archiveName: `dlv_linux_arm64.tar.gz`, executableName: 'dlv', archiveKind: 'tar.gz' },
+      x64: { archiveName: `dlv_linux_amd64.tar.gz`, executableName: 'dlv', archiveKind: 'tar.gz' },
+    },
+    win32: {
+      x64: { archiveName: `dlv_windows_amd64.zip`, executableName: 'dlv.exe', archiveKind: 'zip' },
+    },
+  };
+  const asset = platformAssets[platform]?.[architecture];
+  if (asset === undefined) {
+    throw new Error(`Delve setup does not support ${platform}/${architecture}. Install dlv on PATH or provision a compatible binary manually.`);
+  }
+
+  return asset;
+}
+
+function extractDelveArchive(asset: DelveAsset, archivePath: string, delveDir: string): void {
+  const extraction = asset.archiveKind === 'zip'
+    ? spawnSync('unzip', ['-q', archivePath, '-d', delveDir], { encoding: 'utf8' })
+    : spawnSync('tar', ['xzf', archivePath, '-C', delveDir], { encoding: 'utf8' });
+  if (extraction.status !== 0) {
+    throw new Error(`Could not extract Delve archive. ${extraction.stderr.trim()}`);
+  }
+}
+
+function commandSucceeds(command: string, args: readonly string[]): boolean {
+  const result = spawnSync(command, [...args], { encoding: 'utf8' });
   return result.status === 0;
 }
 
@@ -158,10 +240,10 @@ function getDapCliVenvPythonPath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(venvDirectory, 'bin', 'python3');
 }
 
-async function downloadFile(url: string, destination: string): Promise<void> {
+async function downloadFile(adapterLabel: string, url: string, destination: string, manualRecovery: string): Promise<void> {
   const response = await fetch(url);
   if (!response.ok || response.body === null) {
-    throw new Error(`Could not download js-debug. Run manually: curl -L ${url} | tar xzf - -C ${getDapCliAdaptersDir()}`);
+    throw new Error(`Could not download ${adapterLabel}. ${manualRecovery}`);
   }
 
   const output = createWriteStream(destination);
