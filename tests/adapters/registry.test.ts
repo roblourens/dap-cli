@@ -56,6 +56,12 @@ describe('AdapterRegistry', () => {
     expect(registry.listAll()).toContainEqual({ id: 'js-debug', label: 'JavaScript Debug Adapter (Node, Chrome, Electron)', source: 'built-in' });
   });
 
+  test('includes delve as a lazy built-in adapter', () => {
+    const registry = new AdapterRegistry();
+
+    expect(registry.listAll()).toContainEqual({ id: 'delve', label: 'Go Debug Adapter (Delve)', source: 'built-in' });
+  });
+
   test('includes debugpy as a built-in adapter', () => {
     const registry = new AdapterRegistry();
     const descriptor = registry.resolve('debugpy');
