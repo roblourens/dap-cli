@@ -147,7 +147,7 @@ async function setupDelve(options: { adaptersDir: string; dryRun: boolean }): Pr
   const asset = resolveDelveAsset(process.platform, process.arch);
   const delveDir = path.join(options.adaptersDir, 'delve');
   const delveBinary = path.join(delveDir, asset.executableName);
-  if (await pathExists(delveBinary)) {
+  if (await pathExists(delveBinary) && commandSucceeds(delveBinary, ['version'])) {
     console.log(`Delve already available at ${delveBinary}`);
     return;
   }

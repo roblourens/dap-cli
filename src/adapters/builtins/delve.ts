@@ -32,12 +32,12 @@ function resolveDefaultDelvePath(): string {
   const provisionedDelve = getProvisionedDelvePath();
   const candidates = [provisionedDelve, 'PATH dlv'];
 
-  if (existsSync(provisionedDelve)) {
-    return provisionedDelve;
+  if (delveIsUsable('dlv')) {
+    return 'dlv';
   }
 
-  if (pathDelveIsUsable()) {
-    return 'dlv';
+  if (existsSync(provisionedDelve) && delveIsUsable(provisionedDelve)) {
+    return provisionedDelve;
   }
 
   throw usageError('Delve adapter is not installed.', {
@@ -53,8 +53,8 @@ function getProvisionedDelvePath(): string {
   return path.join(getDapCliAdaptersDir(), 'delve', process.platform === 'win32' ? 'dlv.exe' : 'dlv');
 }
 
-function pathDelveIsUsable(): boolean {
-  const result = spawnSync('dlv', ['version'], { encoding: 'utf8' });
+function delveIsUsable(command: string): boolean {
+  const result = spawnSync(command, ['version'], { encoding: 'utf8' });
   return result.status === 0;
 }
 

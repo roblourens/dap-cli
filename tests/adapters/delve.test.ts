@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, test } from 'vitest';
@@ -48,6 +48,28 @@ describe('createDelveDescriptor', () => {
     } finally {
       restoreEnv('DAP_CLI_HOME', previousHome);
       restoreEnv('PATH', previousPath);
+    }
+  });
+
+  test.skipIf(process.platform === 'win32')('prefers a usable PATH Delve over an unusable cached adapter binary', () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'dap-cli-delve-path-first-'));
+    const fakeBin = path.join(tempDir, 'bin');
+    const cachedDelveDir = path.join(tempDir, 'adapters', 'delve');
+    const previousHome = process.env.DAP_CLI_HOME;
+    const previousPath = process.env.PATH;
+    mkdirSync(fakeBin, { recursive: true });
+    mkdirSync(cachedDelveDir, { recursive: true });
+    writeExecutable(path.join(cachedDelveDir, 'dlv'), 'process.exit(1);');
+    writeExecutable(path.join(fakeBin, 'dlv'), 'process.stdout.write("Delve Debugger\\nVersion: 1.25.0\\n");');
+    process.env.DAP_CLI_HOME = tempDir;
+    process.env.PATH = previousPath === undefined ? fakeBin : `${fakeBin}${path.delimiter}${previousPath}`;
+
+    try {
+      expect(createDelveDescriptor().transport).toMatchObject({ command: 'dlv' });
+    } finally {
+      restoreEnv('DAP_CLI_HOME', previousHome);
+      restoreEnv('PATH', previousPath);
+      rmSync(tempDir, { recursive: true, force: true });
     }
   });
 

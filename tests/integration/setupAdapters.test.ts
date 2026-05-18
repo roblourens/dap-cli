@@ -42,6 +42,31 @@ describe.skipIf(process.platform === 'win32')('setup-adapters', () => {
     expect(await readFile(path.join(venvBin, 'python3'), 'utf8')).toContain('debugpy-ready');
     expect(await readFile(path.join(venvBin, 'pip'), 'utf8')).toContain('pip-ready');
   });
+
+  test('dry-run reprovisions an unusable cached Delve when PATH has no working dlv', async () => {
+    const testRoot = await mkdtemp(path.join(tmpdir(), 'dap-cli-setup-adapters-delve-'));
+    tempDirs.push(testRoot);
+
+    const dapCliHome = path.join(testRoot, '.dap-cli');
+    const fakeBin = path.join(testRoot, 'bin');
+    const cachedDelveDir = path.join(dapCliHome, 'adapters', 'delve');
+    const cachedDelve = path.join(cachedDelveDir, 'dlv');
+    await mkdir(fakeBin, { recursive: true });
+    await mkdir(cachedDelveDir, { recursive: true });
+    await writeExecutable(cachedDelve, '#!/usr/bin/env node\nprocess.exit(1);\n');
+
+    const result = await execFileAsync(process.execPath, ['--experimental-strip-types', 'scripts/setup-adapters.ts', '--dry-run'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        DAP_CLI_HOME: dapCliHome,
+        PATH: fakeBin,
+      },
+    });
+
+    expect(result.stdout).toContain('Delve missing from PATH; will provision v1.26.3');
+    expect(result.stdout).not.toContain(`Delve already available at ${cachedDelve}`);
+  });
 });
 
 async function writeExecutable(filePath: string, content: string): Promise<void> {
