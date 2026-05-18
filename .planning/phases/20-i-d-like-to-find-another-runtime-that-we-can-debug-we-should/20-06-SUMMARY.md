@@ -104,6 +104,13 @@ completed: 2026-05-17
 - Fresh scratch setup replay passed twice after deleting `venv/bin/pip`, proving automatic partial-venv recovery.
 - Editor diagnostics were clean for `scripts/setup-adapters.ts` after both code fixes.
 
+## Post-UAT Go Feedback Closure
+
+- A final fresh-agent feedback pass found that Delve `v1.26.3` plus an active Go `1.23.5` shell could still fail late and generically. dap-cli now raises `delve_go_version_incompatible` before launch with the supported Go 1.24+ recovery path.
+- The documented `GOTOOLCHAIN=go1.24.0` recovery path now reaches the controller-spawned Delve adapter through descriptor environment propagation, so preflight approval and adapter launch agree.
+- Generic DAP request failures now retain response-body detail and surface it as `Adapter detail: ...`, keeping adapter-native launch/build failures useful in CLI JSON output.
+- The wrap-up verification rebuilt the CLI, passed focused Delve/protocol/fake-adapter/docs tests, reproduced the incompatible local shell diagnostic, and launched the checked-in Go package fixture successfully under the documented toolchain override.
+
 ## Next Phase Readiness
 
 - Phase 20 execution plans are complete at 6/6. The next workflow step is `/gsd-verify-work`, including the mandatory hand-driven CLI smoke capture.

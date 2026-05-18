@@ -25,7 +25,7 @@ export function createFakeAdapterScript(name: string): FakeAdapterScript {
     return {
       name,
       steps: script.steps.map(step => step.kind === 'expectRequest' && step.command === 'threads'
-        ? { kind: 'expectRequest', command: 'threads', respond: { seq: 6, type: 'response', request_seq: 0, success: false, command: 'threads', message: 'threads failed' } }
+        ? { kind: 'expectRequest', command: 'threads', respond: { seq: 6, type: 'response', request_seq: 0, success: false, command: 'threads', message: 'threads failed', body: { error: { format: 'adapter threads detail' } } } }
         : step),
     };
   }

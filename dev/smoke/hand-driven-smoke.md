@@ -102,7 +102,10 @@ node dist/index.js launch \
   --program "$PWD/tests/fixtures/dap-cli-target/index.js" \
   --stop-on-entry
 
-# 3. Status while paused at entry (post-H-1 closure: paused: true)
+# 3. Status while paused at entry (post-H-1 closure: paused: true).
+#    js-debug reports the entry stop asynchronously after launch returns;
+#    give the child stopped event a beat to mirror onto the parent record.
+sleep 1
 node dist/index.js status --name smoke-node
 
 # 4. Set a breakpoint on the console.log line (line 3 of the fixture)
@@ -139,7 +142,7 @@ Expected verbatim signals:
 | Step | Expected verbatim signal in output |
 |------|------------------------------------|
 | 2    | `"lifecycle":"running"` and a `sessionId` of the form `sess_…` returned from `launch` |
-| 3    | `"paused":true` with `"stoppedReason":"entry"` (post-H-1 closure to `status`) |
+| 3    | after the short settle delay, `"paused":true` with `"stoppedReason":"entry"` (post-H-1 closure to `status`) |
 | 4    | response shows `"verified":true` for line 3 |
 | 5    | `threads` returns a thread id; `stack` using that thread id shows top frame name `dapCliSelfHostDemo` at line 2 of the fixture. Optional `evaluate --frame-id <TOP_FRAME_ID>` may be used for frame-scoped inspection, but the stack frame is the required signal. |
 | 6    | a `stopped` event with `"reason":"breakpoint"` appears within ~1s (post-H-2 closure: critical events not evicted by `loadedSource` spam) |
@@ -205,10 +208,11 @@ node dist/index.js sessions --show-children
 # 5. Drive the breakpoint by evaluating `calculate(2,3)` in the page's JS
 #    context via dap-cli evaluate (no frameId — top-level evaluate routes
 #    to the first child with known threads, per plan 05-26). The evaluate
-#    itself will time out with `controller_request_timeout` because it
-#    blocks waiting for the bp to be released — that's the EXPECTED
-#    signal that the page paused. The events/threads/stack queries below
-#    are how you observe the stop. Run evaluate in the background:
+#    itself may time out with `controller_request_timeout` if it is still
+#    waiting when the controller IPC deadline elapses. If `continue` arrives
+#    first, it may instead complete with result `5`. Both outcomes are valid;
+#    the required pause evidence is the stopped event, status, and stack below.
+#    Run evaluate in the background:
 node dist/index.js evaluate --name smoke-chrome --expression 'calculate(2,3)' &
 EVAL_PID=$!
 sleep 3
@@ -247,7 +251,7 @@ Expected verbatim signals:
 | 2    | `"lifecycle":"running"` returned from `launch`; a child session id (32-hex CDP target id) appears in the event stream within ~3s |
 | 3    | breakpoint acknowledged with `"verified":true` on the parent (per repo memory: js-debug pwa-chrome routing). Page child returns the verified row with `column` populated and the parent's "Unbound breakpoint" provisional message dropped from the merged response |
 | 4    | after `cleanup --purge`, first `sessions` invocation shows the parent `smoke-chrome` with child sessions hidden by default; second invocation with `--show-children` adds at least one `smoke-chrome#<32-hex>` child row. If you intentionally skip purge, stale terminated records may appear, but `smoke-chrome` parent presence and child visibility remain the required signals. |
-| 5    | within ~3s of the `evaluate` trigger, `events --include stopped` shows a `stopped` event with `"reason":"breakpoint"` (post-H-2 closure: critical events not evicted by `loadedSource` spam; post-H-6 closure: page child's `setBreakpoints` response merged into the user-visible breakpoint, parent provisional bp registry propagates to existing children). `status` reports `"paused":true`, `"stoppedReason":"breakpoint"` (post-H-1 closure: child paused state mirrored to parent record). `stack --thread-id 0` returns frames with the top frame `Window.calculate` at `app.js` line 2. The backgrounded `evaluate` exits with `controller_request_timeout` (exit 7) — that is the EXPECTED signal that the page paused and the bp held the eval response open past the 5s controller IPC timeout |
+| 5    | within ~3s of the `evaluate` trigger, `events --include stopped` shows a `stopped` event with `"reason":"breakpoint"` (post-H-2 closure: critical events not evicted by `loadedSource` spam; post-H-6 closure: page child's `setBreakpoints` response merged into the user-visible breakpoint, parent provisional bp registry propagates to existing children). `status` reports `"paused":true`, `"stoppedReason":"breakpoint"` (post-H-1 closure: child paused state mirrored to parent record). `stack --thread-id 0` returns frames with the top frame `Window.calculate` at `app.js` line 2. The backgrounded `evaluate` may either exit with `controller_request_timeout` (exit 7) if the breakpoint holds it beyond the IPC deadline, or complete with result `"5"` after `continue` releases the paused page. |
 | 6    | `close` returns `ok:true` |
 | 7    | `pgrep -lf '/tmp/dap-cli-smoke-chrome'` exits non-zero / prints `no smoke profile orphans` (post-H-8 closure: `close` actually terminates the adapter's child Chromium processes that belong to this smoke run) |
 

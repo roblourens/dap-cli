@@ -12,6 +12,8 @@ npm run setup-adapters
 
 The built-in adapter prefers a usable `dlv` on `PATH`; otherwise setup provisions pinned Delve `v1.26.3` under `DAP_CLI_HOME/adapters/delve`. Delve `v1.26.3` expects Go 1.24 or newer debuggee builds. Do not paper over Delve's compatibility refusal with `--check-go-version=false`; use a supported Go toolchain.
 
+dap-cli checks this pairing before launch when it can read both tool versions. If active `go` is older than 1.24 while Delve `v1.26.3` is selected, the launch fails early with `delve_go_version_incompatible` and recommends `GOTOOLCHAIN=go1.24.0` or an updated Go installation.
+
 ## Launch a Go package
 
 Package directories do not have a `.go` extension, so be explicit about `--adapter delve --type go`:
@@ -50,6 +52,31 @@ dap-cli launch --adapter delve --type go --name go-exec \
 Without `-gcflags=all="-N -l"`, optimized binaries can make source lines, stack frames, locals, and expression evaluation disappointing or misleading.
 Use `--stop-on-entry` for short-lived binaries when follow-up breakpoint commands would otherwise race normal process exit.
 
+## Known-good repo fixture demo
+
+From the dap-cli repo root, this is a copy-pasteable Go exec flow with the checked-in fixture:
+
+```bash
+FIXTURE="$PWD/tests/fixtures/simple-go-app"
+BIN="$PWD/.tmp/simple-go-app"
+mkdir -p "$PWD/.tmp"
+cd "$FIXTURE"
+GOTOOLCHAIN=go1.24.0 go build -gcflags=all="-N -l" -o "$BIN" .
+cd -
+
+GOTOOLCHAIN=go1.24.0 dap-cli launch --adapter delve --type go --name go-exec-demo --stop-on-entry \
+  --json "{\"mode\":\"exec\",\"program\":\"$BIN\",\"cwd\":\"$FIXTURE\",\"dlvCwd\":\"$FIXTURE\"}"
+dap-cli breakpoints set --name go-exec-demo --source "$FIXTURE/main.go" --line 6
+dap-cli continue --name go-exec-demo
+dap-cli status --name go-exec-demo
+dap-cli stack --name go-exec-demo
+dap-cli scopes --name go-exec-demo --frame-id <frame-id-from-stack>
+dap-cli variables --name go-exec-demo --variables-reference <locals-reference-from-scopes>
+dap-cli evaluate --name go-exec-demo --expression 'left + right'
+```
+
+Build from the fixture module directory, and keep `cwd` plus `dlvCwd` pointed at that same module directory. That avoids the repo-root `go: cannot find main module` failure that appears when the build step and Delve's build context drift apart.
+
 ## Safe local PID attach
 
 Attach only to a same-machine process you own and intend to debug:
@@ -86,7 +113,7 @@ If Delve rejects a real-project `evaluate` request with `dap_request_failed`, ke
 ## Negative diagnostics
 
 - `delve_not_found`: run `npm run setup-adapters`, or put a compatible `dlv` on `PATH`.
-- Go-version launch failure: Delve `v1.26.3` expects Go 1.24+; select a supported Go toolchain rather than disabling the check.
+- `delve_go_version_incompatible`: Delve `v1.26.3` expects Go 1.24+; select a supported Go toolchain rather than disabling the check.
 - Package build fails from the wrong directory: pass `cwd` and `dlvCwd` pointing at the module that owns `go.mod`.
 - `mode: "exec"` has poor source/locals behavior: rebuild the binary with `go build -gcflags=all="-N -l"`.
 - Attach rejects or stops the wrong thing: re-check `processId`, confirm the PID belongs to your own local Go process, and avoid remote/headless Delve shapes with the built-in local adapter.

@@ -16,7 +16,12 @@ export interface DapClientOptions {
 }
 
 export class DapResponseError extends Error {
-  public constructor(public readonly command: string, public readonly requestSeq: number, message: string) {
+  public constructor(
+    public readonly command: string,
+    public readonly requestSeq: number,
+    message: string,
+    public readonly responseBody?: unknown,
+  ) {
     super(message);
     this.name = 'DapResponseError';
   }
@@ -193,7 +198,7 @@ export class DapClient {
     }
 
     if (!response.success) {
-      pending.reject(new DapResponseError(response.command, response.request_seq, response.message ?? `DAP request failed: ${response.command}`));
+      pending.reject(new DapResponseError(response.command, response.request_seq, response.message ?? `DAP request failed: ${response.command}`, response.body));
       return;
     }
 

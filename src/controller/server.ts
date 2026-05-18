@@ -1491,7 +1491,7 @@ function toDapCliError(error: unknown, context: { sessionId: string; adapter: Cl
 
     return dapError(error.message, {
       code: 'dap_request_failed',
-      diagnostics: [`DAP request failed: ${error.command}. Inspect adapter diagnostics and session state.`],
+      diagnostics: createDapResponseDiagnostics(error),
       sessionId: context.sessionId,
       request: { command: error.command, seq: error.requestSeq },
       adapter: context.adapter,
@@ -1525,6 +1525,37 @@ function toDapCliError(error: unknown, context: { sessionId: string; adapter: Cl
     code: 'adapter_request_failed',
     diagnostics: ['The adapter failed while processing the DAP request. Check adapter stderr and log path.'],
   }, context));
+}
+
+function createDapResponseDiagnostics(error: DapResponseError): string[] {
+  const diagnostics = [`DAP request failed: ${error.command}. Inspect adapter diagnostics and session state.`];
+  const responseDetail = extractDapResponseDetail(error.responseBody);
+  if (responseDetail !== undefined && responseDetail !== error.message) {
+    diagnostics.push(`Adapter detail: ${responseDetail}`);
+  }
+  return diagnostics;
+}
+
+function extractDapResponseDetail(body: unknown): string | undefined {
+  if (!isRecord(body)) {
+    return undefined;
+  }
+
+  if (typeof body.message === 'string' && body.message.trim().length > 0) {
+    return body.message.trim();
+  }
+
+  const error = body.error;
+  if (!isRecord(error)) {
+    return undefined;
+  }
+  if (typeof error.format === 'string' && error.format.trim().length > 0) {
+    return error.format.trim();
+  }
+  if (typeof error.message === 'string' && error.message.trim().length > 0) {
+    return error.message.trim();
+  }
+  return undefined;
 }
 
 function toControllerErrorPayload(error: CliError): ControllerFailureResponse['error'] {
