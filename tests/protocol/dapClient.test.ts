@@ -70,12 +70,13 @@ describe('DapClient', () => {
     const client = new DapClient(transport);
 
     const pending = client.request('stackTrace');
-    transport.emitMessage({ seq: 8, type: 'response', request_seq: 1, success: false, command: 'stackTrace', message: 'no stack' });
+    transport.emitMessage({ seq: 8, type: 'response', request_seq: 1, success: false, command: 'stackTrace', message: 'no stack', body: { error: { format: 'stack detail' } } });
 
     await expect(pending).rejects.toMatchObject({
       command: 'stackTrace',
       requestSeq: 1,
       message: 'no stack',
+      responseBody: { error: { format: 'stack detail' } },
     });
     await expect(pending).rejects.toBeInstanceOf(DapResponseError);
   });

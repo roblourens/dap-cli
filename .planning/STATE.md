@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
-status: executing
-stopped_at: Completed 06-02-PLAN.md
-last_updated: "2026-05-12T05:46:54.151Z"
-last_activity: 2026-05-12 -- Phase 19 execution started
+milestone_name: (next)
+status: "Phase 20 shipped - PR #1"
+stopped_at: Completed 20-06-PLAN.md
+last_updated: "2026-05-18T04:21:12.000Z"
+last_activity: 2026-05-17
 progress:
-  total_phases: 21
-  completed_phases: 19
-  total_plans: 88
-  completed_plans: 89
+  total_phases: 1
+  completed_phases: 1
+  total_plans: 6
+  completed_plans: 6
   percent: 100
 ---
 
@@ -21,22 +21,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** Agents can reliably control a DAP debug session from repeatable CLI commands and inspect paused application state without needing language-specific debugger knowledge.
-**Current focus:** Phase 19 — cleanup-help-command-output-drill-down-for-subcommands-categ
+**Current focus:** Phase 20 — i-d-like-to-find-another-runtime-that-we-can-debug-we-should
 
 ## Current Position
 
-Phase: 19 (cleanup-help-command-output-drill-down-for-subcommands-categ) — EXECUTING
-Plan: 1 of 2
-Status: Executing Phase 19
-Last activity: 2026-05-12 -- Phase 19 execution started
+Phase: 20
+Plan: Not started
+Status: Phase 20 shipped - PR #1
+Last activity: 2026-05-17
 
-Progress: [█████████░] 89%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 69
+- Total plans completed: 77
 - Average duration: n/a
 - Total execution time: 0.0 hours
 
@@ -55,6 +55,7 @@ Progress: [█████████░] 89%
 | Phase 07 | 4/4 complete | n/a | n/a |
 | Phase 08 | 2/2 complete | n/a | n/a |
 | 16 | 2 | - | - |
+| 20 | 6 | - | - |
 
 **Recent Trend:**
 
@@ -78,6 +79,12 @@ Progress: [█████████░] 89%
 | Phase 06 P01 | 10min | 2 tasks | 3 files |
 | Phase 06 P02 | 18min | 2 tasks | 2 files |
 | Phase 06 P03 | 12min | 2 tasks | 3 files |
+| Phase 20 P01 | not-recorded-inline | 3 tasks | 4 files |
+| Phase 20 P02 | not-recorded-inline | 3 tasks | 7 files |
+| Phase 20 P03 | not-recorded-inline | 3 tasks | 11 files |
+| Phase 20 P04 | not-recorded-inline | 3 tasks | 5 files |
+| Phase 20 P05 | not-recorded-inline | 2 tasks | 2 files |
+| Phase 20 P06 | not-recorded-inline | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -91,6 +98,7 @@ Progress: [█████████░] 89%
 - Phases 15–16 added (source: analysis2.md from second external Code OSS debugging session + Python agent feedback): 15 — verify and document existing child-session event mirroring for js-debug pwa-chrome (analysis2.md §2; rescoped down after audit confirmed enumeration via `--show-children` and `mirrorChildEvent` already ship and the 05-19 / H-3 decision intentionally keeps child sessions non-targetable — work is now repro+fix-if-broken for renderer logpoint output, fix `events --name <child>` to return the structured "not targetable" error instead of `total: 0`, and doc the `--show-children` + `child_session_id` filter workflow); 16 — Python evaluate auto-wrap of statement-shaped input + docs/skill mirror, plus a "use the right verb" doc note (analysis2.md §1 — originally proposed as a separate `--request` flag phase but determined to be agent confusion since `launch`/`attach` are separate verbs) and a docs note on the playwright-cli daemon-died failure mode (analysis2.md §3).
 - Phase 17 added: Code OSS smoke scenario hardening — 20 attach scenarios driven by subagents (similar to phases 7/8 hardening, scoped to the sibling Code OSS repo only; subagents read the dap-cli skill + VS Code launch skill, run one scenario each, orchestrator records pass/fail/agent-confusion notes).
 - Phase 19 added: Cleanup help command output — fix the JSON error printed at the bottom of `dap-cli help`, decide and implement drill-down behavior for compound commands (e.g. `dap-cli help breakpoints set`) vs `-h`, and group the long flat command list into readable categories (lifecycle, launch/attach, special commands, etc.).
+- Phase 20 added: I'd like to find another runtime that we can debug. We should do this by picking another debug adapter that already exists in the world and is popular, ideally one that is run by Microsoft. Then we should make a pretty substantial plan to implement it in this repo and figure out how to verify it. Going through a similar process to what we've done in the past, the most important thing is to just run through it right: 1. We need to identify the language of the debug adapter. 2. We need to make a plan for how it is installed or vendored into this repo or whatever we're doing for jsdebug and debugpy. I don't really even know. 3. We need to write the code. 4. We need to have substantial automated end-to-end testing. 5. We need to go through a process of trying it in different real-world debugging scenarios for different projects in that language that exist on GitHub that we can safely download and run and verify with debugging. Then we just set up the loop of having subagents run some different tasks, try to use dap-cli with the new language, and if they fail then we try to fix the issue or fix the confusion and repeat. I would like basically that entire end-to-end flow planned out.
 
 ### Decisions
 
@@ -125,6 +133,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-06T05:07:38.629Z
-Stopped at: Completed 06-02-PLAN.md
+Last session: 2026-05-17T17:56:36.000Z
+Stopped at: Completed 20-06-PLAN.md
 Resume file: None

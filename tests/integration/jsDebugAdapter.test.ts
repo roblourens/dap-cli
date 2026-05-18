@@ -335,13 +335,13 @@ describe('js-debug adapter integration', () => {
     // mirror added in plan 05-25, or breaks the high-priority event-cache
     // ring added in plan 05-18), this test is the canary.
     //
-    // Triggering pattern matches docs/HAND-DRIVEN-SMOKE.md Sequence B
+    // Triggering pattern matches dev/smoke/hand-driven-smoke.md Sequence B
     // (post-05-22 docs fix): launch with ?manual so app.js does NOT auto-
     // run, set bp, evaluate calculate(2,3) in the background to trigger
-    // the bp, poll events --include stopped. The evaluate intentionally
-    // exits non-zero with controller_request_timeout (exit 7) — that IS
-    // the expected signal that the eval response is held open by the
-    // breakpoint. We do NOT assert on the evaluate exit code.
+    // the bp, poll events --include stopped. If the breakpoint holds the
+    // evaluate past the controller IPC deadline it exits non-zero with
+    // controller_request_timeout (exit 7); if `continue` arrives first it
+    // can complete successfully. We intentionally do NOT assert that race.
     try {
       await provisionAdapterIntoTempEnv(testEnv, 'js-debug');
     } catch (error) {
@@ -402,10 +402,10 @@ describe('js-debug adapter integration', () => {
       }
 
       // Trigger the breakpoint by evaluating `calculate(2,3)` in the
-      // page's JS context. The evaluate request will block waiting for the
-      // bp to release; runCli will eventually time out — that's expected
-      // and we don't await its result here. Use a fire-and-forget promise
-      // so the test can keep polling events.
+      // page's JS context. The evaluate request blocks while the breakpoint
+      // is paused. It may time out or complete after the later `continue`;
+      // neither outcome is the invariant here, so do not await it yet. Use
+      // a fire-and-forget promise so the test can keep polling events.
       const triggered = runCli(['evaluate', '--name', 'chrome-h6-regression', '--expression', 'calculate(2,3)'], { env: testEnv.env })
         .catch(() => undefined);
 

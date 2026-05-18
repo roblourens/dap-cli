@@ -223,6 +223,12 @@ A common agent pattern is:
 3. If the result is unexpected, inspect more variables or step once.
 4. Reacquire stack and scopes after the next stop.
 
+### Go (Delve) recipes
+
+Read [go-delve.md](./go-delve.md) before driving Go targets. It captures the supported `delve` built-in path, Go 1.24+ compatibility expectation for Delve `v1.26.3`, `mode: "debug"` / `mode: "test"` / `mode: "exec"` launch shapes, and the safe local PID attach contract with `mode: "local"` plus `processId`.
+
+For paused Go sessions, use the same poll-then-inspect loop as every other adapter: `status`, then `threads`, `stack`, `scopes`, `variables`, and `evaluate`. If Delve cannot launch a package, inspect `error.diagnostics`, adapter output, and whether `cwd` / `dlvCwd` point at the Go module directory before retrying.
+
 ## Session Lifecycle
 
 Named sessions make multi-command workflows stable across shells and agents.

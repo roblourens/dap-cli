@@ -598,7 +598,7 @@ function matchesExpectedArguments(actual: unknown, expected: Record<string, unkn
 
 function createFailedThreadsScript(): FakeStep[] {
 	return createLifecycleScript('launch').map(step => step.command === 'threads'
-		? { command: 'threads', success: false, message: 'threads failed' }
+		? { command: 'threads', success: false, message: 'threads failed', body: { error: { format: 'adapter threads detail' } } }
 		: step);
 }
 

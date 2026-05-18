@@ -36,7 +36,7 @@ export async function connectSocketAdapter(adapterId: string, descriptor: Extrac
 
 export async function startServerSocketAdapter(adapterId: string, descriptor: Extract<AdapterDescriptor['transport'], { kind: 'server' }>, logDir: string): Promise<StartedServerSocketAdapter> {
   const port = await getFreePort(descriptor.host);
-  const args = descriptor.args.map(arg => arg === '${port}' ? String(port) : arg);
+  const args = descriptor.args.map(arg => arg.replaceAll('${port}', String(port)));
   const child = spawn(descriptor.command, args, {
     cwd: descriptor.cwd,
     env: descriptor.env === undefined ? process.env : { ...process.env, ...descriptor.env },

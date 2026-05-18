@@ -585,6 +585,7 @@ describe('fake adapter controller integration', () => {
     expect(failure.error.sessionId).toBe(sessionId);
     expect(failure.error.request?.command).toBe('threads');
     expect(failure.error.diagnostics.length).toBeGreaterThan(0);
+    expect(failure.error.diagnostics).toContain('Adapter detail: adapter threads detail');
   });
 
   test('preflights unsupported adapter capabilities as handled JSON failures', async () => {

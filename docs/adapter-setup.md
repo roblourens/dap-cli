@@ -12,6 +12,7 @@ Built-in adapter IDs:
 
 - `js-debug` for Node.js, Chrome, Electron, and JavaScript/TypeScript debugging.
 - `debugpy` for Python debugging.
+- `delve` for Go debugging through Delve's local `dlv dap` server.
 
 The built-in path should be validated by the package setup/readiness flow. When adapter readiness is implemented, run the repository setup command before real adapter smokes:
 
@@ -30,6 +31,12 @@ dap-cli cleanup
 ```bash
 dap-cli launch --adapter debugpy --type python --program tests/fixtures/simple-python-app/main.py --name verify-py
 dap-cli status --name verify-py
+dap-cli cleanup
+```
+
+```bash
+dap-cli launch --adapter delve --type go --json '{"mode":"debug","program":"tests/fixtures/simple-go-app","cwd":"tests/fixtures/simple-go-app","dlvCwd":"tests/fixtures/simple-go-app"}' --name verify-go
+dap-cli status --name verify-go
 dap-cli cleanup
 ```
 
@@ -119,6 +126,7 @@ Extension table (matched against `path.extname(program).toLowerCase()`):
 | Extension | Inferred adapter | Inferred DAP type |
 | --- | --- | --- |
 | `.py` | `debugpy` | `python` |
+| `.go` | `delve` | `go` |
 | `.js`, `.mjs`, `.cjs` | `js-debug` | `pwa-node` |
 | `.ts`, `.mts`, `.cts` | `js-debug` | `pwa-node` |
 | `.html`, `.htm` | `js-debug` | `pwa-chrome` |
@@ -129,6 +137,7 @@ Adapter-only defaults (used when only `--adapter` is given):
 | --- | --- |
 | `js-debug` | `pwa-node` (`pwa-chrome` if `--program` ends in `.html`/`.htm`) |
 | `debugpy` | `python` |
+| `delve` | `go` |
 | any custom adapter | no default — pass `--type` explicitly |
 
 - An unsupported program extension (or a program with no extension) produces a `usage_error` with code `adapter_inference_failed`. The error names the extension and asks you to pass `--adapter` or `--type` explicitly.
@@ -253,10 +262,61 @@ python3 -m pip install debugpy==1.8.20
 python3 -c "import debugpy; print(debugpy.__version__)"
 ```
 
+## Go / Delve
+
+`npm run setup-adapters` prefers an already-usable `dlv` on `PATH`. If none is available, it provisions the pinned official Delve `v1.26.3` release into `DAP_CLI_HOME/adapters/delve` and uses that binary for the built-in `delve` adapter. The setup command reports the exact official release asset URL and its trust boundary; checksum verification is not automated by this repo.
+
+Delve `v1.26.3` expects debuggee builds from Go 1.24 or newer. Delve rejects older Go toolchains by default, and dap-cli intentionally preserves that check. Upgrade Go or use Go's toolchain manager when a project can be built with a supported toolchain.
+
+The built-in adapter starts a localhost-only DAP server equivalent to:
+
+```bash
+dlv dap --listen=127.0.0.1:<port>
+```
+
+It covers local `launch` and same-machine PID `attach`. Advanced remote/headless Delve workflows are different adapter shapes; use a custom socket descriptor for those instead of assuming the built-in `delve` adapter models them.
+
+For single-file `.go` launches, `--program main.go` can infer adapter `delve` and DAP type `go`. For package-directory debugging, pass `--adapter delve --type go` explicitly because a directory has no `.go` extension to infer from.
+
+Launch a Go package in Delve debug mode:
+
+```bash
+dap-cli launch --adapter delve --type go --name go-debug \
+	--json '{"mode":"debug","program":"/workspace/my-go-module","cwd":"/workspace/my-go-module","dlvCwd":"/workspace/my-go-module"}'
+```
+
+Debug package tests with Delve test mode:
+
+```bash
+dap-cli launch --adapter delve --type go --name go-test \
+	--json '{"mode":"test","program":"/workspace/my-go-module","cwd":"/workspace/my-go-module","dlvCwd":"/workspace/my-go-module"}'
+```
+
+For `mode: "exec"`, build a symbol-friendly binary first so stack frames, locals, and breakpoints remain useful:
+
+```bash
+go build -gcflags=all="-N -l" -o /tmp/my-go-app /workspace/my-go-module
+dap-cli launch --adapter delve --type go --name go-exec \
+	--json '{"mode":"exec","program":"/tmp/my-go-app","cwd":"/workspace/my-go-module","dlvCwd":"/workspace/my-go-module"}'
+```
+
+Attach only to a same-machine process you own and intend to debug:
+
+```bash
+dap-cli attach --adapter delve --type go --name go-attach \
+	--json '{"mode":"local","processId":12345}'
+```
+
+Delve honors DAP disconnect lifecycle flags for attach. The Phase 20 attach smoke uses `terminateDebuggee: false`, verifies the target survives disconnect, then separately kills only the test-owned fixture process.
+
 ## Troubleshooting
 
 - `js_debug_not_found`: run the first-party setup/readiness flow first. If you need a pinned or offline fallback, manually provision the js-debug DAP tarball under `DAP_CLI_HOME/adapters/js-debug`.
 - `No module named debugpy`: run the first-party setup/readiness flow first. If using a system Python fallback, install debugpy in the Python environment used by dap-cli.
+- `delve_not_found`: run `npm run setup-adapters`, or make a compatible `dlv` executable available on `PATH`. The error names both recovery paths.
+- Delve launch fails with a Go-version message: Delve `v1.26.3` supports Go 1.24+ debuggee builds; use a supported Go toolchain rather than disabling Delve's version check.
+- Delve package launch/test fails outside the intended module: pass adapter-native `cwd` and `dlvCwd` fields so Delve's Go build runs from the module directory.
+- Delve `mode: "exec"` hits poor stack/local/breakpoint behavior: rebuild the binary with `go build -gcflags=all="-N -l"` before debugging it.
 - `python3: command not found`: install Python 3 or configure a custom adapter descriptor with the desired Python executable.
 - Chrome headless failures: verify `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` exists on macOS or configure Chrome through adapter-native js-debug options.
 - Electron failures: install Electron in the project that owns the target app, then set `--runtime-executable electron` or the full Electron binary path.
