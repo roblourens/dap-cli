@@ -130,6 +130,14 @@ describe('inferAdapterAndType', () => {
     expect(captured.data?.program).toBe('/tmp/app.foo');
   });
 
+  test('program-only .csproj gives build-first DLL recovery guidance', () => {
+    const captured = catchErrorDetail(() => inferAdapterAndType({ program: '/tmp/SampleApp.csproj' }));
+    expect(captured.code).toBe('adapter_inference_failed');
+    expect(captured.data?.extension).toBe('.csproj');
+    expect(captured.diagnostics.join('\n')).toContain('does not build or launch .csproj files automatically');
+    expect(captured.diagnostics.join('\n')).toContain('Build the project first, then launch the output DLL');
+  });
+
   test('program-only with no extension throws adapter_inference_failed with empty extension', () => {
     const captured = catchErrorDetail(() => inferAdapterAndType({ program: '/tmp/run' }));
     expect(captured.code).toBe('adapter_inference_failed');
@@ -159,15 +167,18 @@ function catchErrorCode(callback: () => unknown): string | undefined {
   return undefined;
 }
 
-function catchErrorDetail(callback: () => unknown): { code: string | undefined; data: Record<string, unknown> | undefined } {
+function catchErrorDetail(callback: () => unknown): { code: string | undefined; data: Record<string, unknown> | undefined; diagnostics: readonly string[] } {
   try {
     callback();
   } catch (error: unknown) {
     if (error instanceof Error) {
       const code = 'code' in error && typeof (error as { code: unknown }).code === 'string' ? (error as { code: string }).code : undefined;
       const data = 'data' in error ? (error as { data?: Record<string, unknown> }).data : undefined;
-      return { code, data };
+      const diagnostics = 'diagnostics' in error && Array.isArray((error as { diagnostics?: unknown }).diagnostics)
+        ? (error as { diagnostics: readonly string[] }).diagnostics
+        : [];
+      return { code, data, diagnostics };
     }
   }
-  return { code: undefined, data: undefined };
+  return { code: undefined, data: undefined, diagnostics: [] };
 }

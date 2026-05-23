@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs';
 import net from 'node:net';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { z } from 'zod';
 import { getDapCliLogDir, getDapCliStateDir } from '../config/paths.js';
@@ -44,6 +45,7 @@ const controllerDiscoverySchema = z.object({
   startedAt: z.string().min(1),
   lastHeartbeatAt: z.string().min(1),
 });
+const maxUnixSocketPathLength = 100;
 
 export function resolveControllerDiscoveryPath(options: ControllerPathOptions = {}): string {
   return path.join(resolveStateDir(options), 'controller.json');
@@ -121,7 +123,8 @@ export async function createControllerServerSocket(
     server.listen(endpoint.port, endpoint.host, onListening);
   });
 
-  return { server, endpoint, stateDir, logDir };
+  const resolvedEndpoint = resolveBoundEndpoint(server, endpoint);
+  return { server, endpoint: resolvedEndpoint, stateDir, logDir };
 }
 
 export async function connectControllerEndpoint(endpoint: ControllerEndpoint, timeoutMs = 5_000): Promise<net.Socket> {
@@ -150,7 +153,25 @@ function createControllerEndpoint(stateDir: string, platform: NodeJS.Platform): 
     return { kind: 'ipc', path: `\\\\.\\pipe\\dap-cli-${Buffer.from(stateDir).toString('hex').slice(0, 24)}` };
   }
 
-  return { kind: 'ipc', path: path.join(stateDir, 'controller.sock') };
+  const socketPath = path.join(stateDir, 'controller.sock');
+  if (socketPath.length > maxUnixSocketPathLength) {
+    return { kind: 'tcp', host: '127.0.0.1', port: 0 };
+  }
+
+  return { kind: 'ipc', path: socketPath };
+}
+
+function resolveBoundEndpoint(server: net.Server, endpoint: ControllerEndpoint): ControllerEndpoint {
+  if (endpoint.kind !== 'tcp' || endpoint.port !== 0) {
+    return endpoint;
+  }
+
+  const address = server.address() as AddressInfo | null;
+  if (address === null || typeof address === 'string') {
+    throw new Error('Controller TCP server did not report a bound port.');
+  }
+
+  return { kind: 'tcp', host: endpoint.host, port: address.port };
 }
 
 function resolveStateDir(options: ControllerPathOptions): string {

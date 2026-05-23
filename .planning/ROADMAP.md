@@ -61,3 +61,18 @@ Plans:
 - [x] 20-04-PLAN.md — Document Go/Delve setup and agent workflows, then pin them with docs validation.
 - [x] 20-05-PLAN.md — Screen and debug safe public Go repositories with reproducible external-validation ledgers.
 - [x] 20-06-PLAN.md — Run the fresh-agent hardening/fix-retry loop and preserve the mandatory later verify-work hand smoke gate.
+
+### Phase 21: Integrate C#/.NET debugging through NetCoreDbg as a built-in runtime
+
+**Goal:** Integrate C#/.NET debugging through NetCoreDbg as dap-cli's next built-in runtime, provision it deterministically, support VS Code `coreclr` launch-config flows, prove real launch/attach/state inspection on repo-owned and screened public C# projects, and harden the workflow through fresh-agent retries plus final hand-driven CLI smoke.
+**Requirements**: TBD
+**Depends on:** Phase 20
+**Plans:** 6/6 plans complete
+
+Plans:
+- [x] 21-01-PLAN.md — Add the NetCoreDbg descriptor and deterministic pinned provisioning.
+- [x] 21-02-PLAN.md — Wire `netcoredbg`, `type: "coreclr"`, and unsafe launch-config guards.
+- [x] 21-03-PLAN.md — Build C# fixtures, prove real NetCoreDbg launch/attach, then add `.dll` inference.
+- [x] 21-04-PLAN.md — Document C#/.NET NetCoreDbg setup and agent workflows.
+- [x] 21-05-PLAN.md — Screen and debug safe public C# repositories with reproducible external-validation ledgers.
+- [x] 21-06-PLAN.md — Run fresh-agent hardening, transcript audit, gap closure, and final UAT scaffold.

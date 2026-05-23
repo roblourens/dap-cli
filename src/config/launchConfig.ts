@@ -56,6 +56,7 @@ export const launchConfigTypeMap: Record<string, string> = {
   python: 'debugpy',
   debugpy: 'debugpy',
   go: 'delve',
+  coreclr: 'netcoredbg',
 };
 
 const maxLaunchJsonBytes = 256 * 1024;

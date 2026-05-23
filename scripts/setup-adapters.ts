@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 import { createWriteStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const jsDebugVersion = '1.117.0';
 const debugpyVersion = '1.8.20';
 const delveVersion = 'v1.26.3';
+const netCoreDbgVersion = '3.1.3-1062';
 const appDirectoryName = '.dap-cli';
 const jsDebugPackageBoundary = '{"type":"commonjs"}\n';
 
@@ -17,6 +20,10 @@ interface DelveAsset {
   archiveName: string;
   executableName: string;
   archiveKind: 'tar.gz' | 'zip';
+}
+
+interface NetCoreDbgAsset extends DelveAsset {
+  sha256: string;
 }
 
 interface SetupOptions {
@@ -41,6 +48,7 @@ async function main(args: readonly string[]): Promise<number> {
   await setupJsDebug({ adaptersDir, dryRun: options.dryRun });
   await setupDebugpy({ dapCliHome, venvPython, dryRun: options.dryRun });
   await setupDelve({ adaptersDir, dryRun: options.dryRun });
+  await setupNetCoreDbg({ adaptersDir, dryRun: options.dryRun });
 
   console.log('Adapter setup complete.');
   return 0;
@@ -177,6 +185,46 @@ async function setupDelve(options: { adaptersDir: string; dryRun: boolean }): Pr
   console.log(`Delve ${delveVersion} provisioned to ${delveDir}`);
 }
 
+async function setupNetCoreDbg(options: { adaptersDir: string; dryRun: boolean }): Promise<void> {
+  if (netCoreDbgIsUsable('netcoredbg')) {
+    console.log('NetCoreDbg already available as usable PATH netcoredbg.');
+    return;
+  }
+
+  const asset = resolveNetCoreDbgAsset(getCurrentPlatform(), getCurrentArchitecture());
+  const netCoreDbgDir = path.join(options.adaptersDir, 'netcoredbg');
+  const netCoreDbgBinary = path.join(netCoreDbgDir, asset.executableName);
+  if (await pathExists(netCoreDbgBinary) && netCoreDbgIsUsable(netCoreDbgBinary)) {
+    console.log(`NetCoreDbg already available at ${netCoreDbgBinary}`);
+    return;
+  }
+
+  const downloadUrl = `https://github.com/Samsung/netcoredbg/releases/download/${netCoreDbgVersion}/${asset.archiveName}`;
+  console.log(`NetCoreDbg missing from PATH; will provision ${netCoreDbgVersion} from ${downloadUrl} to ${netCoreDbgDir}`);
+  console.log(`NetCoreDbg release trust: pinned sha256 ${asset.sha256}`);
+  if (options.dryRun) {
+    return;
+  }
+
+  await fs.mkdir(netCoreDbgDir, { recursive: true });
+  const archivePath = path.join(tmpdir(), asset.archiveName);
+  const archiveBytes = await downloadBytes('NetCoreDbg', downloadUrl, `Download ${downloadUrl}, verify sha256 ${asset.sha256}, extract it into ${netCoreDbgDir}, and retry.`);
+  assertArchiveSha256('NetCoreDbg', archiveBytes, asset.sha256);
+  await fs.writeFile(archivePath, archiveBytes);
+  await fs.rm(netCoreDbgDir, { recursive: true, force: true });
+  await fs.mkdir(netCoreDbgDir, { recursive: true });
+  extractNetCoreDbgArchive(asset, archivePath, netCoreDbgDir);
+  await flattenNetCoreDbgArchiveRoot(netCoreDbgDir, asset);
+
+  const executable = await assertNetCoreDbgExecutablePresent(netCoreDbgDir, asset);
+  if (process.platform !== 'win32') {
+    await fs.chmod(executable, 0o755);
+  }
+  assertNetCoreDbgReady(executable);
+
+  console.log(`NetCoreDbg ${netCoreDbgVersion} provisioned to ${netCoreDbgDir}`);
+}
+
 function pythonHasDebugpy(pythonPath: string): boolean {
   return commandSucceeds(pythonPath, ['-c', 'import debugpy; print(debugpy.__version__)']);
 }
@@ -203,12 +251,125 @@ function resolveDelveAsset(platform: NodeJS.Platform, architecture: string): Del
   return asset;
 }
 
+export function resolveNetCoreDbgAsset(platform: string, architecture: string): NetCoreDbgAsset {
+  const platformAssets: Partial<Record<NodeJS.Platform, Partial<Record<string, NetCoreDbgAsset>>>> = {
+    darwin: {
+      x64: {
+        archiveName: 'netcoredbg-osx-amd64.tar.gz',
+        executableName: 'netcoredbg',
+        archiveKind: 'tar.gz',
+        sha256: '49459b066836b6a452f418501d7ecab57bcd7e60d8464faac21ff70b496b8634',
+      },
+    },
+    linux: {
+      arm64: {
+        archiveName: 'netcoredbg-linux-arm64.tar.gz',
+        executableName: 'netcoredbg',
+        archiveKind: 'tar.gz',
+        sha256: 'fc9efb691a53932a7fac4b9f67af68ad0c2a4cbe59cb2c1a3c44c64959df2ba4',
+      },
+      x64: {
+        archiveName: 'netcoredbg-linux-amd64.tar.gz',
+        executableName: 'netcoredbg',
+        archiveKind: 'tar.gz',
+        sha256: '3814341c028c81ff7eea03ac316ad92e9ad7d705d2a00e3e3df269cdc241c763',
+      },
+    },
+    win32: {
+      x64: {
+        archiveName: 'netcoredbg-win64.zip',
+        executableName: 'netcoredbg.exe',
+        archiveKind: 'zip',
+        sha256: 'c67ae052e0bcb9ce37000f261e2d397a0d5b6615cafe30c868239a78598dfb37',
+      },
+    },
+  };
+  const asset = platformAssets[platform as NodeJS.Platform]?.[architecture];
+  if (asset === undefined) {
+    throw new Error(`netcoredbg_unsupported_platform: NetCoreDbg setup does not support ${platform}/${architecture}. Install netcoredbg on PATH or provision a compatible binary manually.`);
+  }
+
+  return asset;
+}
+
 function extractDelveArchive(asset: DelveAsset, archivePath: string, delveDir: string): void {
   const extraction = asset.archiveKind === 'zip'
     ? spawnSync('unzip', ['-q', archivePath, '-d', delveDir], { encoding: 'utf8' })
     : spawnSync('tar', ['xzf', archivePath, '-C', delveDir], { encoding: 'utf8' });
   if (extraction.status !== 0) {
     throw new Error(`Could not extract Delve archive. ${spawnFailureDetail(extraction)}`);
+  }
+}
+
+function extractNetCoreDbgArchive(asset: NetCoreDbgAsset, archivePath: string, netCoreDbgDir: string): void {
+  validateArchiveEntriesStayWithinTarget(asset, archivePath, netCoreDbgDir);
+  const extraction = asset.archiveKind === 'zip'
+    ? spawnSync('unzip', ['-q', archivePath, '-d', netCoreDbgDir], { encoding: 'utf8' })
+    : spawnSync('tar', ['xzf', archivePath, '-C', netCoreDbgDir], { encoding: 'utf8' });
+  if (extraction.status !== 0) {
+    throw new Error(`netcoredbg_extraction_failed: Could not extract NetCoreDbg archive. ${spawnFailureDetail(extraction)}`);
+  }
+}
+
+function validateArchiveEntriesStayWithinTarget(asset: NetCoreDbgAsset, archivePath: string, targetDir: string): void {
+  const listing = asset.archiveKind === 'zip'
+    ? spawnSync('unzip', ['-Z1', archivePath], { encoding: 'utf8' })
+    : spawnSync('tar', ['tzf', archivePath], { encoding: 'utf8' });
+  if (listing.status !== 0) {
+    throw new Error(`netcoredbg_extraction_failed: Could not inspect NetCoreDbg archive. ${spawnFailureDetail(listing)}`);
+  }
+
+  for (const entry of listing.stdout.split(/\r?\n/).filter(Boolean)) {
+    const normalizedEntry = entry.replace(/\\/g, '/');
+    const resolved = path.resolve(targetDir, normalizedEntry);
+    if (!isPathWithin(resolved, targetDir)) {
+      throw new Error(`netcoredbg_extraction_failed: NetCoreDbg archive entry escapes target directory: ${entry}`);
+    }
+  }
+}
+
+function isPathWithin(candidate: string, parent: string): boolean {
+  const resolvedParent = path.resolve(parent);
+  return candidate === resolvedParent || candidate.startsWith(`${resolvedParent}${path.sep}`);
+}
+
+export function assertArchiveSha256(adapterLabel: string, archiveBytes: Buffer, expectedSha256: string): void {
+  const actualSha256 = createHash('sha256').update(archiveBytes).digest('hex');
+  if (actualSha256 !== expectedSha256) {
+    throw new Error(`netcoredbg_digest_mismatch: ${adapterLabel} archive sha256 mismatch. Expected ${expectedSha256}; got ${actualSha256}.`);
+  }
+}
+
+export async function assertNetCoreDbgExecutablePresent(netCoreDbgDir: string, asset: Pick<NetCoreDbgAsset, 'executableName'>): Promise<string> {
+  const executable = path.join(netCoreDbgDir, asset.executableName);
+  if (!await pathExists(executable)) {
+    throw new Error(`netcoredbg_extraction_failed: NetCoreDbg extraction completed but ${executable} was not found.`);
+  }
+
+  return executable;
+}
+
+async function flattenNetCoreDbgArchiveRoot(netCoreDbgDir: string, asset: Pick<NetCoreDbgAsset, 'executableName'>): Promise<void> {
+  const rootExecutable = path.join(netCoreDbgDir, asset.executableName);
+  if (await pathExists(rootExecutable)) {
+    return;
+  }
+
+  const nestedDir = path.join(netCoreDbgDir, 'netcoredbg');
+  const nestedExecutable = path.join(nestedDir, asset.executableName);
+  if (!await pathExists(nestedExecutable)) {
+    return;
+  }
+
+  for (const entry of await fs.readdir(nestedDir)) {
+    await fs.rename(path.join(nestedDir, entry), path.join(netCoreDbgDir, entry));
+  }
+  await fs.rmdir(nestedDir);
+}
+
+export function assertNetCoreDbgReady(executable: string): void {
+  if (!netCoreDbgIsUsable(executable)) {
+    throw new Error(`netcoredbg_unusable: NetCoreDbg executable is not usable at ${executable}. Expected --version or --help to exit successfully.`);
   }
 }
 
@@ -224,6 +385,26 @@ function spawnFailureDetail(result: SpawnSyncReturns<string>): string {
 function commandSucceeds(command: string, args: readonly string[]): boolean {
   const result = spawnSync(command, [...args], { encoding: 'utf8' });
   return result.status === 0;
+}
+
+function netCoreDbgIsUsable(command: string): boolean {
+  return commandSucceeds(command, ['--version']) || commandSucceeds(command, ['--help']);
+}
+
+function getCurrentPlatform(): NodeJS.Platform {
+  if (process.env.NODE_ENV === 'test' && process.env.DAP_CLI_TEST_PLATFORM !== undefined) {
+    return process.env.DAP_CLI_TEST_PLATFORM as NodeJS.Platform;
+  }
+
+  return process.platform;
+}
+
+function getCurrentArchitecture(): string {
+  if (process.env.NODE_ENV === 'test' && process.env.DAP_CLI_TEST_ARCH !== undefined) {
+    return process.env.DAP_CLI_TEST_ARCH;
+  }
+
+  return process.arch;
 }
 
 function getVenvPipPath(venvDir: string): string {
@@ -261,6 +442,15 @@ async function downloadFile(adapterLabel: string, url: string, destination: stri
   await finished(Readable.fromWeb(response.body).pipe(output));
 }
 
+async function downloadBytes(adapterLabel: string, url: string, manualRecovery: string): Promise<Buffer> {
+  const response = await fetch(url);
+  if (!response.ok || response.body === null) {
+    throw new Error(`Could not download ${adapterLabel}. ${manualRecovery}`);
+  }
+
+  return Buffer.from(await response.arrayBuffer());
+}
+
 async function pathExists(filePath: string): Promise<boolean> {
   try {
     await fs.access(filePath);
@@ -278,4 +468,6 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return typeof error === 'object' && error !== null && 'code' in error;
 }
 
-process.exitCode = await main(process.argv.slice(2));
+if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.exitCode = await main(process.argv.slice(2));
+}

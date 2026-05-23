@@ -13,6 +13,7 @@ Built-in adapter IDs:
 - `js-debug` for Node.js, Chrome, Electron, and JavaScript/TypeScript debugging.
 - `debugpy` for Python debugging.
 - `delve` for Go debugging through Delve's local `dlv dap` server.
+- `netcoredbg` for C#/.NET debugging through NetCoreDbg's VS Code protocol stdio mode.
 
 The built-in path should be validated by the package setup/readiness flow. When adapter readiness is implemented, run the repository setup command before real adapter smokes:
 
@@ -127,6 +128,7 @@ Extension table (matched against `path.extname(program).toLowerCase()`):
 | --- | --- | --- |
 | `.py` | `debugpy` | `python` |
 | `.go` | `delve` | `go` |
+| `.dll` | `netcoredbg` | `coreclr` |
 | `.js`, `.mjs`, `.cjs` | `js-debug` | `pwa-node` |
 | `.ts`, `.mts`, `.cts` | `js-debug` | `pwa-node` |
 | `.html`, `.htm` | `js-debug` | `pwa-chrome` |
@@ -138,6 +140,7 @@ Adapter-only defaults (used when only `--adapter` is given):
 | `js-debug` | `pwa-node` (`pwa-chrome` if `--program` ends in `.html`/`.htm`) |
 | `debugpy` | `python` |
 | `delve` | `go` |
+| `netcoredbg` | `coreclr` |
 | any custom adapter | no default — pass `--type` explicitly |
 
 - An unsupported program extension (or a program with no extension) produces a `usage_error` with code `adapter_inference_failed`. The error names the extension and asks you to pass `--adapter` or `--type` explicitly.
@@ -309,11 +312,65 @@ dap-cli attach --adapter delve --type go --name go-attach \
 
 Delve honors DAP disconnect lifecycle flags for attach. The Phase 20 attach smoke uses `terminateDebuggee: false`, verifies the target survives disconnect, then separately kills only the test-owned fixture process.
 
+## C# / .NET / NetCoreDbg
+
+`npm run setup-adapters` prefers an already-usable `netcoredbg` executable on `PATH`. If none is available, it provisions the pinned NetCoreDbg `3.1.3-1062` release under `DAP_CLI_HOME/adapters/netcoredbg` for supported upstream assets. Downloaded NetCoreDbg archives are SHA-256 checked against pinned release metadata before extraction; dap-cli does not bundle or redistribute Microsoft `vsdbg`.
+
+The built-in adapter starts NetCoreDbg in stdio VS Code protocol mode:
+
+```bash
+netcoredbg --interpreter=vscode
+```
+
+Use VS Code launch type `coreclr` with the built-in adapter id `netcoredbg`. Desktop .NET Framework `clr` is intentionally unsupported unless separately proven; a `type: "clr"` launch config should fail with `unknown_launch_type` instead of silently selecting the wrong runtime.
+
+Build first, then launch the output DLL. dap-cli can infer `netcoredbg` / `coreclr` from a `.dll` program, but it does not infer `.csproj` and does not run `.csproj`, MSBuild, `preLaunchTask`, or `postDebugTask` automatically:
+
+```bash
+dotnet build /workspace/my-csharp-app -c Debug
+dap-cli launch --adapter netcoredbg --type coreclr --name csharp-debug \
+  --json '{"program":"/workspace/my-csharp-app/bin/Debug/net8.0/my-csharp-app.dll","cwd":"/workspace/my-csharp-app","args":[],"stopAtEntry":true}'
+```
+
+Short-lived console apps can exit before a fresh agent installs breakpoints, so include `--stop-on-entry` or `"stopAtEntry": true` when you need a reliable first stop.
+
+Safe attach is local and owner-scoped only. Attach to a same-machine process id that belongs to you and that you intend to debug:
+
+```bash
+dap-cli attach --adapter netcoredbg --type coreclr --name csharp-attach \
+  --json '{"processId":12345}'
+```
+
+When detaching from an attached target, use DAP `disconnect` with `terminateDebuggee:false`, verify the target survives, and then clean up only a test-owned process when you created it:
+
+```bash
+dap-cli request disconnect --name csharp-attach --json '{"terminateDebuggee":false}'
+```
+
+### macOS arm64 caveat
+
+Upstream NetCoreDbg `3.1.3-1062` does not publish a `darwin/arm64` release asset. dap-cli setup on Apple Silicon does not silently provision the macOS x64 asset. A real smoke on `darwin/arm64` is only proven when you explicitly provide a compatible x64 `dotnet` SDK/runtime plus x64 NetCoreDbg under Rosetta and opt into that environment override; otherwise use a supported platform/arch asset or a user-provided compatible `netcoredbg` on `PATH`.
+
+### C# troubleshooting
+
+- `netcoredbg_not_found`: run `npm run setup-adapters`, or put a compatible `netcoredbg` on `PATH`.
+- `netcoredbg_unsupported_platform`: your platform/architecture has no supported upstream asset. On `darwin/arm64`, setup will not silently install the x64 asset; provide an explicitly compatible Rosetta x64 `dotnet` + `netcoredbg` pair or use another supported host.
+- `netcoredbg_digest_mismatch`: the downloaded archive did not match the pinned SHA-256 digest. Do not run it; retry from a trusted network or update the pin through a reviewed change.
+- Missing `dotnet` or build output: install a .NET SDK/runtime, run `dotnet build -c Debug`, and launch the resulting `.dll` under `bin/Debug/<tfm>/`.
+- `.csproj` launch attempts: build first and pass the output `.dll`; dap-cli intentionally does not auto-build project files.
+- `unknown_launch_type` for `clr`: use `coreclr` for NetCoreDbg-backed .NET/.NET Core debugging.
+- `unsupported_launch_variable`: replace `${command:*}` or `${input:*}` launch.json variables with explicit values before using dap-cli.
+
 ## Troubleshooting
 
 - `js_debug_not_found`: run the first-party setup/readiness flow first. If you need a pinned or offline fallback, manually provision the js-debug DAP tarball under `DAP_CLI_HOME/adapters/js-debug`.
 - `No module named debugpy`: run the first-party setup/readiness flow first. If using a system Python fallback, install debugpy in the Python environment used by dap-cli.
 - `delve_not_found`: run `npm run setup-adapters`, or make a compatible `dlv` executable available on `PATH`. The error names both recovery paths.
+- `netcoredbg_not_found`: run `npm run setup-adapters`, or make a compatible `netcoredbg` executable available on `PATH`.
+- `netcoredbg_unsupported_platform`: the pinned NetCoreDbg release does not include your platform/architecture. In particular, `darwin/arm64` setup does not silently provision the x64 asset; real smoke requires an explicit compatible x64 `dotnet` + `netcoredbg` Rosetta path and opt-in environment override.
+- `netcoredbg_digest_mismatch`: discard the archive; setup only extracts digest-verified pinned NetCoreDbg assets.
+- C# build output missing: build first with `dotnet build -c Debug` and launch the output `.dll`, not the `.csproj`.
+- C# `clr` launch type: unsupported for the built-in NetCoreDbg path; use `coreclr`.
 - Delve launch fails with a Go-version message: Delve `v1.26.3` supports Go 1.24+ debuggee builds; use a supported Go toolchain rather than disabling Delve's version check.
 - Delve package launch/test fails outside the intended module: pass adapter-native `cwd` and `dlvCwd` fields so Delve's Go build runs from the module directory.
 - Delve `mode: "exec"` hits poor stack/local/breakpoint behavior: rebuild the binary with `go build -gcflags=all="-N -l"` before debugging it.

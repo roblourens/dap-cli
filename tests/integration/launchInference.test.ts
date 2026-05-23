@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { startControllerServer, type ControllerServer } from '../../src/controller/server.js';
+import { inferAdapterAndType } from '../../src/config/programInference.js';
 import { createCliTestEnv, runCli, type CliTestEnv } from '../helpers/runCli.js';
 
 interface JsonEnvelope<T> {
@@ -107,6 +108,45 @@ describe('launch adapter inference', () => {
     expect(failure.ok).toBe(false);
     expect(failure.error.code).toBe('adapter_inference_failed');
     expect(failure.error.data?.extension).toBe('.unknown');
+  });
+
+  test('.csproj program does not infer an adapter or trigger an implicit build', async () => {
+    const start = await runCli(['start'], { env: testEnv.env });
+    expect(start.exitCode).toBe(0);
+
+    const launch = await runCli([
+      'launch',
+      '--program', path.join(testEnv.dapCliHome, 'SampleApp.csproj'),
+      '--name', 'csproj-infer-fail',
+    ], { env: testEnv.env });
+
+    expect(launch.exitCode).toBe(2);
+    const failure = launch.envelope as unknown as JsonFailureEnvelope;
+    expect(failure.ok).toBe(false);
+    expect(failure.error.code).toBe('adapter_inference_failed');
+    expect(failure.error.data?.extension).toBe('.csproj');
+    expect(failure.error.diagnostics.join('\n')).toContain('does not build or launch .csproj files automatically');
+    expect(failure.error.diagnostics.join('\n')).toContain('Build the project first, then launch the output DLL');
+  });
+
+  test('.dll program infers NetCoreDbg and coreclr after real DLL launch proof', () => {
+    const result = inferAdapterAndType({ program: '/tmp/app.dll' });
+
+    expect(result).toEqual({
+      adapterId: 'netcoredbg',
+      type: 'coreclr',
+      inferred: { adapter: true, type: true },
+    });
+  });
+
+  test('--adapter netcoredbg infers coreclr as the default type', () => {
+    const result = inferAdapterAndType({ adapter: 'netcoredbg' });
+
+    expect(result).toEqual({
+      adapterId: 'netcoredbg',
+      type: 'coreclr',
+      inferred: { adapter: false, type: true },
+    });
   });
 
   test('all-absent defaults to fake adapter', async () => {

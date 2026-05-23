@@ -16,6 +16,7 @@ export interface InferAdapterAndTypeResult {
 }
 
 const extensionTable: Record<string, { adapterId: string; type: string }> = {
+  '.dll': { adapterId: 'netcoredbg', type: 'coreclr' },
   '.py': { adapterId: 'debugpy', type: 'python' },
   '.go': { adapterId: 'delve', type: 'go' },
   '.js': { adapterId: 'js-debug', type: 'pwa-node' },
@@ -55,7 +56,7 @@ export function inferAdapterAndType(args: InferAdapterAndTypeArgs): InferAdapter
     if (match === undefined) {
       throw usageError(`Cannot infer adapter from program extension '${extension}'. Pass --adapter or --type explicitly.`, {
         code: 'adapter_inference_failed',
-        diagnostics: [`No adapter mapping is configured for program extension '${extension}'.`, 'Pass --adapter or --type explicitly.'],
+        diagnostics: adapterInferenceDiagnostics(extension),
         data: { program, extension },
       });
     }
@@ -63,6 +64,18 @@ export function inferAdapterAndType(args: InferAdapterAndTypeArgs): InferAdapter
   }
 
   return { adapterId: 'fake', type: undefined, inferred: { adapter: false, type: false } };
+}
+
+function adapterInferenceDiagnostics(extension: string): readonly string[] {
+  if (extension === '.csproj') {
+    return [
+      'dap-cli does not build or launch .csproj files automatically.',
+      'Build the project first, then launch the output DLL with `dap-cli launch --program bin/Debug/<target-framework>/<project>.dll`.',
+      'You can also pass `--adapter netcoredbg --type coreclr` with a built DLL program.',
+    ];
+  }
+
+  return [`No adapter mapping is configured for program extension '${extension}'.`, 'Pass --adapter or --type explicitly.'];
 }
 
 function defaultTypeForAdapter(adapterId: string, program: string | undefined): string | undefined {
@@ -80,6 +93,9 @@ function defaultTypeForAdapter(adapterId: string, program: string | undefined): 
   }
   if (adapterId === 'delve') {
     return 'go';
+  }
+  if (adapterId === 'netcoredbg') {
+    return 'coreclr';
   }
   return undefined;
 }

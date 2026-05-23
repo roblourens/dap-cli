@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { resolveAdapterIdFromType } from '../../src/config/launchConfig.js';
 import { startControllerServer, type ControllerServer } from '../../src/controller/server.js';
 import { createCliTestEnv, runCli, type CliTestEnv } from '../helpers/runCli.js';
 
@@ -35,6 +36,51 @@ afterEach(async () => {
 });
 
 describe('--config auto-route (integration; Phase 10 plan 01)', () => {
+  test('VS Code coreclr launch config type resolves to the NetCoreDbg adapter id', () => {
+    expect(resolveAdapterIdFromType('coreclr')).toBe('netcoredbg');
+  });
+
+  test('VS Code clr launch config type remains unsupported', async () => {
+    const workspace = await createWorkspace(testEnv.dapCliHome, 'clr-unsupported', [
+      { name: 'DesktopClr', type: 'clr', request: 'launch', program: 'bin/Debug/net48/App.exe' },
+    ]);
+
+    const launch = await runCli([
+      'launch',
+      '--workspace', workspace,
+      '--config', 'DesktopClr',
+      '--name', 'clr-unsupported',
+    ], { env: testEnv.env });
+
+    expect(launch.exitCode).toBe(2);
+    expect(launch.envelope.ok).toBe(false);
+    if (!launch.envelope.ok) {
+      expect(launch.envelope.error.code).toBe('unknown_launch_type');
+    }
+  });
+
+  test.each([
+    ['command', '${command:pickProgram}'],
+    ['input', '${input:targetProgram}'],
+  ])('launch config rejects VS Code %s variables before adapter startup', async (_kind, program) => {
+    const workspace = await createWorkspace(testEnv.dapCliHome, `unsupported-variable-${_kind}`, [
+      { name: 'UnsupportedVariable', type: 'fake', request: 'launch', program },
+    ]);
+
+    const launch = await runCli([
+      'launch',
+      '--workspace', workspace,
+      '--config', 'UnsupportedVariable',
+      '--name', `unsupported-variable-${_kind}`,
+    ], { env: testEnv.env });
+
+    expect(launch.exitCode).toBe(2);
+    expect(launch.envelope.ok).toBe(false);
+    if (!launch.envelope.ok) {
+      expect(launch.envelope.error.code).toBe('unsupported_launch_variable');
+    }
+  });
+
   test('launch --config <attach-shaped> sends DAP attach to the fake adapter', async () => {
     // The fake adapter validates the requested mode against the script's
     // expected `attach` step. If the auto-route did NOT fire, the fake

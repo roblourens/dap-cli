@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: (next)
-status: "Phase 20 shipped - PR #1"
-stopped_at: Completed 20-06-PLAN.md
-last_updated: "2026-05-18T04:21:12.000Z"
-last_activity: 2026-05-17
+milestone_name: milestone
+status: completed
+stopped_at: Completed 21-06-PLAN.md
+last_updated: "2026-05-23T05:43:13.728Z"
+last_activity: 2026-05-23 -- Phase 21 marked complete
 progress:
-  total_phases: 1
-  completed_phases: 1
-  total_plans: 6
-  completed_plans: 6
+  total_phases: 2
+  completed_phases: 2
+  total_plans: 12
+  completed_plans: 12
   percent: 100
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** Agents can reliably control a DAP debug session from repeatable CLI commands and inspect paused application state without needing language-specific debugger knowledge.
-**Current focus:** Phase 20 — i-d-like-to-find-another-runtime-that-we-can-debug-we-should
+**Current focus:** Phase 21 — Integrate C#/.NET debugging through NetCoreDbg as a built-in runtime
 
 ## Current Position
 
-Phase: 20
-Plan: Not started
-Status: Phase 20 shipped - PR #1
-Last activity: 2026-05-17
+Phase: 21 — COMPLETE
+Plan: 6 of 6
+Status: Phase 21 complete
+Last activity: 2026-05-23 -- Phase 21 marked complete
 
 Progress: [██████████] 100%
 
@@ -85,6 +85,10 @@ Progress: [██████████] 100%
 | Phase 20 P04 | not-recorded-inline | 3 tasks | 5 files |
 | Phase 20 P05 | not-recorded-inline | 2 tasks | 2 files |
 | Phase 20 P06 | not-recorded-inline | 3 tasks | 6 files |
+| Phase 21 P01 | 7min | 2 tasks | 6 files |
+| Phase 21 P02 | 2min | 2 tasks | 4 files |
+| Phase 21 P05 | 6min | 2 tasks | 4 files |
+| Phase 21 P06 | 51min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -99,6 +103,7 @@ Progress: [██████████] 100%
 - Phase 17 added: Code OSS smoke scenario hardening — 20 attach scenarios driven by subagents (similar to phases 7/8 hardening, scoped to the sibling Code OSS repo only; subagents read the dap-cli skill + VS Code launch skill, run one scenario each, orchestrator records pass/fail/agent-confusion notes).
 - Phase 19 added: Cleanup help command output — fix the JSON error printed at the bottom of `dap-cli help`, decide and implement drill-down behavior for compound commands (e.g. `dap-cli help breakpoints set`) vs `-h`, and group the long flat command list into readable categories (lifecycle, launch/attach, special commands, etc.).
 - Phase 20 added: I'd like to find another runtime that we can debug. We should do this by picking another debug adapter that already exists in the world and is popular, ideally one that is run by Microsoft. Then we should make a pretty substantial plan to implement it in this repo and figure out how to verify it. Going through a similar process to what we've done in the past, the most important thing is to just run through it right: 1. We need to identify the language of the debug adapter. 2. We need to make a plan for how it is installed or vendored into this repo or whatever we're doing for jsdebug and debugpy. I don't really even know. 3. We need to write the code. 4. We need to have substantial automated end-to-end testing. 5. We need to go through a process of trying it in different real-world debugging scenarios for different projects in that language that exist on GitHub that we can safely download and run and verify with debugging. Then we just set up the loop of having subagents run some different tasks, try to use dap-cli with the new language, and if they fail then we try to fix the issue or fix the confusion and repeat. I would like basically that entire end-to-end flow planned out.
+- Phase 21 added: Integrate C#/.NET debugging through NetCoreDbg as a built-in runtime.
 
 ### Decisions
 
@@ -109,6 +114,16 @@ Recent decisions affecting current work:
 - [Phase 2]: Generate the full typed DAP request command surface from official protocol metadata rather than maintaining it by hand.
 - [Phase 3]: Treat built-in and custom adapters as external services resolved through descriptors, config, processes, and transports.
 - [Phase 4]: Finish v1 with README/user docs, Playwright interop examples, self-hosting, smoke coverage, and agentic exploratory verification.
+- [Phase 21 P01]: NetCoreDbg setup treats darwin/arm64 as unsupported unless a user-provided PATH netcoredbg is available; it does not silently use the x64 asset.
+- [Phase 21 P01]: NetCoreDbg archive bytes are sha256-checked before extraction, and archive entries are inspected to reject path traversal before invoking tar/unzip.
+- [Phase 21]: Mapped only VS Code coreclr to NetCoreDbg; clr remains unsupported until separately proven. — Plan 21-02 scope maps coreclr only and protects clr as unknown_launch_type.
+- [Phase 21]: Kept .csproj and .dll out of program inference in this plan; .dll inference remains gated on Plan 21-03 real DLL launch proof. — The plan explicitly defers .dll inference and blocks implicit project build behavior.
+- [Phase 21]: Selected dotnet/samples golden app as the primary external validation target after screening because its selected net8.0 path has ordinary restore/build/run instructions and no local scripts/hooks/package-feed surprises.
+- [Phase 21]: Recorded the arm64-dotnet plus x64-NetCoreDbg launch timeout as a failed attempt, then used the previously proven explicit x64 dotnet + x64 NetCoreDbg Rosetta pair for the passing attempt.
+- [Phase 21]: Preserved NetCoreDbg evaluate failures as evaluate-or-fallback evidence rather than fabricating success; scopes/variables provided paused-state proof.
+- [Phase 21 P06]: Do not count prior external validation or subagent summaries as pass without a matching Plan 21-06 JSONL transcript.
+- [Phase 21 P06]: Keep 21-UAT status incomplete until orchestrator-run hand-driven smoke Sequence A and B output is recorded with result: pass.
+- [Phase 21 P06]: Record blocked fresh-agent and full-suite verification issues in the hardening gap ledger instead of hiding them.
 
 ### Pending Todos
 
@@ -116,7 +131,9 @@ Recent decisions affecting current work:
 
 ### Blockers/Concerns
 
-None yet.
+yet.
+
+- Phase 21 Plan 03 blocked: real NetCoreDbg DLL launch proof unavailable on darwin/arm64; .dll inference intentionally not added.
 
 ## Deferred Items
 
@@ -133,6 +150,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-17T17:56:36.000Z
-Stopped at: Completed 20-06-PLAN.md
+Last session: 2026-05-23T05:18:26.194Z
+Stopped at: Completed 21-06-PLAN.md
 Resume file: None

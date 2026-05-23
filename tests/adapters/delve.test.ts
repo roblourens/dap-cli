@@ -6,18 +6,24 @@ import { createDelveDescriptor } from '../../src/adapters/builtins/delve.js';
 
 describe('createDelveDescriptor', () => {
   test('creates a localhost-only Delve DAP server descriptor', () => {
+    const previousGoToolchain = process.env.GOTOOLCHAIN;
+    delete process.env.GOTOOLCHAIN;
     const descriptor = createDelveDescriptor('/tmp/dlv');
 
-    expect(descriptor).toEqual({
-      id: 'delve',
-      label: 'Go Debug Adapter (Delve)',
-      transport: {
-        kind: 'server',
-        command: '/tmp/dlv',
-        args: ['dap', '--listen=127.0.0.1:${port}'],
-        host: '127.0.0.1',
-      },
-    });
+    try {
+      expect(descriptor).toEqual({
+        id: 'delve',
+        label: 'Go Debug Adapter (Delve)',
+        transport: {
+          kind: 'server',
+          command: '/tmp/dlv',
+          args: ['dap', '--listen=127.0.0.1:${port}'],
+          host: '127.0.0.1',
+        },
+      });
+    } finally {
+      restoreEnv('GOTOOLCHAIN', previousGoToolchain);
+    }
   });
 
   test('passes the launch Go toolchain override to the Delve adapter process', () => {
@@ -43,8 +49,8 @@ describe('createDelveDescriptor', () => {
     try {
       const error = catchError(() => createDelveDescriptor());
       expect(error?.code).toBe('delve_not_found');
-      expect(error?.diagnostics.join('\n')).toContain('npm run setup-adapters');
-      expect(error?.diagnostics.join('\n')).toContain('PATH dlv');
+      expect(error?.diagnostics?.join('\n')).toContain('npm run setup-adapters');
+      expect(error?.diagnostics?.join('\n')).toContain('PATH dlv');
     } finally {
       restoreEnv('DAP_CLI_HOME', previousHome);
       restoreEnv('PATH', previousPath);
@@ -85,8 +91,8 @@ describe('createDelveDescriptor', () => {
     try {
       const error = catchError(() => createDelveDescriptor(fakeDelve));
       expect(error?.code).toBe('delve_go_version_incompatible');
-      expect(error?.diagnostics.join('\n')).toContain('Delve 1.26.3 requires Go 1.24+');
-      expect(error?.diagnostics.join('\n')).toContain('GOTOOLCHAIN=go1.24.0');
+      expect(error?.diagnostics?.join('\n')).toContain('Delve 1.26.3 requires Go 1.24+');
+      expect(error?.diagnostics?.join('\n')).toContain('GOTOOLCHAIN=go1.24.0');
     } finally {
       restoreEnv('PATH', previousPath);
       rmSync(tempDir, { recursive: true, force: true });

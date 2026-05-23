@@ -7,6 +7,7 @@ const docsToValidate = [
   'README.md',
   'dap-cli/skills/dap-cli/references/agent-workflows.md',
   'dap-cli/skills/dap-cli/references/go-delve.md',
+  'dap-cli/skills/dap-cli/references/csharp-netcoredbg.md',
   'docs/playwright-interop.md',
   'docs/adapter-setup.md',
 ];
@@ -80,6 +81,37 @@ describe('Phase 20 docs (Go / Delve)', () => {
     const workflows = await fs.readFile(path.join(process.cwd(), 'dap-cli/skills/dap-cli/references/agent-workflows.md'), 'utf8');
     expect(skill).toContain('go-delve.md');
     expect(workflows).toContain('go-delve.md');
+  });
+});
+
+describe('Phase 21 docs (C# / .NET / NetCoreDbg)', () => {
+  test('adapter setup docs expose NetCoreDbg setup and safety constraints', async () => {
+    const content = await fs.readFile(path.join(process.cwd(), 'docs/adapter-setup.md'), 'utf8');
+    expect(content).toContain('netcoredbg');
+    expect(content).toContain('coreclr');
+    expect(content).toContain('.dll');
+    expect(content).toContain('.csproj');
+    expect(content).toContain('vsdbg');
+  });
+
+  test('skill entry point links to the C# NetCoreDbg reference', async () => {
+    const skill = await fs.readFile(path.join(process.cwd(), 'dap-cli/skills/dap-cli/SKILL.md'), 'utf8');
+    expect(skill).toContain('csharp-netcoredbg.md');
+  });
+
+  test('C# agent reference retains launch, attach, cleanup, and troubleshooting guidance', async () => {
+    const content = await fs.readFile(path.join(process.cwd(), 'dap-cli/skills/dap-cli/references/csharp-netcoredbg.md'), 'utf8');
+    expect(content).toContain('netcoredbg');
+    expect(content).toContain('coreclr');
+    expect(content).toContain('.dll');
+    expect(content).toContain('.csproj');
+    expect(content).toContain('vsdbg');
+    expect(content).toMatch(/terminateDebuggee\s*:\s*false|terminateDebuggee.*false/);
+    expect(content).toContain('netcoredbg_not_found');
+    expect(content).toContain('netcoredbg_unsupported_platform');
+    expect(content).toContain('netcoredbg_digest_mismatch');
+    expect(content).toContain('unknown_launch_type');
+    expect(content).toContain('unsupported_launch_variable');
   });
 });
 

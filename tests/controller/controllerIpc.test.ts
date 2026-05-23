@@ -110,6 +110,33 @@ describe('controller discovery and IPC', () => {
     await expect(readControllerDiscovery({ dapCliHome })).resolves.toBeUndefined();
   });
 
+  test('falls back to localhost TCP when Unix controller socket path would be too long', async () => {
+    const longHome = path.join(dapCliHome, 'a'.repeat(120));
+    const socket = await createControllerServerSocket(clientSocket => {
+      clientSocket.end(`${JSON.stringify({ id: 'hello', ok: true, result: { ok: true } })}\n`);
+    }, { dapCliHome: longHome });
+
+    try {
+      expect(socket.endpoint.kind).toBe('tcp');
+      if (socket.endpoint.kind !== 'tcp') {
+        throw new Error('Expected long controller path to use TCP fallback.');
+      }
+      expect(socket.endpoint.host).toBe('127.0.0.1');
+      expect(socket.endpoint.port).toBeGreaterThan(0);
+
+      const clientSocket = await connectControllerEndpoint(socket.endpoint);
+      const response = await new Promise<string>((resolve, reject) => {
+        clientSocket.once('data', chunk => resolve(chunk.toString('utf8')));
+        clientSocket.once('error', reject);
+        clientSocket.write(`${JSON.stringify({ id: 'hello', method: 'controller.status' })}\n`);
+      });
+      expect(JSON.parse(response)).toMatchObject({ id: 'hello', ok: true });
+      clientSocket.destroy();
+    } finally {
+      socket.server.close();
+    }
+  });
+
   test('controller.hello returns a non-empty buildId and the controller pid', async () => {
     const server = await startControllerServer({ dapCliHome });
     const client = await createControllerClient({ dapCliHome });

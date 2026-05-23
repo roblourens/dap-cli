@@ -3,6 +3,7 @@ import { loadAdapterConfig, type AdapterConfig } from './config.js';
 import { createDebugpyDescriptor } from './builtins/debugpy.js';
 import { createDelveDescriptor } from './builtins/delve.js';
 import { createJsDebugDescriptor } from './builtins/jsDebug.js';
+import { createNetCoreDbgDescriptor } from './builtins/netCoreDbg.js';
 import { usageError } from '../cli/errors.js';
 
 export interface AdapterRegistryEntry {
@@ -49,6 +50,11 @@ export class AdapterRegistry {
         id: 'delve',
         label: 'Go Debug Adapter (Delve)',
         create: () => createDelveDescriptor(),
+      });
+      this.builtInAdapters.set('netcoredbg', {
+        id: 'netcoredbg',
+        label: 'C#/.NET Debug Adapter (NetCoreDbg)',
+        create: () => createNetCoreDbgDescriptor(),
       });
     }
 

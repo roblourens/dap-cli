@@ -296,3 +296,4 @@ dap-cli continue --name web-demo
 - JS / TS / browser → [references/javascript-typescript.md](./references/javascript-typescript.md)
 - Python → [references/python.md](./references/python.md)
 - Go / Delve → [references/go-delve.md](./references/go-delve.md)
+- C# / .NET / NetCoreDbg → [references/csharp-netcoredbg.md](./references/csharp-netcoredbg.md)
