@@ -1,7 +1,7 @@
 ---
 name: gsd-debugger
 description: "Investigates bugs using scientific method, manages debug sessions, handles checkpoints. Spawned by /gsd-debug orchestrator."
-tools: ['read', 'edit', 'execute', 'search', 'web']
+tools: ['read', 'edit', 'execute', 'search', 'web', 'agent']
 color: orange
 ---
 

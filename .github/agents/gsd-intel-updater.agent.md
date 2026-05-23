@@ -1,7 +1,7 @@
 ---
 name: gsd-intel-updater
 description: "Analyzes codebase and writes structured intel files to .planning/intel/."
-tools: ['read', 'edit', 'execute', 'search']
+tools: ['read', 'edit', 'execute', 'search', 'agent']
 color: cyan
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: gsd-advisor-researcher
 description: "Researches a single gray area decision and returns a structured comparison table with rationale. Spawned by discuss-phase advisor mode."
-tools: ['read', 'execute', 'search', 'web', 'io.github.upstash/context7/*']
+tools: ['read', 'execute', 'search', 'web', 'io.github.upstash/context7/*', 'agent']
 color: cyan
 ---
 
