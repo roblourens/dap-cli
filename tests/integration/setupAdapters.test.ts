@@ -159,6 +159,21 @@ describe.skipIf(process.platform === 'win32')('setup-adapters', () => {
 
     expect(() => assertNetCoreDbgReady(executable)).toThrow(/netcoredbg_unusable/);
   });
+
+  test('NetCoreDbg setup implementation writes archives under a private temp directory', async () => {
+    const source = await readFile(path.join(process.cwd(), 'scripts', 'setup-adapters.ts'), 'utf8');
+    const setupNetCoreDbg = source.slice(source.indexOf('async function setupNetCoreDbg'), source.indexOf('function pythonHasDebugpy'));
+    expect(setupNetCoreDbg).toContain("fs.mkdtemp(path.join(tmpdir(), 'dap-cli-netcoredbg-'))");
+    expect(setupNetCoreDbg).toContain("fs.writeFile(archivePath, archiveBytes, { flag: 'wx' })");
+    expect(setupNetCoreDbg).not.toContain('path.join(tmpdir(), asset.archiveName)');
+  });
+
+  test('NetCoreDbg zip extraction does not depend on unzip on Windows', async () => {
+    const source = await readFile(path.join(process.cwd(), 'scripts', 'setup-adapters.ts'), 'utf8');
+    expect(source).toContain('powershell.exe');
+    expect(source).toContain('Expand-Archive');
+    expect(source).toContain('System.IO.Compression.ZipFile');
+  });
 });
 
 async function writeExecutable(filePath: string, content: string): Promise<void> {

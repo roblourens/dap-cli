@@ -154,7 +154,7 @@ function createControllerEndpoint(stateDir: string, platform: NodeJS.Platform): 
   }
 
   const socketPath = path.join(stateDir, 'controller.sock');
-  if (socketPath.length > maxUnixSocketPathLength) {
+  if (Buffer.byteLength(socketPath, 'utf8') > maxUnixSocketPathLength) {
     return { kind: 'tcp', host: '127.0.0.1', port: 0 };
   }
 

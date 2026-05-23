@@ -206,15 +206,19 @@ async function setupNetCoreDbg(options: { adaptersDir: string; dryRun: boolean }
     return;
   }
 
-  await fs.mkdir(netCoreDbgDir, { recursive: true });
-  const archivePath = path.join(tmpdir(), asset.archiveName);
   const archiveBytes = await downloadBytes('NetCoreDbg', downloadUrl, `Download ${downloadUrl}, verify sha256 ${asset.sha256}, extract it into ${netCoreDbgDir}, and retry.`);
   assertArchiveSha256('NetCoreDbg', archiveBytes, asset.sha256);
-  await fs.writeFile(archivePath, archiveBytes);
-  await fs.rm(netCoreDbgDir, { recursive: true, force: true });
-  await fs.mkdir(netCoreDbgDir, { recursive: true });
-  extractNetCoreDbgArchive(asset, archivePath, netCoreDbgDir);
-  await flattenNetCoreDbgArchiveRoot(netCoreDbgDir, asset);
+  const tempDir = await fs.mkdtemp(path.join(tmpdir(), 'dap-cli-netcoredbg-'));
+  try {
+    const archivePath = path.join(tempDir, asset.archiveName);
+    await fs.writeFile(archivePath, archiveBytes, { flag: 'wx' });
+    await fs.rm(netCoreDbgDir, { recursive: true, force: true });
+    await fs.mkdir(netCoreDbgDir, { recursive: true });
+    extractNetCoreDbgArchive(asset, archivePath, netCoreDbgDir);
+    await flattenNetCoreDbgArchiveRoot(netCoreDbgDir, asset);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
 
   const executable = await assertNetCoreDbgExecutablePresent(netCoreDbgDir, asset);
   if (process.platform !== 'win32') {
@@ -303,18 +307,14 @@ function extractDelveArchive(asset: DelveAsset, archivePath: string, delveDir: s
 
 function extractNetCoreDbgArchive(asset: NetCoreDbgAsset, archivePath: string, netCoreDbgDir: string): void {
   validateArchiveEntriesStayWithinTarget(asset, archivePath, netCoreDbgDir);
-  const extraction = asset.archiveKind === 'zip'
-    ? spawnSync('unzip', ['-q', archivePath, '-d', netCoreDbgDir], { encoding: 'utf8' })
-    : spawnSync('tar', ['xzf', archivePath, '-C', netCoreDbgDir], { encoding: 'utf8' });
+  const extraction = extractArchive(asset, archivePath, netCoreDbgDir);
   if (extraction.status !== 0) {
     throw new Error(`netcoredbg_extraction_failed: Could not extract NetCoreDbg archive. ${spawnFailureDetail(extraction)}`);
   }
 }
 
 function validateArchiveEntriesStayWithinTarget(asset: NetCoreDbgAsset, archivePath: string, targetDir: string): void {
-  const listing = asset.archiveKind === 'zip'
-    ? spawnSync('unzip', ['-Z1', archivePath], { encoding: 'utf8' })
-    : spawnSync('tar', ['tzf', archivePath], { encoding: 'utf8' });
+  const listing = listArchiveEntries(asset, archivePath);
   if (listing.status !== 0) {
     throw new Error(`netcoredbg_extraction_failed: Could not inspect NetCoreDbg archive. ${spawnFailureDetail(listing)}`);
   }
@@ -326,6 +326,44 @@ function validateArchiveEntriesStayWithinTarget(asset: NetCoreDbgAsset, archiveP
       throw new Error(`netcoredbg_extraction_failed: NetCoreDbg archive entry escapes target directory: ${entry}`);
     }
   }
+}
+
+function extractArchive(asset: NetCoreDbgAsset, archivePath: string, targetDir: string): SpawnSyncReturns<string> {
+  if (asset.archiveKind === 'zip' && process.platform === 'win32') {
+    return spawnSync('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `Expand-Archive -LiteralPath ${quotePowerShellString(archivePath)} -DestinationPath ${quotePowerShellString(targetDir)} -Force`,
+    ], { encoding: 'utf8' });
+  }
+
+  return asset.archiveKind === 'zip'
+    ? spawnSync('unzip', ['-q', archivePath, '-d', targetDir], { encoding: 'utf8' })
+    : spawnSync('tar', ['xzf', archivePath, '-C', targetDir], { encoding: 'utf8' });
+}
+
+function listArchiveEntries(asset: NetCoreDbgAsset, archivePath: string): SpawnSyncReturns<string> {
+  if (asset.archiveKind === 'zip' && process.platform === 'win32') {
+    return spawnSync('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      [
+        'Add-Type -AssemblyName System.IO.Compression.FileSystem',
+        `$archive = [System.IO.Compression.ZipFile]::OpenRead(${quotePowerShellString(archivePath)})`,
+        'try { $archive.Entries | ForEach-Object { $_.FullName } } finally { $archive.Dispose() }',
+      ].join('; '),
+    ], { encoding: 'utf8' });
+  }
+
+  return asset.archiveKind === 'zip'
+    ? spawnSync('unzip', ['-Z1', archivePath], { encoding: 'utf8' })
+    : spawnSync('tar', ['tzf', archivePath], { encoding: 'utf8' });
+}
+
+function quotePowerShellString(value: string): string {
+  return `'${value.replace(/'/g, '\'\'')}'`;
 }
 
 function isPathWithin(candidate: string, parent: string): boolean {

@@ -253,12 +253,13 @@ function ensureNetCoreDbgAvailable(): void {
     );
   }
 
-  const result = spawnSync('netcoredbg', ['--version'], { encoding: 'utf8' });
-  if (result.status === 0) {
+  try {
+    createNetCoreDbgDescriptor();
     return;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`BLOCKED: netcoredbg is unavailable on PATH/cache; real NetCoreDbg launch coverage cannot be claimed. ${detail}`);
   }
-
-  throw new Error('BLOCKED: netcoredbg is unavailable on PATH/cache; real NetCoreDbg launch coverage cannot be claimed.');
 }
 
 async function buildFixture(fixtureDir: string, dllName: string): Promise<string> {

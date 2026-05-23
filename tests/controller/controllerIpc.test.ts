@@ -137,6 +137,17 @@ describe('controller discovery and IPC', () => {
     }
   });
 
+  test('falls back to localhost TCP when Unix controller socket path byte length would be too long', async () => {
+    const longHome = path.join(dapCliHome, 'é'.repeat(55));
+    const socket = await createControllerServerSocket(() => undefined, { dapCliHome: longHome });
+
+    try {
+      expect(socket.endpoint.kind).toBe('tcp');
+    } finally {
+      socket.server.close();
+    }
+  });
+
   test('controller.hello returns a non-empty buildId and the controller pid', async () => {
     const server = await startControllerServer({ dapCliHome });
     const client = await createControllerClient({ dapCliHome });
