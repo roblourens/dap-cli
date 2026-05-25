@@ -1,9 +1,8 @@
 ---
 name: gsd-plan-phase
 description: "Create detailed phase plan (PLAN.md) with verification loop"
-argument-hint: "[phase] [--auto] [--research] [--skip-research] [--research-phase <N>] [--view] [--gaps] [--skip-verify] [--prd <file>] [--reviews] [--text] [--tdd] [--mvp]"
-agent: gsd-planner
-allowed-tools: Read, Write, Bash, Glob, Grep, Task, AskUserQuestion, WebFetch, mcp__context7__*
+argument-hint: "[phase] [--auto] [--research] [--skip-research] [--research-phase <N>] [--view] [--gaps] [--skip-verify] [--prd <file>] [--ingest <path-or-glob>] [--ingest-format <auto|nygard|madr|narrative>] [--reviews] [--text] [--tdd] [--mvp]"
+allowed-tools: Read, Write, Bash, Glob, Grep, Agent, AskUserQuestion, WebFetch, mcp__context7__*
 ---
 
 <objective>
@@ -11,7 +10,7 @@ Create executable phase prompts (PLAN.md files) for a roadmap phase with integra
 
 **Default flow:** Research (if needed) → Plan → Verify → Done
 
-**Research-only mode (`--research-phase <N>`):** Spawn `gsd-phase-researcher` for phase `N`, write `RESEARCH.md`, then exit before the planner runs. Useful for cross-phase research, doc review before committing to a planning approach, and correction-without-replanning loops where iterating on research alone is dramatically cheaper than re-spawning the planner. Replaces the deleted `/gsd-research-phase` command (#3042).
+**Research-only mode (`--research-phase <N>`):** Spawn `gsd-phase-researcher` for phase `N`, write `RESEARCH.md`, then exit before the planner runs. Useful for cross-phase research, doc review before committing to a planning approach, and correction-without-replanning loops where iterating on research alone is dramatically cheaper than re-spawning the planner. Replaces the deleted research-phase command (#3042).
 
 **Research-only modifiers:**
 - **No flag** — when `RESEARCH.md` already exists, prompt the user to choose `update / view / skip`.
@@ -39,6 +38,8 @@ Phase number: $ARGUMENTS (optional — auto-detects next unplanned phase if omit
 - `--gaps` — Gap closure mode (reads VERIFICATION.md, skips research)
 - `--skip-verify` — Skip verification loop
 - `--prd <file>` — Use a PRD/acceptance criteria file instead of discuss-phase. Parses requirements into CONTEXT.md automatically. Skips discuss-phase entirely.
+- `--ingest <path-or-glob>` — Use one or more ADR files instead of discuss-phase. Parses locked decisions + scope fences into CONTEXT.md automatically. Skips discuss-phase entirely.
+- `--ingest-format <auto|nygard|madr|narrative>` — Optional ADR parser format override (`auto` default).
 - `--reviews` — Replan incorporating cross-AI review feedback from REVIEWS.md (produced by `/gsd-review`)
 - `--text` — Use plain-text numbered lists instead of TUI menus (required for `/rc` remote sessions)
 - `--mvp` — Vertical MVP mode. Planner organizes tasks as feature slices (UI→API→DB) instead of horizontal layers. On Phase 1 of a new project, also emits `SKELETON.md` (Walking Skeleton). Can be persisted on a phase via `**Mode:** mvp` in ROADMAP.md.
@@ -47,6 +48,6 @@ Normalize phase input in step 2 before any directory lookups.
 </context>
 
 <process>
-Execute the plan-phase workflow from @.github/get-shit-done/workflows/plan-phase.md end-to-end.
+Execute end-to-end.
 Preserve all workflow gates (validation, research, planning, verification loop, routing).
 </process>

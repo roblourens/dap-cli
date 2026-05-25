@@ -2,7 +2,7 @@
 name: gsd-code-review
 description: "Review source files changed during a phase for bugs, security issues, and code quality problems"
 argument-hint: "<phase-number> [--depth=quick|standard|deep] [--files file1,file2,...] [--fix [--all] [--auto]]"
-allowed-tools: Read, Bash, Glob, Grep, Write, Task
+allowed-tools: Read, Bash, Glob, Grep, Write, Agent
 ---
 
 <objective>
@@ -41,7 +41,7 @@ Context files (copilot-instructions.md, SUMMARY.md, phase state) are resolved in
 <process>
 This command is a thin dispatch layer. It parses arguments and delegates to the workflow.
 
-Execute the code-review workflow from @.github/get-shit-done/workflows/code-review.md end-to-end.
+Execute end-to-end.
 
 The workflow (not this command) enforces these gates:
 - Phase validation (before config gate)

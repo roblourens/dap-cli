@@ -4,9 +4,19 @@
 
 const fs = require('fs');
 const path = require('path');
-const { escapeRegex, loadConfig, getMilestoneInfo, getMilestonePhaseFilter, normalizeMd, output, error, atomicWriteFileSync } = require('./core.cjs');
+const { escapeRegex, loadConfig, getMilestoneInfo, getMilestonePhaseFilter, output, error } = require('./core.cjs');
+const { platformWriteSync, platformReadSync, platformEnsureDir } = require('./shell-command-projection.cjs');
 const { planningDir, planningPaths } = require('./planning-workspace.cjs');
 const { extractFrontmatter, reconstructFrontmatter } = require('./frontmatter.cjs');
+const scanPhasePlans = require('./plan-scan.cjs');
+const {
+  computeProgressPercent,
+  normalizeProgressNumbers,
+  normalizeStateStatus,
+  shouldPreserveExistingProgress,
+  stateExtractField,
+  stateReplaceField,
+} = require('./state-document.cjs');
 
 // Cache disk scan results from buildStateFrontmatter per cwd per process (#1967).
 // Avoids re-reading N+1 directories on every state write when the phase structure
@@ -28,27 +38,11 @@ process.on('exit', () => {
   }
 });
 
-// Shared helper: extract a field value from STATE.md content.
-// Supports both **Field:** bold and plain Field: format.
-// Horizontal whitespace only after ':' so YAML keys like `progress:` do not match as `Progress:` (parity with sdk/helpers stateExtractField).
-function stateExtractField(content, fieldName) {
-  const escaped = escapeRegex(fieldName);
-  const boldPattern = new RegExp(`\\*\\*${escaped}:\\*\\*[ \\t]*(.+)`, 'i');
-  const boldMatch = content.match(boldPattern);
-  if (boldMatch) return boldMatch[1].trim();
-  const plainPattern = new RegExp(`^${escaped}:[ \\t]*(.+)`, 'im');
-  const plainMatch = content.match(plainPattern);
-  return plainMatch ? plainMatch[1].trim() : null;
-}
-
 function cmdStateLoad(cwd, raw) {
   const config = loadConfig(cwd);
   const planDir = planningPaths(cwd).planning;
 
-  let stateRaw = '';
-  try {
-    stateRaw = fs.readFileSync(path.join(planDir, 'STATE.md'), 'utf-8');
-  } catch { /* intentionally empty */ }
+  const stateRaw = platformReadSync(path.join(planDir, 'STATE.md')) || '';
 
   const configExists = fs.existsSync(path.join(planDir, 'config.json'));
   const roadmapExists = fs.existsSync(path.join(planDir, 'ROADMAP.md'));
@@ -88,8 +82,12 @@ function cmdStateLoad(cwd, raw) {
 
 function cmdStateGet(cwd, section, raw) {
   const statePath = planningPaths(cwd).state;
-  try {
-    const content = fs.readFileSync(statePath, 'utf-8');
+  const content = platformReadSync(statePath);
+  if (content === null) {
+    error('STATE.md not found');
+    return;
+  }
+  {
 
     if (!section) {
       output({ content }, raw, content);
@@ -124,8 +122,6 @@ function cmdStateGet(cwd, section, raw) {
     }
 
     output({ error: `Section or field "${section}" not found` }, raw, '');
-  } catch {
-    error('STATE.md not found');
   }
 }
 
@@ -163,16 +159,9 @@ function cmdStatePatch(cwd, patches, raw) {
     // Use atomic read-modify-write to prevent lost updates from concurrent agents
     readModifyWriteStateMd(statePath, (content) => {
       for (const [field, value] of Object.entries(patches)) {
-        const fieldEscaped = escapeRegex(field);
-        // Try **Field:** bold format first, then plain Field: format
-        const boldPattern = new RegExp(`(\\*\\*${fieldEscaped}:\\*\\*\\s*)(.*)`, 'i');
-        const plainPattern = new RegExp(`(^${fieldEscaped}:\\s*)(.*)`, 'im');
-
-        if (boldPattern.test(content)) {
-          content = content.replace(boldPattern, (_match, prefix) => `${prefix}${value}`);
-          results.updated.push(field);
-        } else if (plainPattern.test(content)) {
-          content = content.replace(plainPattern, (_match, prefix) => `${prefix}${value}`);
+        const result = stateReplaceField(content, field, value);
+        if (result) {
+          content = result;
           results.updated.push(field);
         } else {
           results.failed.push(field);
@@ -202,20 +191,22 @@ function cmdStateUpdate(cwd, field, value) {
   const statePath = planningPaths(cwd).state;
   try {
     let updated = false;
+    const shouldResync = ['Progress', 'Total Plans in Phase', 'Total Phases'].includes(field);
+    // Preserve curated progress for body-only updates, but allow fields that
+    // directly project into progress.* frontmatter to rebuild after mutation.
     readModifyWriteStateMd(statePath, (content) => {
-      const fieldEscaped = escapeRegex(field);
-      // Try **Field:** bold format first, then plain Field: format
-      const boldPattern = new RegExp(`(\\*\\*${fieldEscaped}:\\*\\*\\s*)(.*)`, 'i');
-      const plainPattern = new RegExp(`(^${fieldEscaped}:\\s*)(.*)`, 'im');
-      if (boldPattern.test(content)) {
+      const body = stripFrontmatter(content);
+      const result = stateReplaceField(body, field, value);
+      if (result) {
         updated = true;
-        return content.replace(boldPattern, (_match, prefix) => `${prefix}${value}`);
-      } else if (plainPattern.test(content)) {
-        updated = true;
-        return content.replace(plainPattern, (_match, prefix) => `${prefix}${value}`);
+        const existingFm = extractFrontmatter(content);
+        if (Object.keys(existingFm).length > 0) {
+          return `---\n${reconstructFrontmatter(existingFm)}\n---\n\n${result}`;
+        }
+        return result;
       }
       return content;
-    }, cwd);
+    }, cwd, { resync: shouldResync });
     if (updated) {
       output({ updated: true });
     } else {
@@ -227,21 +218,6 @@ function cmdStateUpdate(cwd, field, value) {
 }
 
 // ─── State Progression Engine ────────────────────────────────────────────────
-// stateExtractField is defined above (shared helper) — do not duplicate.
-
-function stateReplaceField(content, fieldName, newValue) {
-  const escaped = escapeRegex(fieldName);
-  // Try **Field:** bold format first, then plain Field: format
-  const boldPattern = new RegExp(`(\\*\\*${escaped}:\\*\\*\\s*)(.*)`, 'i');
-  if (boldPattern.test(content)) {
-    return content.replace(boldPattern, (_match, prefix) => `${prefix}${newValue}`);
-  }
-  const plainPattern = new RegExp(`(^${escaped}:\\s*)(.*)`, 'im');
-  if (plainPattern.test(content)) {
-    return content.replace(plainPattern, (_match, prefix) => `${prefix}${newValue}`);
-  }
-  return null;
-}
 
 /**
  * Replace a STATE.md field with fallback field name support.
@@ -288,7 +264,7 @@ function updateCurrentPositionFields(content, fields) {
     posBody = posBody.replace(/^Plan:.*$/m, `Plan: ${fields.plan}`);
   }
 
-  return content.replace(posPattern, `${posMatch[1]}${posBody}`);
+  return content.replace(posPattern, () => `${posMatch[1]}${posBody}`);
 }
 
 function cmdStateAdvancePlan(cwd, raw) {
@@ -371,14 +347,16 @@ function cmdStateRecordMetric(cwd, options, raw) {
   }
 
   let recorded = false;
+  let created = false;
   readModifyWriteStateMd(statePath, (content) => {
     // Find Performance Metrics section and its table
     const metricsPattern = /(##\s*Performance Metrics[\s\S]*?\n\|[^\n]+\n\|[-|\s]+\n)([\s\S]*?)(?=\n##|\n$|$)/i;
     const metricsMatch = content.match(metricsPattern);
 
+    const newRow = `| Phase ${phase} P${plan} | ${duration} | ${tasks || '-'} tasks | ${files || '-'} files |`;
+
     if (metricsMatch) {
       let tableBody = metricsMatch[2].trimEnd();
-      const newRow = `| Phase ${phase} P${plan} | ${duration} | ${tasks || '-'} tasks | ${files || '-'} files |`;
 
       if (tableBody.trim() === '' || tableBody.includes('None yet')) {
         tableBody = newRow;
@@ -389,14 +367,27 @@ function cmdStateRecordMetric(cwd, options, raw) {
       recorded = true;
       return content.replace(metricsPattern, (_match, header) => `${header}${tableBody}\n`);
     }
-    return content;
+
+    // Section absent — DWIM: auto-create canonical ## Performance Metrics scaffold,
+    // then append the row. Matches state begin-phase / advance-plan DWIM behavior.
+    const scaffold = [
+      '',
+      '## Performance Metrics',
+      '',
+      '| Phase | Plan | Duration | Notes |',
+      '|-------|------|----------|-------|',
+      newRow,
+      '',
+    ].join('\n');
+    recorded = true;
+    created = true;
+    return content.trimEnd() + '\n' + scaffold;
   }, cwd);
 
-  if (recorded) {
-    output({ recorded: true, phase, plan, duration }, raw, 'true');
-  } else {
-    output({ recorded: false, reason: 'Performance Metrics section not found in STATE.md' }, raw, 'false');
-  }
+  // Auto-create fallback guarantees recorded === true; no else branch needed.
+  const result = { recorded: true, phase, plan, duration };
+  if (created) result.created = true;
+  output(result, raw, 'true');
 }
 
 function cmdStateUpdateProgress(cwd, raw) {
@@ -414,9 +405,9 @@ function cmdStateUpdateProgress(cwd, raw) {
       .filter(e => e.isDirectory()).map(e => e.name)
       .filter(isDirInMilestone);
     for (const dir of phaseDirs) {
-      const files = fs.readdirSync(path.join(phasesDir, dir));
-      totalPlans += files.filter(f => f.match(/-PLAN\.md$/i)).length;
-      totalSummaries += files.filter(f => f.match(/-SUMMARY\.md$/i)).length;
+      const { planCount, summaryCount } = scanPhasePlans(path.join(phasesDir, dir));
+      totalPlans += planCount;
+      totalSummaries += summaryCount;
     }
   }
 
@@ -471,6 +462,7 @@ function cmdStateAddDecision(cwd, options, raw) {
 
   const entry = `- [Phase ${phase || '?'}]: ${summaryText}${rationaleText ? ` — ${rationaleText}` : ''}`;
   let added = false;
+  let created = false;
 
   readModifyWriteStateMd(statePath, (content) => {
     // Find Decisions section (various heading patterns)
@@ -485,14 +477,25 @@ function cmdStateAddDecision(cwd, options, raw) {
       added = true;
       return content.replace(sectionPattern, (_match, header) => `${header}${sectionBody}`);
     }
-    return content;
+
+    // Section absent — DWIM: auto-create canonical ## Decisions scaffold,
+    // then append the entry. Matches state begin-phase / advance-plan DWIM behavior.
+    const scaffold = [
+      '',
+      '## Decisions',
+      '',
+      entry,
+      '',
+    ].join('\n');
+    added = true;
+    created = true;
+    return content.trimEnd() + '\n' + scaffold;
   }, cwd);
 
-  if (added) {
-    output({ added: true, decision: entry }, raw, 'true');
-  } else {
-    output({ added: false, reason: 'Decisions section not found in STATE.md' }, raw, 'false');
-  }
+  // Auto-create fallback guarantees added === true; no else branch needed.
+  const result = { added: true, decision: entry };
+  if (created) result.created = true;
+  output(result, raw, 'true');
 }
 
 function cmdStateAddBlocker(cwd, text, raw) {
@@ -512,6 +515,7 @@ function cmdStateAddBlocker(cwd, text, raw) {
 
   const entry = `- ${blockerText}`;
   let added = false;
+  let created = false;
 
   readModifyWriteStateMd(statePath, (content) => {
     const sectionPattern = /(###?\s*(?:Blockers|Blockers\/Concerns|Concerns)\s*\n)([\s\S]*?)(?=\n###?|\n##[^#]|$)/i;
@@ -524,14 +528,24 @@ function cmdStateAddBlocker(cwd, text, raw) {
       added = true;
       return content.replace(sectionPattern, (_match, header) => `${header}${sectionBody}`);
     }
-    return content;
+
+    // Section absent — DWIM: auto-create canonical ### Blockers scaffold.
+    const scaffold = [
+      '',
+      '### Blockers',
+      '',
+      entry,
+      '',
+    ].join('\n');
+    added = true;
+    created = true;
+    return content.trimEnd() + '\n' + scaffold;
   }, cwd);
 
-  if (added) {
-    output({ added: true, blocker: blockerText }, raw, 'true');
-  } else {
-    output({ added: false, reason: 'Blockers section not found in STATE.md' }, raw, 'false');
-  }
+  // Auto-create fallback guarantees added === true; no else branch needed.
+  const result = { added: true, blocker: blockerText };
+  if (created) result.created = true;
+  output(result, raw, 'true');
 }
 
 function cmdStateResolveBlocker(cwd, text, raw) {
@@ -619,17 +633,36 @@ function cmdStateSnapshot(cwd, raw) {
 
   const content = fs.readFileSync(statePath, 'utf-8');
 
-  // Extract basic fields
-  const currentPhase = stateExtractField(content, 'Current Phase');
-  const currentPhaseName = stateExtractField(content, 'Current Phase Name');
-  const totalPhasesRaw = stateExtractField(content, 'Total Phases');
-  const currentPlan = stateExtractField(content, 'Current Plan');
-  const totalPlansRaw = stateExtractField(content, 'Total Plans in Phase');
-  const status = stateExtractField(content, 'Status');
-  const progressRaw = stateExtractField(content, 'Progress');
-  const lastActivity = stateExtractField(content, 'Last Activity');
-  const lastActivityDesc = stateExtractField(content, 'Last Activity Description');
-  const pausedAt = stateExtractField(content, 'Paused At');
+  // Bug #3265: prefer YAML frontmatter for canonical scalar fields so that a
+  // body table cell containing **Status:** Y cannot shadow the authoritative
+  // frontmatter value.  Mirrors the fix in sdk/src/query/state.ts.
+  const fm = extractFrontmatter(content);
+  const body = stripFrontmatter(content);
+
+  // Helper: return frontmatter scalar value when present and non-empty.
+  // Accepts strings, numbers, and booleans — coercing non-string primitives to
+  // their string representation so callers always receive string | null.
+  // Returns null for missing, null/undefined, or empty-after-trim values so
+  // the caller falls back to body extraction.
+  const fmScalar = (key) => {
+    const v = fm[key];
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'string') return v.trim() || null;
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    return null;
+  };
+
+  // Extract basic fields — frontmatter keys take precedence over body
+  const currentPhase = fmScalar('current_phase') ?? stateExtractField(body, 'Current Phase');
+  const currentPhaseName = fmScalar('current_phase_name') ?? stateExtractField(body, 'Current Phase Name');
+  const totalPhasesRaw = fmScalar('total_phases') ?? stateExtractField(body, 'Total Phases');
+  const currentPlan = fmScalar('current_plan') ?? stateExtractField(body, 'Current Plan');
+  const totalPlansRaw = fmScalar('total_plans_in_phase') ?? stateExtractField(body, 'Total Plans in Phase');
+  const status = fmScalar('status') ?? stateExtractField(body, 'Status');
+  const progressRaw = fmScalar('progress') ?? stateExtractField(body, 'Progress');
+  const lastActivity = fmScalar('last_activity') ?? stateExtractField(body, 'Last Activity');
+  const lastActivityDesc = fmScalar('last_activity_desc') ?? stateExtractField(body, 'Last Activity Description');
+  const pausedAt = fmScalar('paused_at') ?? stateExtractField(body, 'Paused At');
 
   // Parse numeric fields
   const totalPhases = totalPhasesRaw ? parseInt(totalPhasesRaw, 10) : null;
@@ -638,7 +671,7 @@ function cmdStateSnapshot(cwd, raw) {
 
   // Extract decisions table
   const decisions = [];
-  const decisionsMatch = content.match(/##\s*Decisions Made[\s\S]*?\n\|[^\n]+\n\|[-|\s]+\n([\s\S]*?)(?=\n##|\n$|$)/i);
+  const decisionsMatch = body.match(/##\s*Decisions Made[\s\S]*?\n\|[^\n]+\n\|[-|\s]+\n([\s\S]*?)(?=\n##|\n$|$)/i);
   if (decisionsMatch) {
     const tableBody = decisionsMatch[1];
     const rows = tableBody.trim().split('\n').filter(r => r.includes('|'));
@@ -656,7 +689,7 @@ function cmdStateSnapshot(cwd, raw) {
 
   // Extract blockers list
   const blockers = [];
-  const blockersMatch = content.match(/##\s*Blockers\s*\n([\s\S]*?)(?=\n##|$)/i);
+  const blockersMatch = body.match(/##\s*Blockers\s*\n([\s\S]*?)(?=\n##|$)/i);
   if (blockersMatch) {
     const blockersSection = blockersMatch[1];
     const items = blockersSection.match(/^-\s+(.+)$/gm) || [];
@@ -672,7 +705,7 @@ function cmdStateSnapshot(cwd, raw) {
     resume_file: null,
   };
 
-  const sessionMatch = content.match(/##\s*Session\s*\n([\s\S]*?)(?=\n##|$)/i);
+  const sessionMatch = body.match(/##\s*Session\s*\n([\s\S]*?)(?=\n##|$)/i);
   if (sessionMatch) {
     const sessionSection = sessionMatch[1];
     const lastDateMatch = sessionSection.match(/\*\*Last Date:\*\*\s*(.+)/i)
@@ -787,12 +820,11 @@ function buildStateFrontmatter(bodyContent, cwd) {
           let diskCompletedPhases = 0;
 
           for (const dir of phaseDirs) {
-            const files = fs.readdirSync(path.join(phasesDir, dir));
-            const plans = files.filter(f => f.match(/-PLAN\.md$/i)).length;
-            const summaries = files.filter(f => f.match(/-SUMMARY\.md$/i)).length;
-            diskTotalPlans += plans;
-            diskTotalSummaries += summaries;
-            if (plans > 0 && summaries >= plans) diskCompletedPhases++;
+            const phaseDir = path.join(phasesDir, dir);
+            const { planCount, summaryCount, completed } = scanPhasePlans(phaseDir);
+            diskTotalPlans += planCount;
+            diskTotalSummaries += summaryCount;
+            if (completed) diskCompletedPhases++;
           }
           cached = {
             totalPhases: isDirInMilestone.phaseCount > 0
@@ -813,35 +845,17 @@ function buildStateFrontmatter(bodyContent, cwd) {
   }
 
   // Derive percent from disk counts when available (ground truth).
-  // Only falls back to the body Progress: field when no plan files exist on disk
-  // (phases directory empty or absent), which means disk has no authoritative data.
-  // This prevents a stale body "0%" from overriding the real 100% completion state.
-  let progressPercent = null;
-  if (totalPlans !== null && totalPlans > 0 && completedPlans !== null) {
-    progressPercent = Math.min(100, Math.round(completedPlans / totalPlans * 100));
-  } else if (progressRaw) {
+  // Uses min(plan_fraction, phase_fraction) via computeProgressPercent so that
+  // ROADMAP-declared-but-unrealized future phases cap the reported completion
+  // instead of a false 100% from plan-only coverage (#3242 Bug B).
+  // Falls back to the body Progress: field only when no plan files exist on disk.
+  let progressPercent = computeProgressPercent(completedPlans, totalPlans, completedPhases, totalPhases);
+  if (progressPercent === null && progressRaw) {
     const pctMatch = progressRaw.match(/(\d+)%/);
     if (pctMatch) progressPercent = parseInt(pctMatch[1], 10);
   }
 
-  // Normalize status to one of: planning, discussing, executing, verifying, paused, completed, unknown
-  let normalizedStatus = status || 'unknown';
-  const statusLower = (status || '').toLowerCase();
-  if (statusLower.includes('paused') || statusLower.includes('stopped') || pausedAt) {
-    normalizedStatus = 'paused';
-  } else if (statusLower.includes('executing') || statusLower.includes('in progress')) {
-    normalizedStatus = 'executing';
-  } else if (statusLower.includes('planning') || statusLower.includes('ready to plan')) {
-    normalizedStatus = 'planning';
-  } else if (statusLower.includes('discussing')) {
-    normalizedStatus = 'discussing';
-  } else if (statusLower.includes('verif')) {
-    normalizedStatus = 'verifying';
-  } else if (statusLower.includes('complete') || statusLower.includes('done')) {
-    normalizedStatus = 'completed';
-  } else if (statusLower.includes('ready to execute')) {
-    normalizedStatus = 'executing';
-  }
+  const normalizedStatus = normalizeStateStatus(status, pausedAt);
 
   const fm = { gsd_state_version: '1.0' };
 
@@ -899,46 +913,69 @@ function syncStateFrontmatter(content, cwd) {
   return `---\n${yamlStr}\n---\n\n${body}`;
 }
 
+// Transient errno codes that indicate a temporary filesystem condition under
+// concurrent O_EXCL races — Docker overlay-fs (ENOENT/EINVAL/EIO), NFS
+// (ESTALE), and OS-level interrupt/retry signals (EAGAIN/EINTR).  These are
+// recoverable; acquireStateLock retries instead of propagating them.
+// Truly fatal codes (EMFILE, ENOSPC, EROFS, EACCES) are NOT in this set and
+// will still throw immediately.
+const ACQUIRE_LOCK_RETRY_ERRNOS = new Set([
+  'EPERM',   // Windows / macOS AV scanner holds the file open during delete
+  'EBUSY',   // Windows: file in use by another process
+  'EAGAIN',  // POSIX: resource temporarily unavailable
+  'EINTR',   // POSIX: syscall interrupted by signal
+  'EINVAL',  // Docker overlay-fs: transient during concurrent O_EXCL creation
+  'EIO',     // Docker overlay-fs / NFS: transient I/O error
+  'ENOENT',  // Docker overlay-fs: parent dir transiently missing during race
+  'ESTALE',  // NFS: stale file handle (self-resolves on retry)
+]);
+
 /**
  * Acquire a lockfile for STATE.md operations.
  * Returns the lock path for later release.
  */
 function acquireStateLock(statePath) {
   const lockPath = statePath + '.lock';
-  const maxRetries = 10;
   const retryDelay = 200; // ms
+  const staleThresholdMs = 10000;
+  const maxWaitMs = 30000;
+  const startedAt = Date.now();
 
-  for (let i = 0; i < maxRetries; i++) {
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
     try {
       const fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
       fs.writeSync(fd, String(process.pid));
       fs.closeSync(fd);
-      // Register for exit-time cleanup so process.exit(1) inside a locked region
-      // cannot leave a stale lock file (#1916).
+      // Exit-time cleanup keeps a crashed locked region from leaving a stale file (#1916).
       _heldStateLocks.add(lockPath);
       return lockPath;
     } catch (err) {
-      if (err.code === 'EEXIST') {
-        try {
-          const stat = fs.statSync(lockPath);
-          if (Date.now() - stat.mtimeMs > 10000) {
-            fs.unlinkSync(lockPath);
-            continue;
-          }
-        } catch { /* lock was released between check — retry */ }
-
-        if (i === maxRetries - 1) {
-          try { fs.unlinkSync(lockPath); } catch {}
-          return lockPath;
+      // Transient filesystem errors (Docker overlay-fs, NFS, OS signals, AV scanners)
+      // are recoverable — retry the acquisition loop rather than propagating.
+      // See ACQUIRE_LOCK_RETRY_ERRNOS for the full list and rationale.
+      if (ACQUIRE_LOCK_RETRY_ERRNOS.has(err.code)) { continue; }
+      if (err.code !== 'EEXIST') throw err; // propagate — silent bypass causes lost updates
+      // Only unlink a lock we did not place when it has crossed the staleness
+      // threshold (crashed holder). Nuking a fresh lock held by a slow-but-live
+      // writer causes lost updates (#3711 regression).
+      try {
+        const stat = fs.statSync(lockPath);
+        if (Date.now() - stat.mtimeMs > staleThresholdMs) {
+          try { fs.unlinkSync(lockPath); } catch { /* already gone */ }
+          continue;
         }
-        const jitter = Math.floor(Math.random() * 50);
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, retryDelay + jitter);
-        continue;
+      } catch { continue; /* released between EEXIST and stat */ }
+      if (Date.now() - startedAt >= maxWaitMs) {
+        throw new Error(
+          'acquireStateLock: ' + lockPath + ' held by live process for ' +
+          (Date.now() - startedAt) + 'ms (exceeded ' + maxWaitMs + 'ms budget)'
+        );
       }
-      return lockPath; // non-EEXIST error — proceed without lock
+      const jitter = Math.floor(Math.random() * 50);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, retryDelay + jitter);
     }
   }
-  return statePath + '.lock';
 }
 
 function releaseStateLock(lockPath) {
@@ -960,7 +997,7 @@ function writeStateMd(statePath, content, cwd) {
   const synced = syncStateFrontmatter(content, cwd);
   const lockPath = acquireStateLock(statePath);
   try {
-    atomicWriteFileSync(statePath, normalizeMd(synced), 'utf-8');
+    platformWriteSync(statePath, synced);
   } finally {
     releaseStateLock(lockPath);
   }
@@ -971,14 +1008,44 @@ function writeStateMd(statePath, content, cwd) {
  * Holds the lock across the entire read -> transform -> write cycle,
  * preventing the lost-update problem where two agents read the same
  * content and the second write clobbers the first.
+ *
+ * @param {string} statePath
+ * @param {function} transformFn - (content: string) => string
+ * @param {string} cwd
+ * @param {{ resync?: boolean }} [options]
+ *   resync: when true (default) rebuilds the entire frontmatter from disk after
+ *   the transform. Pass { resync: false } for body-only updates (e.g. state.update
+ *   on a single field) that must not trample manually-curated cross-milestone
+ *   progress.* counters in the frontmatter (#3242 Bug A).
+ *   When resync is false, syncStateFrontmatter still runs to maintain/create the
+ *   frontmatter block, but any existing progress.* sub-keys are preserved from
+ *   the pre-transform file rather than being rebuilt from disk.
  */
-function readModifyWriteStateMd(statePath, transformFn, cwd) {
+function readModifyWriteStateMd(statePath, transformFn, cwd, options) {
+  const resync = !options || options.resync !== false;
   const lockPath = acquireStateLock(statePath);
   try {
-    const content = fs.existsSync(statePath) ? fs.readFileSync(statePath, 'utf-8') : '';
+    const content = platformReadSync(statePath) || '';
+    // Snapshot the existing progress block BEFORE the transform so we can
+    // restore it when resync is false.
+    const preFm = resync ? null : extractFrontmatter(content);
     const modified = transformFn(content);
-    const synced = syncStateFrontmatter(modified, cwd);
-    atomicWriteFileSync(statePath, normalizeMd(synced), 'utf-8');
+    let synced = syncStateFrontmatter(modified, cwd);
+
+    if (!resync && preFm && preFm.progress) {
+      // Re-apply the curated progress block that syncStateFrontmatter just
+      // overwrote with disk-derived values.  Only restore keys that were present
+      // in the snapshot — this preserves any new non-progress frontmatter fields
+      // (e.g., status, current_phase) that syncStateFrontmatter legitimately
+      // derived from the updated body.
+      const postFm = extractFrontmatter(synced);
+      postFm.progress = preFm.progress;
+      const yamlStr = reconstructFrontmatter(postFm);
+      const body = stripFrontmatter(synced);
+      synced = `---\n${yamlStr}\n---\n\n${body}`;
+    }
+
+    platformWriteSync(statePath, synced);
   } finally {
     releaseStateLock(lockPath);
   }
@@ -1011,6 +1078,12 @@ function cmdStateJson(cwd, raw) {
   if (built.status === 'unknown' && existingFm && existingFm.status && existingFm.status !== 'unknown') {
     built.status = existingFm.status;
   }
+  // Preserve curated cross-milestone aggregates when local disk scanning sees
+  // only a narrower realized subset (#3242 Bug A). Stale lower counters still
+  // rebuild from disk because they do not exceed the derived scan.
+  if (existingFm && shouldPreserveExistingProgress(existingFm.progress, built.progress)) {
+    built.progress = normalizeProgressNumbers(existingFm.progress);
+  }
 
   output(built, raw, JSON.stringify(built, null, 2));
 }
@@ -1032,87 +1105,113 @@ function cmdStateBeginPhase(cwd, phaseNumber, phaseName, planCount, raw) {
   const updated = [];
 
   readModifyWriteStateMd(statePath, (content) => {
+    // Idempotency guard (#3127): if the phase is already mid-flight, do NOT
+    // overwrite execution-progress fields (Current Plan, plan body line,
+    // Last Activity Description). Only update fields that are safe to
+    // refresh on resume (Last Activity date, Status if inconsistent).
+    // A phase is considered mid-flight when Status contains 'Executing Phase N'
+    // for the current phase number.
+    const currentStatus = stateExtractField(content, 'Status') || '';
+    const isAlreadyExecuting = new RegExp(`Executing Phase\\s+${escapeRegex(String(phaseNumber))}\\b`, 'i').test(currentStatus);
+
     // Update Status field
     const statusValue = `Executing Phase ${phaseNumber}`;
     let result = stateReplaceField(content, 'Status', statusValue);
     if (result) { content = result; updated.push('Status'); }
 
-    // Update Last Activity
+    // Update Last Activity (safe to update on resume — tracks when execute-phase ran)
     result = stateReplaceField(content, 'Last Activity', today);
     if (result) { content = result; updated.push('Last Activity'); }
 
-    // Update Last Activity Description if it exists
-    const activityDesc = `Phase ${phaseNumber} execution started`;
-    result = stateReplaceField(content, 'Last Activity Description', activityDesc);
-    if (result) { content = result; updated.push('Last Activity Description'); }
+    if (!isAlreadyExecuting) {
+      // First-time execution: set all progress fields
 
-    // Update Current Phase
-    result = stateReplaceField(content, 'Current Phase', String(phaseNumber));
-    if (result) { content = result; updated.push('Current Phase'); }
+      // Update Last Activity Description
+      const activityDesc = `Phase ${phaseNumber} execution started`;
+      result = stateReplaceField(content, 'Last Activity Description', activityDesc);
+      if (result) { content = result; updated.push('Last Activity Description'); }
 
-    // Update Current Phase Name
-    if (phaseName) {
-      result = stateReplaceField(content, 'Current Phase Name', phaseName);
-      if (result) { content = result; updated.push('Current Phase Name'); }
-    }
+      // Update Current Phase
+      result = stateReplaceField(content, 'Current Phase', String(phaseNumber));
+      if (result) { content = result; updated.push('Current Phase'); }
 
-    // Update Current Plan to 1 (starting from the first plan)
-    result = stateReplaceField(content, 'Current Plan', '1');
-    if (result) { content = result; updated.push('Current Plan'); }
-
-    // Update Total Plans in Phase
-    if (planCount) {
-      result = stateReplaceField(content, 'Total Plans in Phase', String(planCount));
-      if (result) { content = result; updated.push('Total Plans in Phase'); }
-    }
-
-    // Update **Current focus:** body text line (#1104)
-    const focusLabel = phaseName ? `Phase ${phaseNumber} — ${phaseName}` : `Phase ${phaseNumber}`;
-    const focusPattern = /(\*\*Current focus:\*\*\s*).*/i;
-    if (focusPattern.test(content)) {
-      content = content.replace(focusPattern, (_match, prefix) => `${prefix}${focusLabel}`);
-      updated.push('Current focus');
-    }
-
-    // Update ## Current Position section (#1104, #1365)
-    // Update individual fields within Current Position instead of replacing the
-    // entire section, so that Status, Last activity, and Progress are preserved.
-    const positionPattern = /(##\s*Current Position\s*\n)([\s\S]*?)(?=\n##|$)/i;
-    const positionMatch = content.match(positionPattern);
-    if (positionMatch) {
-      const header = positionMatch[1];
-      let posBody = positionMatch[2];
-
-      // Update or insert Phase line
-      const newPhase = `Phase: ${phaseNumber}${phaseName ? ` (${phaseName})` : ''} — EXECUTING`;
-      if (/^Phase:/m.test(posBody)) {
-        posBody = posBody.replace(/^Phase:.*$/m, newPhase);
-      } else {
-        posBody = newPhase + '\n' + posBody;
+      // Update Current Phase Name
+      if (phaseName) {
+        result = stateReplaceField(content, 'Current Phase Name', phaseName);
+        if (result) { content = result; updated.push('Current Phase Name'); }
       }
 
-      // Update or insert Plan line
-      const newPlan = `Plan: 1 of ${planCount || '?'}`;
-      if (/^Plan:/m.test(posBody)) {
-        posBody = posBody.replace(/^Plan:.*$/m, newPlan);
-      } else {
-        posBody = posBody.replace(/^(Phase:.*$)/m, `$1\n${newPlan}`);
+      // Update Current Plan to 1 (starting from the first plan)
+      result = stateReplaceField(content, 'Current Plan', '1');
+      if (result) { content = result; updated.push('Current Plan'); }
+
+      // Update Total Plans in Phase
+      if (planCount) {
+        result = stateReplaceField(content, 'Total Plans in Phase', String(planCount));
+        if (result) { content = result; updated.push('Total Plans in Phase'); }
       }
 
-      // Update Status line if present
-      const newStatus = `Status: Executing Phase ${phaseNumber}`;
-      if (/^Status:/m.test(posBody)) {
-        posBody = posBody.replace(/^Status:.*$/m, newStatus);
+      // Update **Current focus:** body text line (#1104)
+      const focusLabel = phaseName ? `Phase ${phaseNumber} — ${phaseName}` : `Phase ${phaseNumber}`;
+      const focusPattern = /(\*\*Current focus:\*\*\s*).*/i;
+      if (focusPattern.test(content)) {
+        content = content.replace(focusPattern, (_match, prefix) => `${prefix}${focusLabel}`);
+        updated.push('Current focus');
       }
 
-      // Update Last activity line if present
-      const newActivity = `Last activity: ${today} -- Phase ${phaseNumber} execution started`;
-      if (/^Last activity:/im.test(posBody)) {
-        posBody = posBody.replace(/^Last activity:.*$/im, newActivity);
-      }
+      // Update ## Current Position section (#1104, #1365)
+      const positionPattern = /(##\s*Current Position\s*\n)([\s\S]*?)(?=\n##|$)/i;
+      const positionMatch = content.match(positionPattern);
+      if (positionMatch) {
+        const header = positionMatch[1];
+        let posBody = positionMatch[2];
 
-      content = content.replace(positionPattern, `${header}${posBody}`);
-      updated.push('Current Position');
+        // Update or insert Phase line
+        const newPhase = `Phase: ${phaseNumber}${phaseName ? ` (${phaseName})` : ''} — EXECUTING`;
+        if (/^Phase:/m.test(posBody)) {
+          posBody = posBody.replace(/^Phase:.*$/m, newPhase);
+        } else {
+          posBody = newPhase + '\n' + posBody;
+        }
+
+        // Update or insert Plan line
+        const newPlan = `Plan: 1 of ${planCount || '?'}`;
+        if (/^Plan:/m.test(posBody)) {
+          posBody = posBody.replace(/^Plan:.*$/m, newPlan);
+        } else {
+          posBody = posBody.replace(/^(Phase:.*$)/m, `$1\n${newPlan}`);
+        }
+
+        // Update Status line if present
+        const newStatus = `Status: Executing Phase ${phaseNumber}`;
+        if (/^Status:/m.test(posBody)) {
+          posBody = posBody.replace(/^Status:.*$/m, newStatus);
+        }
+
+        // Update Last activity line if present
+        const newActivity = `Last activity: ${today} -- Phase ${phaseNumber} execution started`;
+        if (/^Last activity:/im.test(posBody)) {
+          posBody = posBody.replace(/^Last activity:.*$/im, newActivity);
+        }
+
+        content = content.replace(positionPattern, () => `${header}${posBody}`);
+        updated.push('Current Position');
+      }
+    } else {
+      // Resume path: only update Last activity timestamp in Current Position
+      // (do not touch Plan:, stopped_at, progress.percent, or plan counter)
+      const positionPattern = /(##\s*Current Position\s*\n)([\s\S]*?)(?=\n##|$)/i;
+      const positionMatch = content.match(positionPattern);
+      if (positionMatch) {
+        const header = positionMatch[1];
+        let posBody = positionMatch[2];
+        const resumeActivity = `Last activity: ${today} -- Phase ${phaseNumber} execution resumed (wave continue)`;
+        if (/^Last activity:/im.test(posBody)) {
+          posBody = posBody.replace(/^Last activity:.*$/im, resumeActivity);
+          content = content.replace(positionPattern, () => `${header}${posBody}`);
+          updated.push('Last activity (resume)');
+        }
+      }
     }
 
     return content;
@@ -1141,8 +1240,8 @@ function cmdSignalWaiting(cwd, type, question, options, phase, raw) {
   };
 
   try {
-    fs.mkdirSync(gsdDir, { recursive: true });
-    fs.writeFileSync(waitingPath, JSON.stringify(signal, null, 2), 'utf-8');
+    platformEnsureDir(gsdDir);
+    platformWriteSync(waitingPath, JSON.stringify(signal, null, 2));
     output({ signaled: true, path: waitingPath }, raw, 'true');
   } catch (e) {
     output({ signaled: false, error: e.message }, raw, 'false');
@@ -1202,7 +1301,7 @@ function updatePerformanceMetricsSection(content, cwd, phaseNum, planCount, summ
       tableBody = tableBody ? tableBody + '\n' + newRow : newRow;
     }
 
-    content = content.replace(byPhaseTablePattern, `$1${tableBody}\n`);
+    content = content.replace(byPhaseTablePattern, (_match, tableHeader) => `${tableHeader}${tableBody}\n`);
   }
 
   return content;
@@ -1271,7 +1370,7 @@ function cmdStateMilestoneSwitch(cwd, version, name, raw) {
 
   const lockPath = acquireStateLock(statePath);
   try {
-    const content = fs.existsSync(statePath) ? fs.readFileSync(statePath, 'utf-8') : '';
+    const content = platformReadSync(statePath) || '';
     const existingFm = extractFrontmatter(content);
     const body = stripFrontmatter(content);
 
@@ -1307,7 +1406,7 @@ function cmdStateMilestoneSwitch(cwd, version, name, raw) {
 
     const yamlStr = reconstructFrontmatter(fm);
     const assembled = `---\n${yamlStr}\n---\n\n${newBody.replace(/^\n+/, '')}`;
-    atomicWriteFileSync(statePath, normalizeMd(assembled), 'utf-8');
+    platformWriteSync(statePath, assembled);
     output(
       { switched: true, version, name: resolvedName, status: 'planning' },
       raw,
@@ -1348,9 +1447,7 @@ function cmdStateValidate(cwd, raw) {
       const phaseDir = entries.find(e => e.isDirectory() && e.name.startsWith(normalized.replace(/^0+/, '').padStart(2, '0')));
       if (phaseDir) {
         const phaseDirPath = path.join(phasesDir, phaseDir.name);
-        const files = fs.readdirSync(phaseDirPath);
-        const diskPlans = files.filter(f => f.match(/-PLAN\.md$/i)).length;
-        const diskSummaries = files.filter(f => f.match(/-SUMMARY\.md$/i)).length;
+        const { planCount: diskPlans, summaryCount: diskSummaries } = scanPhasePlans(phaseDirPath);
 
         // Check plan count mismatch
         if (totalPlansInPhase !== null && diskPlans !== totalPlansInPhase) {
@@ -1359,6 +1456,7 @@ function cmdStateValidate(cwd, raw) {
         }
 
         // Check for VERIFICATION.md
+        const files = fs.readdirSync(phaseDirPath);
         const verificationFiles = files.filter(f => f.includes('VERIFICATION') && f.endsWith('.md'));
         for (const vf of verificationFiles) {
           try {
@@ -1423,6 +1521,7 @@ function cmdStateSync(cwd, options, raw) {
 
   let totalDiskPlans = 0;
   let totalDiskSummaries = 0;
+  let diskCompletedPhases = 0;
   let highestIncompletePhase = null;
   let highestIncompletePhaseNum = null;
   let highestIncompletePhaseplanCount = 0;
@@ -1430,11 +1529,10 @@ function cmdStateSync(cwd, options, raw) {
 
   for (const dir of entries) {
     const dirPath = path.join(phasesDir, dir);
-    const files = fs.readdirSync(dirPath);
-    const plans = files.filter(f => f.match(/-PLAN\.md$/i)).length;
-    const summaries = files.filter(f => f.match(/-SUMMARY\.md$/i)).length;
+    const { planCount: plans, summaryCount: summaries, completed } = scanPhasePlans(dirPath);
     totalDiskPlans += plans;
     totalDiskSummaries += summaries;
+    if (completed) diskCompletedPhases++;
 
     // Track the highest phase with incomplete plans (or any plans)
     const phaseMatch = dir.match(/^(\d+[A-Z]?(?:\.\d+)*)/i);
@@ -1455,6 +1553,18 @@ function cmdStateSync(cwd, options, raw) {
     }
   }
 
+  // Determine total phases from ROADMAP (may be larger than realized disk dirs).
+  // Mirrors the logic in buildStateFrontmatter so both report consistent percents (#3242 Bug B).
+  let syncTotalPhases = null;
+  try {
+    const isDirInMilestone = getMilestonePhaseFilter(cwd);
+    if (isDirInMilestone.phaseCount > 0) {
+      syncTotalPhases = Math.max(entries.length, isDirInMilestone.phaseCount);
+    } else {
+      syncTotalPhases = entries.length;
+    }
+  } catch { /* intentionally empty */ }
+
   // Sync Total Plans in Phase
   if (highestIncompletePhase) {
     const currentPlansField = stateExtractField(modified, 'Total Plans in Phase');
@@ -1465,8 +1575,13 @@ function cmdStateSync(cwd, options, raw) {
     }
   }
 
-  // Sync Progress
-  const percent = totalDiskPlans > 0 ? Math.min(100, Math.round(totalDiskSummaries / totalDiskPlans * 100)) : 0;
+  // Sync Progress — use shared helper so formula stays in one place (#3242 Bug B).
+  // computeProgressPercent applies min(plan_fraction, phase_fraction) so unrealised
+  // ROADMAP phases cap the reported percent rather than allowing a false 100%.
+  const percent = (() => {
+    const p = computeProgressPercent(totalDiskSummaries, totalDiskPlans, diskCompletedPhases, syncTotalPhases);
+    return p !== null ? p : 0;
+  })();
   const currentProgress = stateExtractField(modified, 'Progress');
   if (currentProgress) {
     const currentPercent = parseInt(currentProgress.replace(/[^\d]/g, ''), 10);
@@ -1660,17 +1775,15 @@ function cmdStatePrune(cwd, options, raw) {
   // Write archived entries to STATE-ARCHIVE.md
   if (archived.length > 0) {
     const timestamp = new Date().toISOString().split('T')[0];
-    let archiveContent = '';
-    if (fs.existsSync(archivePath)) {
-      archiveContent = fs.readFileSync(archivePath, 'utf-8');
-    } else {
+    let archiveContent = platformReadSync(archivePath);
+    if (archiveContent === null) {
       archiveContent = '# STATE Archive\n\nPruned entries from STATE.md. Recoverable but no longer loaded into agent context.\n\n';
     }
     archiveContent += `## Pruned ${timestamp} (phases 1-${cutoff}, kept recent ${keepRecent})\n\n`;
     for (const section of archived) {
       archiveContent += `### ${section.section}\n\n${section.lines.join('\n')}\n\n`;
     }
-    atomicWriteFileSync(archivePath, archiveContent);
+    platformWriteSync(archivePath, archiveContent);
   }
 
   const totalPruned = archived.reduce((sum, s) => sum + s.count, 0);
@@ -1690,32 +1803,57 @@ function cmdStatePrune(cwd, options, raw) {
  * that the phase execution is finished and the project is ready for the next phase.
  * Implements the `gsd state complete-phase` subcommand (issue #2735).
  */
-function cmdStateCompletePhase(cwd, raw) {
+function resolvePhaseIdForCompletePhase(content, overridePhase) {
+  const candidate = overridePhase ||
+    stateExtractField(content, 'Current Phase') ||
+    stateExtractField(content, 'Phase') ||
+    '';
+
+  // Accept canonical phase token only (e.g. 3, 03, 3A, 3.3, 10.2)
+  const phaseMatch = String(candidate).match(/(\d+[A-Z]?(?:\.\d+)*)/i);
+  return phaseMatch ? phaseMatch[1] : null;
+}
+
+function cmdStateCompletePhase(cwd, raw, overridePhase) {
   const statePath = planningPaths(cwd).state;
   if (!fs.existsSync(statePath)) {
     output({ error: 'STATE.md not found' }, raw);
     return;
   }
 
+  const content = fs.readFileSync(statePath, 'utf-8');
+  const resolvedPhase = resolvePhaseIdForCompletePhase(content, overridePhase);
+  if (!resolvedPhase || /^phase$/i.test(resolvedPhase)) {
+    output({ error: 'Unable to resolve current phase. Pass an explicit phase: state complete-phase --phase <N>' }, raw);
+    return;
+  }
+
+  // Idempotency guard (#3489). If STATE.md's canonical `Current Phase` field
+  // already names a phase distinct from the one we are being asked to mark
+  // complete, the project has advanced past the requested phase (e.g. a
+  // follow-up phase was inserted, or the next phase began). Re-running
+  // `state complete-phase --phase <N>` in that situation previously rolled
+  // STATE.md back to <N>'s moment-of-completion — silently clobbering Status,
+  // Last Activity, Last Activity Description, and the Current Position body.
+  // The handler is now a no-op in that case so re-invocation from downstream
+  // workflows cannot regress the project state.
+  const existingCurrentPhaseRaw = stateExtractField(content, 'Current Phase') || '';
+  const existingCurrentPhaseMatch = String(existingCurrentPhaseRaw).match(/(\d+[A-Z]?(?:\.\d+)*)/i);
+  const existingCurrentPhase = existingCurrentPhaseMatch ? existingCurrentPhaseMatch[1] : null;
+  if (existingCurrentPhase && existingCurrentPhase !== resolvedPhase) {
+    output(
+      { updated: [], phase: resolvedPhase, idempotent: true, note: 'phase already superseded; no-op' },
+      raw,
+      'false',
+    );
+    return;
+  }
+
   const today = new Date().toISOString().split('T')[0];
   const updated = [];
-  let resolvedPhase = '?';
 
   readModifyWriteStateMd(statePath, (content) => {
-    // Read the current phase number for descriptive messages.
-    //
-    // The 'Phase' fallback can match the decorated body line under
-    // `## Current Position` (e.g. `Phase: 01 (Foo) — EXECUTING`), which would
-    // flow downstream into messy `Status: Phase 01 (Foo) — EXECUTING complete`
-    // output. Strip everything past the leading numeric/decimal token so the
-    // fallback path produces a clean phase identifier matching the canonical
-    // `Current Phase` field. CodeRabbit nitpick on PR #2761.
-    const rawPhase = stateExtractField(content, 'Current Phase') ||
-                     stateExtractField(content, 'Phase') ||
-                     '';
-    const phaseToken = rawPhase.match(/^\s*([\w.-]+)/);
-    const currentPhase = phaseToken ? phaseToken[1] : '?';
-    resolvedPhase = currentPhase;
+    const currentPhase = resolvedPhase;
 
     // Update Status field
     const statusValue = `Phase ${currentPhase} complete`;
@@ -1756,7 +1894,7 @@ function cmdStateCompletePhase(cwd, raw) {
         posBody = posBody.replace(/^Last activity:.*$/im, newActivity);
       }
 
-      content = content.replace(positionPattern, `${header}${posBody}`);
+      content = content.replace(positionPattern, () => `${header}${posBody}`);
       updated.push('Current Position');
     }
 

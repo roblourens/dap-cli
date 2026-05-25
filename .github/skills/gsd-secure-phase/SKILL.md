@@ -2,7 +2,7 @@
 name: gsd-secure-phase
 description: "Retroactively verify threat mitigations for a completed phase"
 argument-hint: "[phase number]"
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, AskUserQuestion
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 ---
 
 <objective>
@@ -23,6 +23,6 @@ Phase: $ARGUMENTS — optional, defaults to last completed phase.
 </context>
 
 <process>
-Execute @.github/get-shit-done/workflows/secure-phase.md.
+Execute end-to-end.
 Preserve all workflow gates.
 </process>

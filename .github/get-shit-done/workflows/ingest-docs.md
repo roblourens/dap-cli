@@ -56,7 +56,7 @@ INIT=$(node ".github/get-shit-done/bin/gsd-tools.cjs" init ingest-docs)
 if [[ "$INIT" == @file:* ]]; then INIT=$(cat "${INIT#@file:}"); fi
 ```
 
-Parse `project_exists`, `planning_exists`, `has_git`, `project_path` from INIT.
+Parse `project_exists`, `planning_exists`, `has_git`, `git_worktree_root`, `in_nested_subdir`, `project_path` from INIT.
 
 **Auto-detect MODE** if not set:
 - `planning_exists: true` → `MODE=merge`
@@ -64,7 +64,12 @@ Parse `project_exists`, `planning_exists`, `has_git`, `project_path` from INIT.
 
 If user passed `--mode new` but `.planning/` already exists: display warning and require explicit confirm via `AskUserQuestion` (approve-revise-abort from `references/gate-prompts.md`) before overwriting.
 
-If `has_git: false` and `MODE=new`: initialize git:
+Git initialisation (Bug #3491 — never create a nested `.git` inside an existing worktree):
+
+- If `has_git: true` and `in_nested_subdir: true`: do NOT run `git init`. Surface a warning that planning files will be tracked by the outer repo at `git_worktree_root`.
+- If `has_git: true` and `in_nested_subdir: false`: already at a worktree root, skip `git init`.
+- If `has_git: false` and `MODE=new`: initialize git:
+
 ```bash
 git init
 ```
@@ -178,7 +183,7 @@ Collect the one-line confirmations from each classifier. If any classifier error
 Spawn `gsd-doc-synthesizer` once:
 
 ```
-Task({
+Agent({
   subagent_type: "gsd-doc-synthesizer",
   prompt: "
     CLASSIFICATIONS_DIR: .planning/intel/classifications/
@@ -196,7 +201,7 @@ Task({
 })
 ```
 
-> **ORCHESTRATOR RULE — CODEX RUNTIME**: After calling Task() above, stop working on this task immediately. Do not read or synthesize any classified documents independently while the subagent is active. Wait for the subagent to return its result. This prevents duplicate work, conflicting edits, and wasted context. Only resume when the subagent result is available.
+> **ORCHESTRATOR RULE — CODEX RUNTIME**: After calling Agent() above, stop working on this task immediately. Do not read or synthesize any classified documents independently while the subagent is active. Wait for the subagent to return its result. This prevents duplicate work, conflicting edits, and wasted context. Only resume when the subagent result is available.
 
 The synthesizer writes:
 - `.planning/intel/decisions.md`, `.planning/intel/requirements.md`, `.planning/intel/constraints.md`, `.planning/intel/context.md`
@@ -245,7 +250,7 @@ Audit PROJECT.md field requirements that `gsd-roadmapper` expects. For fields de
 Delegate to `gsd-roadmapper`:
 
 ```
-Task({
+Agent({
   subagent_type: "gsd-roadmapper",
   prompt: "
     Mode: new-project-from-ingest
@@ -264,7 +269,7 @@ Task({
 })
 ```
 
-> **ORCHESTRATOR RULE — CODEX RUNTIME**: After calling Task() above, stop working on this task immediately. Do not read more intel files, write planning artifacts, or create ROADMAP.md independently while the subagent is active. Wait for the subagent to return its result. This prevents duplicate work, conflicting edits, and wasted context. Only resume when the subagent result is available.
+> **ORCHESTRATOR RULE — CODEX RUNTIME**: After calling Agent() above, stop working on this task immediately. Do not read more intel files, write planning artifacts, or create ROADMAP.md independently while the subagent is active. Wait for the subagent to return its result. This prevents duplicate work, conflicting edits, and wasted context. Only resume when the subagent result is available.
 
 </step>
 

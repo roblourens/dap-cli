@@ -2,7 +2,7 @@
 name: gsd-docs-update
 description: "Generate or update project documentation verified against the codebase"
 argument-hint: "[--force] [--verify-only]"
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, AskUserQuestion
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 ---
 
 <objective>
@@ -36,6 +36,6 @@ Arguments: $ARGUMENTS
 </context>
 
 <process>
-Execute the docs-update workflow from @.github/get-shit-done/workflows/docs-update.md end-to-end.
+Execute end-to-end.
 Preserve all workflow gates (preservation_check, flag handling, wave execution, monorepo dispatch, commit, reporting).
 </process>

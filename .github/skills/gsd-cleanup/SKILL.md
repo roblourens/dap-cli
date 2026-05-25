@@ -15,6 +15,6 @@ Use when `.planning/phases/` has accumulated directories from past milestones.
 </execution_context>
 
 <process>
-Follow the cleanup workflow at @.github/get-shit-done/workflows/cleanup.md.
+Execute end-to-end.
 Identify completed milestones, show a dry-run summary, and archive on confirmation.
 </process>

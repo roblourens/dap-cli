@@ -20,7 +20,18 @@ This prevents the two most common AI development failures: choosing the wrong fr
 ## 1. Initialize
 
 ```bash
-INIT=$(gsd-sdk query init.plan-phase "$PHASE")
+# SDK resolution: prefer local gsd-tools.cjs, fall back to global gsd-sdk (#3668)
+GSD_TOOLS="${RUNTIME_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/get-shit-done/bin/gsd-tools.cjs"
+if [ -f "$GSD_TOOLS" ]; then
+  GSD_SDK="node $GSD_TOOLS"
+elif command -v gsd-sdk >/dev/null 2>&1; then
+  GSD_SDK="gsd-sdk"
+else
+  echo "ERROR: gsd-sdk not found on PATH and $GSD_TOOLS does not exist." >&2
+  echo "Run: npx get-shit-done-cc@latest --claude --local" >&2
+  exit 1
+fi
+INIT=$($GSD_SDK query init.plan-phase "$PHASE")
 if [[ "$INIT" == @file:* ]]; then INIT=$(cat "${INIT#@file:}"); fi
 ```
 
@@ -30,15 +41,15 @@ Parse JSON for: `phase_dir`, `phase_number`, `phase_name`, `phase_slug`, `padded
 
 Resolve agent models:
 ```bash
-SELECTOR_MODEL=$(gsd-sdk query resolve-model gsd-framework-selector 2>/dev/null | jq -r '.model' 2>/dev/null || true)
-RESEARCHER_MODEL=$(gsd-sdk query resolve-model gsd-ai-researcher 2>/dev/null | jq -r '.model' 2>/dev/null || true)
-DOMAIN_MODEL=$(gsd-sdk query resolve-model gsd-domain-researcher 2>/dev/null | jq -r '.model' 2>/dev/null || true)
-PLANNER_MODEL=$(gsd-sdk query resolve-model gsd-eval-planner 2>/dev/null | jq -r '.model' 2>/dev/null || true)
+SELECTOR_MODEL=$($GSD_SDK query resolve-model gsd-framework-selector 2>/dev/null | jq -r '.model' 2>/dev/null || true)
+RESEARCHER_MODEL=$($GSD_SDK query resolve-model gsd-ai-researcher 2>/dev/null | jq -r '.model' 2>/dev/null || true)
+DOMAIN_MODEL=$($GSD_SDK query resolve-model gsd-domain-researcher 2>/dev/null | jq -r '.model' 2>/dev/null || true)
+PLANNER_MODEL=$($GSD_SDK query resolve-model gsd-eval-planner 2>/dev/null | jq -r '.model' 2>/dev/null || true)
 ```
 
 Check config:
 ```bash
-AI_PHASE_ENABLED=$(gsd-sdk query config-get workflow.ai_integration_phase 2>/dev/null || echo "true")
+AI_PHASE_ENABLED=$($GSD_SDK query config-get workflow.ai_integration_phase 2>/dev/null || echo "true")
 ```
 
 **If `AI_PHASE_ENABLED` is `false`:**
@@ -54,7 +65,7 @@ Exit workflow.
 Extract phase number from $ARGUMENTS. If not provided, detect next unplanned phase.
 
 ```bash
-PHASE_INFO=$(gsd-sdk query roadmap.get-phase "${PHASE}")
+PHASE_INFO=$($GSD_SDK query roadmap.get-phase "${PHASE}")
 ```
 
 **If `found` is false:** Error with available phases.
@@ -139,6 +150,8 @@ Fill in header fields:
 
 ## 7. Spawn gsd-ai-researcher
 
+> **Ordering note (prevents tool-level last-writer-wins race):** Steps 7 and 8 write disjoint sections of AI-SPEC.md but MUST run sequentially — wait for Step 7 to complete before spawning Step 8. Both agents use the `Edit` tool exclusively (never `Write`) when modifying AI-SPEC.md. A `Write` on a shared file replaces the entire file, silently overwriting the other agent's work; `Edit` targets only the relevant lines. See #3096 for a confirmed 40%-incidence race on parallel dispatch.
+
 Display:
 ```
 ◆ Step 2/4 — Researching {primary_framework} docs + AI systems best practices...
@@ -148,9 +161,12 @@ Spawn `gsd-ai-researcher` with:
 ```markdown
 Read .github/agents/gsd-ai-researcher.md for instructions.
 
+**Tool discipline (mandatory):**
+Use the Edit tool exclusively when modifying AI-SPEC.md — NEVER use Write on this file.
+Write replaces the entire file and will overwrite work from parallel or sequential sibling agents.
+Before editing, verify the section you are about to write is still a template placeholder.
+
 <objective>
-Research {primary_framework} for Phase {phase_number}: {phase_name}
-Write Sections 3 and 4 of AI-SPEC.md
 </objective>
 
 <files_to_read>
@@ -169,6 +185,8 @@ phase_context: Phase {phase_number}: {phase_name} — {phase_goal}
 
 ## 8. Spawn gsd-domain-researcher
 
+> **Wait for Step 7 to complete before spawning this step** (see ordering note in Step 7).
+
 Display:
 ```
 ◆ Step 3/4 — Researching domain context and expert evaluation criteria...
@@ -178,9 +196,12 @@ Spawn `gsd-domain-researcher` with:
 ```markdown
 Read .github/agents/gsd-domain-researcher.md for instructions.
 
+**Tool discipline (mandatory):**
+Use the Edit tool exclusively when modifying AI-SPEC.md — NEVER use Write on this file.
+Write replaces the entire file and will overwrite work from parallel or sequential sibling agents.
+Before editing, verify the section you are about to write is still a template placeholder.
+
 <objective>
-Research the business domain and expert evaluation criteria for Phase {phase_number}: {phase_name}
-Write Section 1b (Domain Context) of AI-SPEC.md
 </objective>
 
 <files_to_read>

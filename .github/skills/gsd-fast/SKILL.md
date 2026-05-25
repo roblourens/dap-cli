@@ -21,5 +21,5 @@ you could describe in one sentence and execute in under 2 minutes.
 </execution_context>
 
 <process>
-Execute the fast workflow from @.github/get-shit-done/workflows/fast.md end-to-end.
+Execute end-to-end.
 </process>

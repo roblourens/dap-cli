@@ -2,7 +2,7 @@
 name: gsd-eval-review
 description: "Audit an executed AI phase's evaluation coverage and produce an EVAL-REVIEW.md remediation plan."
 argument-hint: "[phase number]"
-allowed-tools: Read, Write, Bash, Glob, Grep, Task, AskUserQuestion
+allowed-tools: Read, Write, Bash, Glob, Grep, Agent, AskUserQuestion
 ---
 
 <objective>
@@ -21,6 +21,6 @@ Phase: $ARGUMENTS — optional, defaults to last completed phase.
 </context>
 
 <process>
-Execute @.github/get-shit-done/workflows/eval-review.md end-to-end.
+Execute end-to-end.
 Preserve all workflow gates.
 </process>
