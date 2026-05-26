@@ -54,4 +54,4 @@ jobs:
         run: npm run check
 
       - name: Publish to npm (trusted publishing + provenance)
-        run: npm publish --provenance --access public
+        run: npm publish --provenance --access public --ignore-scripts
