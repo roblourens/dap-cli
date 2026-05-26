@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: (next)
 status: milestone_complete
-last_updated: 2026-05-25T22:50:54.523Z
-last_activity: 2026-05-25
+last_updated: 2026-05-26T00:55:00.000Z
+last_activity: 2026-05-26
 progress:
   total_phases: 2
   completed_phases: 1
@@ -142,6 +142,7 @@ None yet.
 |----|------|------|---------|
 | 260504-rp5 | reverse-duplicate-name-session-disambigu | 2026-05-04 | Reject duplicate `--name` at session create time (`session_name_in_use`); resolver prefers live records over terminated when matching by name. Reverses earlier `session_ambiguous` design. |
 | 260516-lmy | here-s-an-error-that-was-reported-by-an- | 2026-05-16 | Shape ordinary stop/detach DAP disconnect payloads so js-debug never receives undefined disconnect args, with controller and CLI regression coverage. |
+| 260525-ot8 | set-up-npm-publishing-via-github-actions | 2026-05-26 | Added `.github/workflows/publish.yml` (release-triggered, Node 22, tag↔version guard, `npm run check`, `npm publish --provenance --access public`) and a README "Releasing" section documenting `NPM_TOKEN` setup. |
 
 ## Session Continuity
 
