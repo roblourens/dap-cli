@@ -58,7 +58,7 @@ export async function extractZip(archivePath: string, destDir: string): Promise<
         } catch {
           // ignore close errors during failure path
         }
-        reject(err);
+        reject(err instanceof Error ? err : new Error(String(err)));
       };
 
       zip.on('error', handleError);

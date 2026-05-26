@@ -204,6 +204,9 @@ describe('module boundaries', () => {
         .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
       for (const match of sourceNoComments.matchAll(codePattern)) {
         const code = match[1];
+        if (code === undefined) {
+          continue;
+        }
         expect(
           code.startsWith('provision_'),
           `${file} uses non-provision_ code "${code}" — D-15 requires every error in src/adapters/provision/ to be provision_*`,

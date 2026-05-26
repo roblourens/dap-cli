@@ -32,7 +32,7 @@ import {
 /** Pick the (code, diagnostics, data) triplet from a CliError for snapshotting. */
 function pickEnvelope(
   err: unknown,
-  scrub: Array<[RegExp, string]> = [],
+  scrub: Array<[RegExp | string, string]> = [],
 ): {
   code: string | undefined;
   diagnostics: readonly string[];
@@ -72,6 +72,14 @@ function createSinkStderr(): NodeJS.WriteStream {
 }
 
 const PLATFORM_KEY: DelvePlatformKey = 'darwin_arm64';
+
+function setDelveSha(sha: string): void {
+  const bucket = DELVE_CHECKSUMS[DELVE_VERSION];
+  if (bucket === undefined) {
+    throw new Error(`DELVE_CHECKSUMS missing bucket for ${DELVE_VERSION}`);
+  }
+  bucket[PLATFORM_KEY] = sha;
+}
 const BARE_VERSION = DELVE_VERSION.startsWith('v') ? DELVE_VERSION.slice(1) : DELVE_VERSION;
 const RELEASE_PATH = `/go-delve/delve/releases/download/${DELVE_VERSION}/dlv_${BARE_VERSION}_${PLATFORM_KEY}.tar.gz`;
 
@@ -252,7 +260,7 @@ describe('provision error envelope snapshots', () => {
 
   test('provision_checksum_mismatch', async () => {
     const tarball = await buildDelveTarball(workDir);
-    DELVE_CHECKSUMS[DELVE_VERSION][PLATFORM_KEY] = 'f'.repeat(64);
+    setDelveSha('f'.repeat(64));
     server = await startFakeReleaseServer([
       { match: req => req.url === RELEASE_PATH, respond: serveBuffer(tarball.body) },
     ]);

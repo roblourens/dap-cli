@@ -73,6 +73,14 @@ function createSinkStderr(): NodeJS.WriteStream {
   return { write: (_chunk: unknown): boolean => true } as unknown as NodeJS.WriteStream;
 }
 
+function setDelveSha(platform: DelvePlatformKey, sha: string): void {
+  const bucket = DELVE_CHECKSUMS[DELVE_VERSION];
+  if (bucket === undefined) {
+    throw new Error(`DELVE_CHECKSUMS missing bucket for ${DELVE_VERSION}`);
+  }
+  bucket[platform] = sha;
+}
+
 describe.skipIf(process.platform === 'win32')('runSetupAdaptersAction', () => {
   let workDir: string;
   let server: FakeReleaseServer | undefined;
@@ -167,7 +175,7 @@ describe.skipIf(process.platform === 'win32')('runSetupAdaptersAction', () => {
     const delveTarball = await buildDelveTarball(workDir);
     // Mutate the expected js-debug SHA to an invalid value so verification fails.
     JS_DEBUG_CHECKSUMS[JS_DEBUG_VERSION] = '0'.repeat(64);
-    DELVE_CHECKSUMS[DELVE_VERSION][DELVE_PLATFORM] = delveTarball.sha256;
+    setDelveSha(DELVE_PLATFORM, delveTarball.sha256);
 
     server = await startFakeReleaseServer([
       {
@@ -246,7 +254,7 @@ describe.skipIf(process.platform === 'win32')('runSetupAdaptersAction', () => {
       const jsTarball = await buildJsDebugTarball(workDir);
       const delveTarball = await buildDelveTarball(workDir);
       JS_DEBUG_CHECKSUMS[JS_DEBUG_VERSION] = jsTarball.sha256;
-      DELVE_CHECKSUMS[DELVE_VERSION][DELVE_PLATFORM] = delveTarball.sha256;
+      setDelveSha(DELVE_PLATFORM, delveTarball.sha256);
 
       server = await startFakeReleaseServer([
         {

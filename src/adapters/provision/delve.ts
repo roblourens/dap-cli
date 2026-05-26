@@ -122,8 +122,8 @@ export async function provisionDelve(ctx: ProvisionContext): Promise<ProvisionRe
       `Downloads the official release asset ${asset.archiveName} from github.com/go-delve/delve.`,
       'The archive SHA-256 is verified against an embedded checksum before installation.',
     ],
-    stdin,
-    stderr,
+    ...(stdin === undefined ? {} : { stdin }),
+    ...(stderr === undefined ? {} : { stderr }),
   });
 
   await withAdapterLock(adaptersDir, 'delve', async () => {

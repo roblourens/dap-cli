@@ -60,7 +60,7 @@ export function createProgram(options: ProgramOptions = {}): Command {
   // factories and subcommand actions (which may not have a reference to the
   // commander program) can read DAP_CLI_ASSUME_YES through one canonical path.
   program.hook('preAction', (thisCommand) => {
-    const opts = thisCommand.opts() as { yes?: unknown };
+    const opts = thisCommand.opts();
     if (opts.yes === true) {
       process.env.DAP_CLI_ASSUME_YES = '1';
     }

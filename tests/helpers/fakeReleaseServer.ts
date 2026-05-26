@@ -39,7 +39,7 @@ export async function startFakeReleaseServer(handlers: readonly FakeReleaseHandl
           res.statusCode = 500;
         }
         res.end();
-        // eslint-disable-next-line no-console
+         
         console.error('FakeReleaseServer handler error:', error);
       }
     })();

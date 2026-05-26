@@ -6,8 +6,8 @@
 import { register } from 'node:module';
 register('./dev/strip-types-resolve-loader.mjs', import.meta.url);
 
-const { runSetupAdaptersAction } = await import('../src/cli/commands/setupAdapters.ts');
-const { resolveAssumeYes } = await import('../src/cli/confirm.ts');
+const { runSetupAdaptersAction } = await import('../src/cli/commands/setupAdapters.js');
+const { resolveAssumeYes } = await import('../src/cli/confirm.js');
 
 const args = process.argv.slice(2);
 const raw = args[args.indexOf('--adapter') + 1];

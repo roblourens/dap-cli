@@ -20,6 +20,14 @@ import {
 
 // Force a deterministic platform for the provisioner so tests are platform-agnostic.
 const PLATFORM_KEY: DelvePlatformKey = 'darwin_arm64';
+
+function setDelveSha(sha: string): void {
+  const bucket = DELVE_CHECKSUMS[DELVE_VERSION];
+  if (bucket === undefined) {
+    throw new Error(`DELVE_CHECKSUMS missing bucket for ${DELVE_VERSION}`);
+  }
+  bucket[PLATFORM_KEY] = sha;
+}
 const BARE_VERSION = DELVE_VERSION.startsWith('v') ? DELVE_VERSION.slice(1) : DELVE_VERSION;
 const RELEASE_PATH = `/go-delve/delve/releases/download/${DELVE_VERSION}/dlv_${BARE_VERSION}_${PLATFORM_KEY}.tar.gz`;
 
@@ -77,7 +85,7 @@ describe('provisionDelve', () => {
 
   test('cold cache installs, verifies SHA-256, chmods executable, writes consent marker, fromCache=false', async () => {
     const tarball = await buildDelveTarball(workDir);
-    DELVE_CHECKSUMS[DELVE_VERSION][PLATFORM_KEY] = tarball.sha256;
+    setDelveSha(tarball.sha256);
 
     server = await startFakeReleaseServer([
       {
@@ -115,7 +123,7 @@ describe('provisionDelve', () => {
 
   test('warm cache returns fromCache=true without any network call', async () => {
     const tarball = await buildDelveTarball(workDir);
-    DELVE_CHECKSUMS[DELVE_VERSION][PLATFORM_KEY] = tarball.sha256;
+    setDelveSha(tarball.sha256);
 
     server = await startFakeReleaseServer([
       {
@@ -153,7 +161,7 @@ describe('provisionDelve', () => {
 
   test('checksum mismatch throws provision_checksum_mismatch with no canonical install', async () => {
     const tarball = await buildDelveTarball(workDir);
-    DELVE_CHECKSUMS[DELVE_VERSION][PLATFORM_KEY] = 'f'.repeat(64);
+    setDelveSha('f'.repeat(64));
 
     server = await startFakeReleaseServer([
       {

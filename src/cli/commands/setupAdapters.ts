@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { Command, Option } from 'commander';
+import type { Command} from 'commander';
+import { Option } from 'commander';
 import { provisionAdapter, type AdapterId, type ProvisionContext } from '../../adapters/provision/index.js';
 import {
   DEBUGPY_VERSION,

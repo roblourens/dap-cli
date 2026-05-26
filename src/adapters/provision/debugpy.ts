@@ -62,8 +62,8 @@ export async function provisionDebugpy(ctx: ProvisionContext): Promise<Provision
       'Requires python3 (>=3.8) on PATH.',
       'Creates an isolated venv and pip-installs debugpy. The venv python becomes the adapter command.',
     ],
-    stdin,
-    stderr,
+    ...(stdin === undefined ? {} : { stdin }),
+    ...(stderr === undefined ? {} : { stderr }),
   });
 
   await withAdapterLock(adaptersDir, 'debugpy', async () => {

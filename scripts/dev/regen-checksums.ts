@@ -10,7 +10,11 @@
 
 import { createHash } from 'node:crypto';
 import { Buffer } from 'node:buffer';
-import { JS_DEBUG_VERSION, DELVE_VERSION } from '../../src/adapters/provision/checksums.ts';
+// Dynamic import keeps this maintainer script self-contained at runtime
+// (`node --experimental-strip-types`) without forcing the whole repo to enable
+// `allowImportingTsExtensions`.
+// @ts-expect-error -- TS5097: .ts extension is required at runtime here
+const { JS_DEBUG_VERSION, DELVE_VERSION } = await import('../../src/adapters/provision/checksums.ts');
 
 interface Asset {
   readonly label: string;
@@ -74,7 +78,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  // eslint-disable-next-line no-console
+   
   console.error(err);
   process.exit(1);
 });

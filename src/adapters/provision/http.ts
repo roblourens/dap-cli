@@ -4,7 +4,8 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { fetch, ProxyAgent, type Dispatcher } from 'undici';
-import { usageError, CliError } from '../../cli/errors.js';
+import type { CliError } from '../../cli/errors.js';
+import { usageError } from '../../cli/errors.js';
 
 export interface DownloadOptions {
   readonly url: string;
@@ -213,7 +214,7 @@ export async function downloadToFile(options: DownloadOptions): Promise<void> {
 
   let bytesRead = 0;
   const onProgress = options.onProgress;
-  const body = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);
+  const body = Readable.fromWeb(response.body);
   if (onProgress !== undefined) {
     body.on('data', (chunk: Buffer | string) => {
       bytesRead += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;

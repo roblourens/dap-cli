@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import * as lockfile from 'proper-lockfile';
-import { usageError, CliError } from '../../cli/errors.js';
+import type { CliError } from '../../cli/errors.js';
+import { usageError } from '../../cli/errors.js';
 
 export interface LockOptions {
   /** Override retry settings for tests. */
