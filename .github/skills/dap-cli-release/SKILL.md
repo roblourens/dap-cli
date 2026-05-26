@@ -11,10 +11,12 @@ Publishing `@roblourens/dap-cli` to npm is automated by [.github/workflows/publi
 
 ## Prerequisites (one-time, per repo)
 
-- npmjs.com → Account → Access Tokens → generate an **Automation** token for `@roblourens/dap-cli`.
-- GitHub repo → Settings → Secrets and variables → Actions → add `NPM_TOKEN` with that token value.
+npm trusted publishing is configured for `@roblourens/dap-cli` (the publishing identity is this GitHub repo + the `Publish to npm` workflow). No `NPM_TOKEN` secret is required.
 
-If `NPM_TOKEN` is missing, the publish step fails with a 401 from the registry.
+If the publish step ever fails with a 401, double-check on npmjs.com:
+
+- Package settings → **Trusted Publishers** lists `roblourens/dap-cli`, workflow `.github/workflows/publish.yml`, environment empty.
+- The workflow's `permissions:` block still includes `id-token: write` (required for OIDC).
 
 ## Release steps
 
@@ -72,7 +74,7 @@ If `NPM_TOKEN` is missing, the publish step fails with a 401 from the registry.
    gh run list --workflow publish.yml --limit 3
    ```
 
-   The job runs `npm ci` → tag-vs-version guard → `npm run check` (typecheck, lint, tests, build, packaging) → `npm publish --provenance --access public`. Provenance signing uses the job's OIDC token via `id-token: write`.
+   The job runs `npm ci` → tag-vs-version guard → `npm run check` (typecheck, lint, tests, build, packaging) → `npm publish --provenance --access public`. Authentication is OIDC trusted publishing — the job exchanges its `id-token` for a short-lived npm credential; provenance is signed in the same exchange.
 
 6. **Verify it landed.**
 
@@ -105,4 +107,4 @@ If `NPM_TOKEN` is missing, the publish step fails with a 401 from the registry.
 
 ## Non-goals
 
-This skill does NOT cover changelog curation, prerelease (`-beta`, `-rc`) tags, or migrating off `NPM_TOKEN` to OIDC trusted publishing. Add them as separate skills if needed.
+This skill does NOT cover changelog curation or prerelease (`-beta`, `-rc`) tags. Add them as separate skills if needed.
