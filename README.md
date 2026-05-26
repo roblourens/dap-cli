@@ -19,7 +19,37 @@ npm install -g @roblourens/dap-cli
 dap-cli --version
 ```
 
-The first time the agent uses an adapter, dap-cli provisions it (js-debug binary; a Python venv with debugpy). See [docs/adapter-setup.md](docs/adapter-setup.md) for custom adapters and troubleshooting.
+(Or use `npx @roblourens/dap-cli ...` for one-off invocations — the cache below is shared across both install paths.)
+
+**First launch:** when an agent first runs a `launch` / `attach`, dap-cli prompts before downloading the relevant adapter binary:
+
+```text
+Install vscode-js-debug 1.117.0 into ~/.dap-cli/adapters/js-debug/ (~10MB)? [y/N]
+```
+
+Answer `y`. The adapter is downloaded into `~/.dap-cli/adapters/` once and reused for every subsequent session. Only the adapter you actually use is downloaded — if you only debug Python, you never download js-debug or delve.
+
+**Non-interactive callers (agents, CI, scripts):** pre-consent so the prompt does not block:
+
+```bash
+dap-cli launch --yes --config "Launch App"      # per-invocation flag
+DAP_CLI_ASSUME_YES=1 dap-cli launch ...         # equivalent env var
+```
+
+When stdin is not a TTY and neither `--yes` nor `DAP_CLI_ASSUME_YES=1` is set, dap-cli fails fast with `provision_consent_required` rather than hanging on a prompt nobody can answer.
+
+**Pre-warm the cache (optional):** for sealed CI images or fresh dev machines, install all three built-in adapters up front:
+
+```bash
+dap-cli setup-adapters --yes
+dap-cli setup-adapters --adapter js-debug --yes    # or one at a time
+```
+
+**Custom cache location:** set `DAP_CLI_ADAPTERS_DIR=/path/to/cache` to override the default `~/.dap-cli/adapters/` (useful for shared CI caches or air-gapped pre-staged installs).
+
+See [docs/adapter-setup.md](docs/adapter-setup.md) for the full reference — pinned versions, cache layout, concurrency model, proxy support, the `provision_*` error catalogue, troubleshooting, and custom adapter configuration.
+
+> **Repo contributors:** `npm run setup-adapters` still works as a dev wrapper around `dap-cli setup-adapters`; end users should use the CLI subcommand directly.
 
 ## Install the agent skill
 

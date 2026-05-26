@@ -1,6 +1,8 @@
-import { describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { AdapterRegistry } from '../../src/adapters/registry.js';
 import type { AdapterDescriptor } from '../../src/adapters/descriptor.js';
+import { createCliTestEnv, type CliTestEnv } from '../helpers/runCli.js';
+import { provisionAdapterIntoTempEnv } from '../../src/testing/tempEnv.js';
 
 const builtInAdapter: AdapterDescriptor = {
   id: 'test-built-in',
@@ -15,7 +17,7 @@ const customAdapter: AdapterDescriptor = {
 };
 
 describe('AdapterRegistry', () => {
-  test('resolves built-in adapters before custom adapters', () => {
+  test('resolves built-in adapters before custom adapters', async () => {
     const registry = new AdapterRegistry({
       includeDefaultBuiltIns: false,
       builtInAdapters: [builtInAdapter],
@@ -26,13 +28,13 @@ describe('AdapterRegistry', () => {
       },
     });
 
-    expect(registry.resolve('test-built-in')).toBe(builtInAdapter);
+    expect(await registry.resolve('test-built-in')).toBe(builtInAdapter);
   });
 
-  test('resolves custom adapters from config', () => {
+  test('resolves custom adapters from config', async () => {
     const registry = new AdapterRegistry({ includeDefaultBuiltIns: false, config: { adapters: { custom: customAdapter } } });
 
-    expect(registry.resolve('custom')).toEqual(customAdapter);
+    expect(await registry.resolve('custom')).toEqual(customAdapter);
   });
 
   test('lists built-in and custom adapters', () => {
@@ -44,10 +46,10 @@ describe('AdapterRegistry', () => {
     ]);
   });
 
-  test('reports adapter_not_found for unknown adapters', () => {
+  test('reports adapter_not_found for unknown adapters', async () => {
     const registry = new AdapterRegistry({ includeDefaultBuiltIns: false });
 
-    expect(catchErrorCode(() => registry.resolve('missing'))).toBe('adapter_not_found');
+    await expect(registry.resolve('missing')).rejects.toMatchObject({ code: 'adapter_not_found' });
   });
 
   test('includes js-debug as a lazy built-in adapter', () => {
@@ -62,27 +64,45 @@ describe('AdapterRegistry', () => {
     expect(registry.listAll()).toContainEqual({ id: 'delve', label: 'Go Debug Adapter (Delve)', source: 'built-in' });
   });
 
-  test('includes debugpy as a built-in adapter', () => {
-    const registry = new AdapterRegistry();
-    const descriptor = registry.resolve('debugpy');
+  describe('with provisioned debugpy cache', () => {
+    let testEnv: CliTestEnv;
+    let previousDapCliHome: string | undefined;
 
-    expect(descriptor.id).toBe('debugpy');
-    expect(descriptor.label).toBe('Python Debug Adapter (debugpy)');
-    expect(descriptor.transport.kind).toBe('stdio');
-    if (descriptor.transport.kind !== 'stdio') {
-      throw new Error('Expected debugpy to use stdio transport.');
-    }
-    expect(descriptor.transport.command.length).toBeGreaterThan(0);
-    expect(descriptor.transport.args).toEqual(['-m', 'debugpy.adapter']);
+    beforeEach(async (ctx) => {
+      testEnv = await createCliTestEnv('dap-cli-registry-');
+      try {
+        await provisionAdapterIntoTempEnv(testEnv, 'debugpy');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        ctx.skip(`debugpy not provisioned in user DAP_CLI_HOME — ${message}`);
+        return;
+      }
+      previousDapCliHome = process.env.DAP_CLI_HOME;
+      process.env.DAP_CLI_HOME = testEnv.dapCliHome;
+    });
+
+    afterEach(async () => {
+      if (previousDapCliHome === undefined) {
+        delete process.env.DAP_CLI_HOME;
+      } else {
+        process.env.DAP_CLI_HOME = previousDapCliHome;
+      }
+      previousDapCliHome = undefined;
+      await testEnv.cleanup();
+    });
+
+    test('includes debugpy as a built-in adapter', async () => {
+      const registry = new AdapterRegistry();
+      const descriptor = await registry.resolve('debugpy');
+
+      expect(descriptor.id).toBe('debugpy');
+      expect(descriptor.label).toBe('Python Debug Adapter (debugpy)');
+      expect(descriptor.transport.kind).toBe('stdio');
+      if (descriptor.transport.kind !== 'stdio') {
+        throw new Error('Expected debugpy to use stdio transport.');
+      }
+      expect(descriptor.transport.command.length).toBeGreaterThan(0);
+      expect(descriptor.transport.args).toEqual(['-m', 'debugpy.adapter']);
+    });
   });
 });
-
-function catchErrorCode(callback: () => unknown): string | undefined {
-  try {
-    callback();
-  } catch (error: unknown) {
-    return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
-  }
-
-  return undefined;
-}

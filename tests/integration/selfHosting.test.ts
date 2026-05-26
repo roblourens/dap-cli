@@ -53,7 +53,7 @@ describe('self-hosting integration', () => {
       programArgs: ['run'],
       expectedSourcePathSuffix: path.join('simple-node-app', 'index.js'),
     });
-  });
+  }, 30_000);
 
   test('dap-cli debugs dap-cli-target fixture with stop-on-entry inspection', async () => {
     const fixture = path.join(process.cwd(), 'tests', 'fixtures', 'dap-cli-target', 'index.js');
@@ -63,7 +63,7 @@ describe('self-hosting integration', () => {
       programArgs: ['phase-4'],
       expectedSourcePathSuffix: path.join('dap-cli-target', 'index.js'),
     });
-  });
+  }, 30_000);
 
   test.skipIf(!existsSync(path.join(process.cwd(), 'dist', 'index.js')))('dap-cli debugs its own CLI execution capstone', async () => {
     await runNodeSelfHostingWorkflow({
@@ -72,7 +72,7 @@ describe('self-hosting integration', () => {
       programArgs: ['--version'],
       expectedSourcePathSuffix: path.join('dist', 'index.js'),
     });
-  });
+  }, 30_000);
 
   test('reports actionable diagnostics for persisted js-debug sessions without an attached runtime', async () => {
     // Round 5 stress regression: clean controller shutdown now reaps

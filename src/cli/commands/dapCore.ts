@@ -243,7 +243,7 @@ async function startDap(output: OutputWriter, mode: 'launch' | 'attach', options
   };
   const descriptor = adapterId === 'fake'
     ? createFakeDescriptor(options.script ?? (effectiveMode === 'attach' ? 'attach-stopped' : 'stopped-on-entry'), effectiveMode)
-    : new AdapterRegistry({ config: adapterConfig }).resolve(adapterId);
+    : await new AdapterRegistry({ config: adapterConfig }).resolve(adapterId);
 
   const client = await createControllerClient({ dapCliHome: process.env.DAP_CLI_HOME, timeoutMs: startControllerRequestTimeoutMs });
   try {
@@ -288,7 +288,7 @@ async function createCompoundStartMember(
   };
   const descriptor = adapterId === 'fake'
     ? createFakeDescriptor(options.script ?? (memberMode === 'attach' ? 'attach-stopped' : 'stopped-on-entry'), memberMode)
-    : new AdapterRegistry({ config: adapterConfig }).resolve(adapterId);
+    : await new AdapterRegistry({ config: adapterConfig }).resolve(adapterId);
 
   return { memberName, mode: memberMode, descriptor, config };
 }

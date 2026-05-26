@@ -13,6 +13,14 @@ The agent runs every command itself, captures stdout/stderr verbatim into
 `<phase>-UAT.md` under a `## Hand-Driven CLI Smoke` heading, and only then is
 the UAT eligible to be marked `status: complete`.
 
+**Sequences:**
+
+- **Sequence A** — Node breakpoint round-trip via the real CLI.
+- **Sequence B** — Side-by-side with Playwright on real Chromium.
+- **Sequence C** — Fresh-machine consent + lazy provision (Phase 21). Run on
+  any phase that touches `src/adapters/provision/`, `src/cli/confirm.ts`, or
+  `src/cli/commands/setupAdapters.ts`.
+
 ## Binary
 
 The repo does not ship a `./bin/dap-cli` wrapper. After `npm run build`, the
@@ -255,6 +263,97 @@ Expected verbatim signals:
 | 6    | `close` returns `ok:true` |
 | 7    | `pgrep -lf '/tmp/dap-cli-smoke-chrome'` exits non-zero / prints `no smoke profile orphans` (post-H-8 closure: `close` actually terminates the adapter's child Chromium processes that belong to this smoke run) |
 
+## Sequence C: Fresh-machine consent and provision (Phase 21)
+
+**Purpose:** Prove the published `@roblourens/dap-cli` binary, invoked by hand
+on a wiped-cache machine, prompts for consent, downloads js-debug, and reaches
+a working debug session — without any local repo build steps.
+
+**Pre-flight:**
+1. Ensure `~/.dap-cli/adapters/` is wiped:
+   ```
+   rm -rf ~/.dap-cli/adapters
+   ```
+2. Ensure no `DAP_CLI_ASSUME_YES` is set in the environment (`unset DAP_CLI_ASSUME_YES`).
+3. Ensure the CLI is reachable. Either install globally (`npm i -g @roblourens/dap-cli@<version-under-test>`) OR run from the local repo build (`./bin/dap-cli`). Record which one is used.
+
+**Step C1: First launch triggers consent prompt**
+
+Command (in an interactive terminal):
+```
+dap-cli launch --config "TypeScript Mini"
+```
+
+Expected output (verbatim signal — must appear on stderr, three lines, blank line first):
+```
+
+Install vscode-js-debug <VERSION> into <ABSOLUTE_INSTALL_ROOT> (~10MB)?
+  Source: <DOWNLOAD_URL>
+Proceed? [y/N] 
+```
+
+Where:
+- `<VERSION>` is the pinned version from `src/adapters/provision/checksums.ts` (currently `1.117.0`).
+- `<ABSOLUTE_INSTALL_ROOT>` is the absolute path to `~/.dap-cli/adapters/js-debug` (no trailing slash, fully expanded — e.g. `/Users/<user>/.dap-cli/adapters/js-debug`).
+- `<DOWNLOAD_URL>` is the GitHub releases URL, e.g. `https://github.com/microsoft/vscode-js-debug/releases/download/v1.117.0/js-debug-dap-v1.117.0.tar.gz`.
+
+Pass criteria: prompt text matches the three-line shape above (question / indented `Source:` detail / `Proceed? [y/N] ` on its own line), default answer is `N`, prompt goes to stderr (test by redirecting stdout: `dap-cli launch ... 1>/tmp/c1.out` — the prompt must still appear in the terminal).
+
+**Step C2: Answer yes, observe install**
+
+Type `y` and Enter at the prompt.
+
+The install is silent on success (JSON-default output mode emits no progress messages). The success signal is the JSON launch envelope returned on stdout after the download completes (~10s) — `{"ok":true,"data":{"sessionId":"sess_...","lifecycle":"running",...}}`.
+
+Pass criteria: install completes within ~30s; `~/.dap-cli/adapters/js-debug/src/dapDebugServer.js` exists after; `~/.dap-cli/adapters/js-debug/package.json` exists (containing `{"type":"commonjs"}`); `~/.dap-cli/adapters/js-debug/.consent-1.117.0` exists; launch envelope reports `lifecycle:running`.
+
+**Step C3: Session reaches paused state**
+
+Same command continues; the debug session should launch the configured program.
+
+Pass criteria: dap-cli reaches the same paused/launched state as Sequence A step 3 (program runs and either exits or hits a breakpoint depending on the launch config).
+
+**Step C4: Second invocation does NOT prompt**
+
+Command:
+```
+dap-cli launch --config "TypeScript Mini"
+```
+
+Pass criteria: NO consent prompt appears; session launches directly. (Demonstrates the consent marker is honored.)
+
+**Step C5: Non-TTY without `--yes` fails fast**
+
+This exercises the contract that lazy provisioning gates a *download* on consent. Once the adapter is installed, re-using it does not require new consent (see decision D-20 — the `.consent-<version>` sentinel is a download-record, not a reuse gate). To exercise the fast-fail path, the entire install directory must be removed first.
+
+Command:
+```
+rm -rf ~/.dap-cli/adapters/js-debug
+ls -la ~/.dap-cli/adapters/ > /tmp/dap-cli-c5-before.txt
+echo "" | dap-cli launch --config "TypeScript Mini"
+ls -la ~/.dap-cli/adapters/ > /tmp/dap-cli-c5-after.txt
+diff /tmp/dap-cli-c5-before.txt /tmp/dap-cli-c5-after.txt
+```
+
+Expected output (verbatim signal — must appear on stdout as part of the JSON error envelope when stdin is piped from `echo`):
+```
+{"ok":false,"error":{"code":"provision_consent_required","category":"usage","message":"Confirmation required but stdin is not a TTY.","exitCode":2,"diagnostics":["Install vscode-js-debug <VERSION> into <ABSOLUTE_INSTALL_ROOT> (~10MB)?","Re-run with `--yes` / `-y` or set `DAP_CLI_ASSUME_YES=1` to pre-consent."], ...}}
+```
+
+Pass criteria:
+- Exit code of `dap-cli launch ...` is `2` (usage error).
+- Error message contains the recovery hint.
+- `diff` output is EMPTY (or contains only the lock-target file `.js-debug.lock-target` — the per-adapter lock is created up-front but no install dir follows). The `before`/`after` snapshots of `~/.dap-cli/adapters/` are byte-identical apart from that lock file, proving no download was attempted. Mtime alone is unreliable across filesystems and clock skew; the snapshot diff is the deterministic check.
+
+**Step C6: `DAP_CLI_ASSUME_YES=1` pre-consents**
+
+Command:
+```
+DAP_CLI_ASSUME_YES=1 dap-cli launch --config "TypeScript Mini"
+```
+
+Pass criteria: no prompt, session launches, consent marker re-created.
+
 ## Recording the result
 
 The agent appends to `<phase>-UAT.md`:
@@ -272,8 +371,37 @@ sequences:
     result: pass | issue
     captured_output: |
       <verbatim>
+  - id: C
+    binary_under_test: "npm i -g @roblourens/dap-cli@<ver>" | "./bin/dap-cli" | "node dist/index.js"
+    steps:
+      - step: C1
+        result: pass | issue
+        captured_output: |
+          <verbatim>
+      - step: C2
+        result: pass | issue
+        captured_output: |
+          <verbatim>
+      - step: C3
+        result: pass | issue
+        captured_output: |
+          <verbatim>
+      - step: C4
+        result: pass | issue
+        captured_output: |
+          <verbatim>
+      - step: C5
+        result: pass | issue
+        captured_output: |
+          <verbatim>
+      - step: C6
+        result: pass | issue
+        captured_output: |
+          <verbatim>
 ```
 
-A UAT is NOT eligible for `status: complete` unless both sequences are
-recorded with `result: pass`. If either fails, it's a gap and goes through
-the normal gap-closure loop.
+A UAT is NOT eligible for `status: complete` unless every applicable sequence
+(A, B, and — for any phase touching provisioning — every step C1–C6 of C) is
+recorded with `result: pass`. If any step fails or its captured output does
+not match the expected verbatim signal, it's a gap and goes through the
+normal gap-closure loop — do NOT explain it away.

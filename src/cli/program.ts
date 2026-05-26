@@ -9,6 +9,7 @@ import { registerDapAliasCommands } from './commands/dapAliases.js';
 import { registerDapCoreCommands } from './commands/dapCore.js';
 import { registerGeneratedDapCommands } from './commands/dapGenerated.js';
 import { registerSessionCommands } from './commands/sessions.js';
+import { registerSetupAdaptersCommand } from './commands/setupAdapters.js';
 
 const require = createRequire(import.meta.url);
 // Resolve relative to the bundled dist/index.js first; fall back to the
@@ -51,14 +52,26 @@ export function createProgram(options: ProgramOptions = {}): Command {
     .version(getPackageVersion(packageJson))
     .option('--human', 'render human-readable output (default when stdout is a TTY and DAP_CLI_HUMAN is set)')
     .option('--no-human', 'render machine-readable JSON output even if DAP_CLI_HUMAN is set or stdout is a TTY')
+    .option('-y, --yes', 'pre-consent to adapter provisioning prompts (equivalent to DAP_CLI_ASSUME_YES=1)')
     .showHelpAfterError()
     .exitOverride();
+
+  // Bridge the program-level --yes flag into process.env so descriptor
+  // factories and subcommand actions (which may not have a reference to the
+  // commander program) can read DAP_CLI_ASSUME_YES through one canonical path.
+  program.hook('preAction', (thisCommand) => {
+    const opts = thisCommand.opts() as { yes?: unknown };
+    if (opts.yes === true) {
+      process.env.DAP_CLI_ASSUME_YES = '1';
+    }
+  });
 
   registerControllerCommands(program, output);
   registerSessionCommands(program, output);
   registerDapCoreCommands(program, output);
   registerGeneratedDapCommands(program, output);
   registerDapAliasCommands(program, output);
+  registerSetupAdaptersCommand(program, output);
 
   // Replace commander's default `help [command]` with a variadic walker so
   // `dap-cli help breakpoints set` drills into the subcommand tree (per D-02).

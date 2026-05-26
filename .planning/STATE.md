@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: (next)
-status: "Phase 20 shipped - PR #1"
-stopped_at: Completed 20-06-PLAN.md
-last_updated: "2026-05-18T04:21:12.000Z"
-last_activity: 2026-05-17
+status: milestone_complete
+last_updated: 2026-05-25T22:50:54.523Z
+last_activity: 2026-05-25
 progress:
-  total_phases: 1
+  total_phases: 2
   completed_phases: 1
-  total_plans: 6
-  completed_plans: 6
-  percent: 100
+  total_plans: 13
+  completed_plans: 105
+  percent: 50
+stopped_at: Milestone complete (Phase 21 was final phase)
 ---
 
 # Project State
@@ -21,22 +21,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** Agents can reliably control a DAP debug session from repeatable CLI commands and inspect paused application state without needing language-specific debugger knowledge.
-**Current focus:** Phase 20 — i-d-like-to-find-another-runtime-that-we-can-debug-we-should
+**Current focus:** Milestone complete
 
 ## Current Position
 
-Phase: 20
+Phase: 21
 Plan: Not started
-Status: Phase 20 shipped - PR #1
-Last activity: 2026-05-17
+Status: Milestone complete
+Last activity: 2026-05-25
 
-Progress: [██████████] 100%
+Progress: [█████████░] 92%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 77
+- Total plans completed: 84
 - Average duration: n/a
 - Total execution time: 0.0 hours
 
@@ -56,6 +56,7 @@ Progress: [██████████] 100%
 | Phase 08 | 2/2 complete | n/a | n/a |
 | 16 | 2 | - | - |
 | 20 | 6 | - | - |
+| 21 | 7 | - | - |
 
 **Recent Trend:**
 
@@ -85,6 +86,12 @@ Progress: [██████████] 100%
 | Phase 20 P04 | not-recorded-inline | 3 tasks | 5 files |
 | Phase 20 P05 | not-recorded-inline | 2 tasks | 2 files |
 | Phase 20 P06 | not-recorded-inline | 3 tasks | 6 files |
+| Phase 21 P21-01 | 70 | 5 tasks | 23 files |
+| Phase 21 P21-01 | 70 | - tasks | - files |
+| Phase 21 P21-02 | 3h | 3 tasks | 14 files |
+| Phase 21 P03 | ~2h | 3 tasks | 7 files |
+| Phase 21 P21-04 | 1500 | 3 tasks | 13 files |
+| Phase 21 P05 | 25min | 3 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -99,6 +106,7 @@ Progress: [██████████] 100%
 - Phase 17 added: Code OSS smoke scenario hardening — 20 attach scenarios driven by subagents (similar to phases 7/8 hardening, scoped to the sibling Code OSS repo only; subagents read the dap-cli skill + VS Code launch skill, run one scenario each, orchestrator records pass/fail/agent-confusion notes).
 - Phase 19 added: Cleanup help command output — fix the JSON error printed at the bottom of `dap-cli help`, decide and implement drill-down behavior for compound commands (e.g. `dap-cli help breakpoints set`) vs `-h`, and group the long flat command list into readable categories (lifecycle, launch/attach, special commands, etc.).
 - Phase 20 added: I'd like to find another runtime that we can debug. We should do this by picking another debug adapter that already exists in the world and is popular, ideally one that is run by Microsoft. Then we should make a pretty substantial plan to implement it in this repo and figure out how to verify it. Going through a similar process to what we've done in the past, the most important thing is to just run through it right: 1. We need to identify the language of the debug adapter. 2. We need to make a plan for how it is installed or vendored into this repo or whatever we're doing for jsdebug and debugpy. I don't really even know. 3. We need to write the code. 4. We need to have substantial automated end-to-end testing. 5. We need to go through a process of trying it in different real-world debugging scenarios for different projects in that language that exist on GitHub that we can safely download and run and verify with debugging. Then we just set up the loop of having subagents run some different tasks, try to use dap-cli with the new language, and if they fail then we try to fix the issue or fix the confusion and repeat. I would like basically that entire end-to-end flow planned out.
+- Phase 21 added: Lazy runtime provisioning of built-in adapters on first use. Today `scripts/setup-adapters.ts` is dev-only and not shipped in the npm tarball, so `npm i -g`, `npx`, and the agent-skill install paths all fail with "Run npm run setup-adapters" the first time a user tries to debug. Goal: provision js-debug / debugpy / delve into `~/.dap-cli/adapters/` at first use, with explicit user confirmation before any network download, concurrency-safe install (parallel `dap-cli` invocations must not corrupt the cache), and clear actionable failure surfaces for offline / proxy / missing-`python3` / arch-mismatch cases. Keep `dap-cli setup-adapters` as an eager-prewarm path for CI / Dockerfile users and honor `DAP_CLI_ADAPTERS_DIR` as an escape hatch for pre-staged installs.
 
 ### Decisions
 
@@ -109,6 +117,10 @@ Recent decisions affecting current work:
 - [Phase 2]: Generate the full typed DAP request command surface from official protocol metadata rather than maintaining it by hand.
 - [Phase 3]: Treat built-in and custom adapters as external services resolved through descriptors, config, processes, and transports.
 - [Phase 4]: Finish v1 with README/user docs, Playwright interop examples, self-hosting, smoke coverage, and agentic exploratory verification.
+- [Phase 21]: 21-02: per-adapter provisioner pattern — Each adapter ships its own provisionXxx(ctx) module; provisionAdapter(id,ctx) dispatches. Descriptor factories try host/cached binary first, then lazily provision.
+- [Phase 21]: 21-02: delve URL uses dlv_ prefix (not delve_) — Plan text was wrong; verified against github.com/go-delve/delve release assets and scripts/setup-adapters.ts.
+- [Phase ?]: 21-04: Locked provision_* error catalogue (13 codes) via inline snapshot tests; renamed 3 provision_install_failed sites to catalogue codes; added previously-unreachable provision_cache_unwritable surface; added URL sanitization to prevent credential/query-string leaks; added cause chain to CliError.
+- [Phase ?]: 21-05 pre-publish gates
 
 ### Pending Todos
 
@@ -133,6 +145,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-17T17:56:36.000Z
-Stopped at: Completed 20-06-PLAN.md
+Last session: 2026-05-25T20:21:40.233Z
+Stopped at: Completed 21-03-PLAN.md
 Resume file: None

@@ -565,7 +565,7 @@ interface TypeScriptFixture {
 }
 
 async function runJsDebugBreakpointSmoke(options: BreakpointSmokeOptions): Promise<void> {
-  const descriptor = new AdapterRegistry().resolve('js-debug');
+  const descriptor = await new AdapterRegistry().resolve('js-debug');
 
   const logDir = path.join(testEnv.dapCliHome, 'logs');
   await mkdir(logDir, { recursive: true });

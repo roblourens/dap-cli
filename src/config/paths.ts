@@ -22,6 +22,14 @@ export function getDapCliLogDir(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 export function getDapCliAdaptersDir(env: NodeJS.ProcessEnv = process.env): string {
+  // D-12: DAP_CLI_ADAPTERS_DIR lets users (and the npx-cache test harness)
+  // relocate just the adapter cache root without touching the rest of the
+  // ~/.dap-cli layout. The error-recovery hints in lock.ts / atomicInstall.ts
+  // both advertise this override.
+  const configured = env.DAP_CLI_ADAPTERS_DIR;
+  if (configured !== undefined && configured.trim().length > 0) {
+    return path.resolve(configured);
+  }
   return path.join(getDapCliHome(env), 'adapters');
 }
 

@@ -13,6 +13,7 @@ export interface CliErrorOptions {
   // string-parsing diagnostics. Kept generic; specific shapes live with
   // their error sites.
   data?: Readonly<Record<string, unknown>>;
+  cause?: unknown;
 }
 
 export interface CliErrorRequestContext {
@@ -38,7 +39,7 @@ export class CliError extends Error {
   public readonly data: Readonly<Record<string, unknown>> | undefined;
 
   public constructor(message: string, category: CliErrorCategory, exitCode: ExitCode, options: CliErrorOptions = {}) {
-    super(message);
+    super(message, options.cause !== undefined ? { cause: options.cause } : undefined);
     this.name = 'CliError';
     this.code = options.code ?? `${category}_error`;
     this.category = category;

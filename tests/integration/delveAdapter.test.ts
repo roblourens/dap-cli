@@ -8,17 +8,60 @@ import { startServerSocketAdapter } from '../../src/adapters/socketAdapter.js';
 import { DapClient } from '../../src/protocol/dapClient.js';
 import type { DapEventMessage } from '../../src/protocol/dapMessages.js';
 import { createCliTestEnv, type CliTestEnv } from '../helpers/runCli.js';
+import { provisionAdapterIntoTempEnv } from '../../src/testing/tempEnv.js';
 
 let testEnv: CliTestEnv;
+let previousDapCliHome: string | undefined;
 const runDelveAttachSmoke = process.env.DAP_CLI_RUN_DELVE_ATTACH_SMOKE === '1';
 
-beforeEach(async () => {
+beforeEach(async (ctx) => {
   testEnv = await createCliTestEnv('dap-cli-delve-');
+  try {
+    await provisionAdapterIntoTempEnv(testEnv, 'delve');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ctx.skip(`delve not provisioned in user DAP_CLI_HOME — ${message}`);
+    return;
+  }
+  // Provisioned Delve 1.26.3 requires Go >= 1.24 to debug new builds (see
+  // assertSupportedProvisionedDelveToolchain). Skip when the host Go can't
+  // satisfy it — same intent as the production diagnostic.
+  const goCheck = checkGoSupportsProvisionedDelve();
+  if (!goCheck.ok) {
+    ctx.skip(goCheck.reason);
+    return;
+  }
+  // Resolver reads process.env directly; point it at the staged temp cache.
+  previousDapCliHome = process.env.DAP_CLI_HOME;
+  process.env.DAP_CLI_HOME = testEnv.dapCliHome;
 });
 
 afterEach(async () => {
+  if (previousDapCliHome === undefined) {
+    delete process.env.DAP_CLI_HOME;
+  } else {
+    process.env.DAP_CLI_HOME = previousDapCliHome;
+  }
+  previousDapCliHome = undefined;
   await testEnv.cleanup();
 });
+
+function checkGoSupportsProvisionedDelve(): { ok: true } | { ok: false; reason: string } {
+  const result = spawnSync('go', ['version'], { encoding: 'utf8' });
+  if (result.status !== 0) {
+    return { ok: false, reason: 'go is not installed or not on PATH' };
+  }
+  const match = /go version go([0-9]+)\.([0-9]+)(?:\.[0-9]+)?/.exec(`${result.stdout ?? ''}\n${result.stderr ?? ''}`);
+  if (match === null) {
+    return { ok: false, reason: `could not parse go version: ${result.stdout?.trim() ?? ''}` };
+  }
+  const major = Number.parseInt(match[1] ?? '0', 10);
+  const minor = Number.parseInt(match[2] ?? '0', 10);
+  if (major < 1 || (major === 1 && minor < 24)) {
+    return { ok: false, reason: `provisioned Delve 1.26.3 requires Go >= 1.24; host has go${major}.${minor}` };
+  }
+  return { ok: true };
+}
 
 describe('Delve adapter integration', () => {
   test('launches a Go package and inspects breakpoint state', async () => {
@@ -131,7 +174,7 @@ interface AttachTarget {
 }
 
 async function runDelveBreakpointSmoke(options: BreakpointSmokeOptions): Promise<void> {
-  const descriptor = new AdapterRegistry().resolve('delve');
+  const descriptor = await new AdapterRegistry().resolve('delve');
   if (descriptor.transport.kind !== 'server') {
     throw new Error('Expected Delve to use server transport.');
   }

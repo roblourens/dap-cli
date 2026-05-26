@@ -55,9 +55,26 @@ Run `/gsd-new-milestone` to scope the next milestone.
 **Plans:** 6/6 plans complete
 
 Plans:
+
 - [x] 20-01-PLAN.md — Finalize the Go/Delve choice and add deterministic Delve provisioning plus descriptor diagnostics.
 - [x] 20-02-PLAN.md — Wire `delve`, `type: "go"`, and `.go` inference into registry/config/CLI selection.
 - [x] 20-03-PLAN.md — Build Go fixtures and substantial real Delve launch/test/exec/local-attach integration coverage.
 - [x] 20-04-PLAN.md — Document Go/Delve setup and agent workflows, then pin them with docs validation.
 - [x] 20-05-PLAN.md — Screen and debug safe public Go repositories with reproducible external-validation ledgers.
 - [x] 20-06-PLAN.md — Run the fresh-agent hardening/fix-retry loop and preserve the mandatory later verify-work hand smoke gate.
+
+### Phase 21: Lazy runtime provisioning of built-in adapters (js-debug, debugpy, delve) on first use, with user confirmation, concurrency-safe install, and clear failure surfaces
+
+**Goal:** Make `npm i -g @roblourens/dap-cli` (or `npx`) sufficient to debug Node, Python, and Go on a fresh machine: on first launch/attach the CLI prompts once (or accepts `--yes` / `DAP_CLI_ASSUME_YES=1`), then downloads, SHA-256 verifies, and atomically installs the relevant built-in adapter into `~/.dap-cli/adapters/<id>/` (overridable via `DAP_CLI_ADAPTERS_DIR`); concurrent installs are lockfile-serialized; every failure surface emits a structured `provision_*` error with actionable diagnostics.
+**Requirements**: TBD
+**Depends on:** Phase 20
+**Plans:** 7/7 plans complete
+
+Plans:
+
+- [x] 21-01-PLAN.md — Provisioner scaffold: lock, atomic install, http+ProxyAgent, tar.gz/zip extract, consent helper, `--yes` / `DAP_CLI_ASSUME_YES` plumbing, async `AdapterRegistry.resolve`.
+- [x] 21-02-PLAN.md — Per-adapter provisioners (js-debug, debugpy, delve) + embedded SHA-256 checksums + descriptor-factory wiring.
+- [x] 21-03-PLAN.md — `dap-cli setup-adapters` user-facing subcommand + `scripts/setup-adapters.ts` rewritten as a thin wrapper.
+- [x] 21-04-PLAN.md — Failure-surface audit + snapshot tests for every `provision_*` envelope + architecture-test assertions (no shell-out tar/unzip; `provision_`-namespaced codes).
+- [x] 21-05-PLAN.md — FakeReleaseServer + synthetic-archive helpers + concurrent-install test + proxy precedence test + pre-publish tarball + npx-cache contract tests + `check:pack`.
+- [x] 21-06-PLAN.md — README + `docs/adapter-setup.md` rewrite for lazy provisioning UX + hand-driven smoke `Sequence C` + orchestrator-driven UAT recording.

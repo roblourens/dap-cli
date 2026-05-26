@@ -9,18 +9,36 @@ import { startProcessAdapter } from '../../src/adapters/processAdapter.js';
 import { DapClient } from '../../src/protocol/dapClient.js';
 import type { DapEventMessage } from '../../src/protocol/dapMessages.js';
 import { createCliTestEnv, type CliTestEnv } from '../helpers/runCli.js';
+import { provisionAdapterIntoTempEnv } from '../../src/testing/tempEnv.js';
 import { startControllerServer, type ControllerServer } from '../../src/controller/server.js';
 
 let testEnv: CliTestEnv;
 let server: ControllerServer | undefined;
+let previousDapCliHome: string | undefined;
 const runDebugpyAttachSmoke = process.env.DAP_CLI_RUN_DEBUGPY_ATTACH_SMOKE === '1';
 
-beforeEach(async () => {
+beforeEach(async (ctx) => {
   testEnv = await createCliTestEnv('dap-cli-debugpy-');
   server = await startControllerServer({ dapCliHome: testEnv.dapCliHome });
+  try {
+    await provisionAdapterIntoTempEnv(testEnv, 'debugpy');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ctx.skip(`debugpy not provisioned in user DAP_CLI_HOME — ${message}`);
+    return;
+  }
+  // Resolver reads process.env directly; point it at the staged temp cache.
+  previousDapCliHome = process.env.DAP_CLI_HOME;
+  process.env.DAP_CLI_HOME = testEnv.dapCliHome;
 });
 
 afterEach(async () => {
+  if (previousDapCliHome === undefined) {
+    delete process.env.DAP_CLI_HOME;
+  } else {
+    process.env.DAP_CLI_HOME = previousDapCliHome;
+  }
+  previousDapCliHome = undefined;
   if (server !== undefined) {
     await server.stop();
     server = undefined;
@@ -29,8 +47,8 @@ afterEach(async () => {
 });
 
 describe('debugpy adapter integration', () => {
-  test('resolves debugpy as a built-in adapter descriptor', () => {
-    const descriptor = resolveDebugpyDescriptor();
+  test('resolves debugpy as a built-in adapter descriptor', async () => {
+    const descriptor = await resolveDebugpyDescriptor();
 
     expect(descriptor.id).toBe('debugpy');
     expect(descriptor.label).toBe('Python Debug Adapter (debugpy)');
@@ -60,7 +78,7 @@ describe('debugpy adapter integration', () => {
   }, 30_000);
 
   test.skipIf(!runDebugpyAttachSmoke)('attaches to debugpy and verifies breakpoint inspection', async () => {
-    const descriptor = resolveDebugpyDescriptor();
+    const descriptor = await resolveDebugpyDescriptor();
     if (descriptor.transport.kind !== 'stdio') {
       throw new Error('Expected debugpy to use stdio transport.');
     }
@@ -100,7 +118,7 @@ interface AttachTarget {
 }
 
 async function runDebugpyBreakpointSmoke(options: BreakpointSmokeOptions): Promise<void> {
-  const descriptor = resolveDebugpyDescriptor();
+  const descriptor = await resolveDebugpyDescriptor();
   if (descriptor.transport.kind !== 'stdio') {
     throw new Error('Expected debugpy to use stdio transport.');
   }

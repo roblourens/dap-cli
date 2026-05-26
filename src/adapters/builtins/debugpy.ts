@@ -1,11 +1,15 @@
-import { existsSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { promises as fs } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { AdapterDescriptor } from '../descriptor.js';
-import { usageError } from '../../cli/errors.js';
-import { getDapCliVenvPythonPath } from '../../config/paths.js';
+import { getDapCliAdaptersDir, getDapCliVenvPythonPath } from '../../config/paths.js';
+import { resolveAssumeYes } from '../../cli/confirm.js';
+import { provisionAdapter } from '../provision/index.js';
 
-export function createDebugpyDescriptor(pythonPath?: string): AdapterDescriptor {
-  const resolvedPythonPath = pythonPath ?? resolveDefaultDebugpyPythonPath();
+const execFileAsync = promisify(execFile);
+
+export async function createDebugpyDescriptor(pythonPath?: string): Promise<AdapterDescriptor> {
+  const resolvedPythonPath = pythonPath ?? (await resolveDefaultDebugpyPythonPath());
 
   return {
     id: 'debugpy',
@@ -18,28 +22,42 @@ export function createDebugpyDescriptor(pythonPath?: string): AdapterDescriptor 
   };
 }
 
-function resolveDefaultDebugpyPythonPath(): string {
-  const provisionedPython = getDapCliVenvPythonPath();
-  const candidates = [provisionedPython, 'python3'];
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-  if (existsSync(provisionedPython) && pythonHasDebugpy(provisionedPython)) {
-    return provisionedPython;
+async function pythonHasDebugpy(pythonPath: string): Promise<boolean> {
+  try {
+    await execFileAsync(pythonPath, ['-c', 'import debugpy']);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveDefaultDebugpyPythonPath(env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  // 1. Legacy provisioned venv at $DAP_CLI_HOME/venv/bin/python (set up by scripts/setup-adapters.ts).
+  const legacyVenvPython = getDapCliVenvPythonPath(env);
+  if ((await pathExists(legacyVenvPython)) && (await pythonHasDebugpy(legacyVenvPython))) {
+    return legacyVenvPython;
   }
 
-  if (pythonHasDebugpy('python3')) {
+  // 2. System python3 that already has debugpy importable.
+  if (await pythonHasDebugpy('python3')) {
     return 'python3';
   }
 
-  throw usageError('debugpy adapter is not installed.', {
-    code: 'debugpy_not_found',
-    diagnostics: [
-      'Run npm run setup-adapters to provision debugpy, or see docs/ADAPTER-SETUP.md for advanced manual provisioning.',
-      `Checked: ${candidates.join(', ')}`,
-    ],
+  // 3. Trigger lazy provisioning into ~/.dap-cli/adapters/debugpy/venv.
+  const adaptersDir = getDapCliAdaptersDir(env);
+  const result = await provisionAdapter('debugpy', {
+    env,
+    assumeYes: resolveAssumeYes(undefined, env),
+    adaptersDir,
   });
-}
-
-function pythonHasDebugpy(pythonPath: string): boolean {
-  const result = spawnSync(pythonPath, ['-c', 'import debugpy'], { encoding: 'utf8' });
-  return result.status === 0;
+  return result.entrypoint;
 }

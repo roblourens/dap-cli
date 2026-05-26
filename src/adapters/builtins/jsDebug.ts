@@ -1,11 +1,12 @@
-import { existsSync } from 'node:fs';
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { AdapterDescriptor } from '../descriptor.js';
 import { getDapCliAdaptersDir } from '../../config/paths.js';
-import { usageError } from '../../cli/errors.js';
+import { resolveAssumeYes } from '../../cli/confirm.js';
+import { provisionAdapter } from '../provision/index.js';
 
-export function createJsDebugDescriptor(jsDebugPath?: string): AdapterDescriptor {
-  const dapServerPath = jsDebugPath ?? resolveDefaultJsDebugPath();
+export async function createJsDebugDescriptor(jsDebugPath?: string): Promise<AdapterDescriptor> {
+  const dapServerPath = jsDebugPath ?? (await resolveDefaultJsDebugPath());
   return {
     id: 'js-debug',
     label: 'JavaScript Debug Adapter (Node, Chrome, Electron)',
@@ -57,22 +58,33 @@ export function applyJsDebugTraceDefaults(config: unknown, logDir: string): unkn
   };
 }
 
-function resolveDefaultJsDebugPath(): string {
-  const candidates = [
-    path.join(getDapCliAdaptersDir(), 'js-debug', 'src', 'dapDebugServer.js'),
-    path.join(process.cwd(), 'node_modules', 'vscode-js-debug', 'src', 'dapDebugServer.js'),
-  ];
+async function pathExists(candidate: string): Promise<boolean> {
+  try {
+    await fs.access(candidate);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-  const found = candidates.find(candidate => existsSync(candidate));
-  if (found !== undefined) {
-    return found;
+async function resolveDefaultJsDebugPath(): Promise<string> {
+  const env = process.env;
+  const adaptersDir = getDapCliAdaptersDir(env);
+  const provisionedEntrypoint = path.join(adaptersDir, 'js-debug', 'src', 'dapDebugServer.js');
+  const repoEntrypoint = path.join(process.cwd(), 'node_modules', 'vscode-js-debug', 'src', 'dapDebugServer.js');
+
+  if (await pathExists(provisionedEntrypoint)) {
+    return provisionedEntrypoint;
+  }
+  if (await pathExists(repoEntrypoint)) {
+    return repoEntrypoint;
   }
 
-  throw usageError('js-debug adapter is not installed.', {
-    code: 'js_debug_not_found',
-    diagnostics: [
-      'Run npm run setup-adapters to provision js-debug, or see docs/ADAPTER-SETUP.md for advanced manual provisioning.',
-      `Checked: ${candidates.join(', ')}`,
-    ],
+  // Binary missing — trigger lazy provisioning (D-17).
+  const result = await provisionAdapter('js-debug', {
+    env,
+    assumeYes: resolveAssumeYes(undefined, env),
+    adaptersDir,
   });
+  return result.entrypoint;
 }

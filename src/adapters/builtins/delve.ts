@@ -1,12 +1,14 @@
-import { existsSync } from 'node:fs';
+import { promises as fs } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import type { AdapterDescriptor } from '../descriptor.js';
 import { usageError } from '../../cli/errors.js';
 import { getDapCliAdaptersDir } from '../../config/paths.js';
+import { resolveAssumeYes } from '../../cli/confirm.js';
+import { provisionAdapter } from '../provision/index.js';
 
-export function createDelveDescriptor(delvePath?: string): AdapterDescriptor {
-  const resolvedDelvePath = delvePath ?? resolveDefaultDelvePath();
+export async function createDelveDescriptor(delvePath?: string): Promise<AdapterDescriptor> {
+  const resolvedDelvePath = delvePath ?? (await resolveDefaultDelvePath());
   assertSupportedProvisionedDelveToolchain(resolvedDelvePath);
   const toolchainEnvironment = createGoToolchainEnvironment();
 
@@ -28,29 +30,39 @@ function createGoToolchainEnvironment(): Record<string, string> | undefined {
   return goToolchain === undefined || goToolchain.length === 0 ? undefined : { GOTOOLCHAIN: goToolchain };
 }
 
-function resolveDefaultDelvePath(): string {
-  const provisionedDelve = getProvisionedDelvePath();
-  const candidates = [provisionedDelve, 'PATH dlv'];
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
+async function resolveDefaultDelvePath(env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  // 1. Honor a usable PATH `dlv` first to respect user-managed installs.
   if (delveIsUsable('dlv')) {
     return 'dlv';
   }
 
-  if (existsSync(provisionedDelve) && delveIsUsable(provisionedDelve)) {
+  // 2. Honor an already-provisioned binary at the canonical adapters location.
+  const provisionedDelve = getProvisionedDelvePath(env);
+  if ((await pathExists(provisionedDelve)) && delveIsUsable(provisionedDelve)) {
     return provisionedDelve;
   }
 
-  throw usageError('Delve adapter is not installed.', {
-    code: 'delve_not_found',
-    diagnostics: [
-      'Run npm run setup-adapters to provision Delve, or install a usable dlv on PATH.',
-      `Checked: ${candidates.join(', ')}`,
-    ],
+  // 3. Lazily provision via the shared adapter installer.
+  const adaptersDir = getDapCliAdaptersDir(env);
+  const result = await provisionAdapter('delve', {
+    env,
+    assumeYes: resolveAssumeYes(undefined, env),
+    adaptersDir,
   });
+  return result.entrypoint;
 }
 
-function getProvisionedDelvePath(): string {
-  return path.join(getDapCliAdaptersDir(), 'delve', process.platform === 'win32' ? 'dlv.exe' : 'dlv');
+function getProvisionedDelvePath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(getDapCliAdaptersDir(env), 'delve', process.platform === 'win32' ? 'dlv.exe' : 'dlv');
 }
 
 function delveIsUsable(command: string): boolean {

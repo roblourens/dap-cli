@@ -26,7 +26,7 @@ export interface CreateAdapterRegistryOptions {
 interface BuiltInAdapterFactory {
   id: string;
   label: string;
-  create(): AdapterDescriptor;
+  create(): AdapterDescriptor | Promise<AdapterDescriptor>;
 }
 
 export class AdapterRegistry {
@@ -65,7 +65,7 @@ export class AdapterRegistry {
     }
   }
 
-  public resolve(id: string): AdapterDescriptor {
+  public async resolve(id: string): Promise<AdapterDescriptor> {
     const builtInAdapter = this.builtInAdapters.get(id);
     if (builtInAdapter !== undefined) {
       return builtInAdapter.create();
