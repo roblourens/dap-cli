@@ -44,6 +44,9 @@ jobs:
           fi
           echo "Tag $tag matches package.json version $pkg."
 
+      - name: Provision built-in adapters (required by integration tests)
+        run: npm run setup-adapters -- --yes
+
       - name: Run full check (typecheck, lint, tests, build, packaging)
         run: npm run check
 
