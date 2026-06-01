@@ -16,32 +16,43 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 
 import { provisionAdapter } from '../../../src/adapters/provision/index.js';
 import {
+  CODELLDB_CHECKSUMS,
+  CODELLDB_VERSION,
   JS_DEBUG_CHECKSUMS,
   JS_DEBUG_VERSION,
+  type CodeLldbPlatformKey,
 } from '../../../src/adapters/provision/checksums.js';
 import {
   jsDebugTarballHandler,
   startFakeReleaseServer,
   type FakeReleaseServer,
 } from '../../helpers/fakeReleaseServer.js';
-import { buildFakeJsDebugTarball } from '../../helpers/buildFakeAdapterTarball.js';
+import { buildFakeCodeLldbVsix, buildFakeJsDebugTarball, FAKE_CODELLDB_RUNTIME_PATHS } from '../../helpers/buildFakeAdapterTarball.js';
+
+const CODELLDB_PLATFORM_KEY: CodeLldbPlatformKey = 'darwin_arm64';
+const CODELLDB_RELEASE_PATH = `/vadimcn/codelldb/releases/download/${CODELLDB_VERSION}/codelldb-darwin-arm64.vsix`;
 
 describe('provisionAdapter concurrency', () => {
   let workDir: string;
   let adaptersDir: string;
   let server: FakeReleaseServer | undefined;
   let originalSha: string | undefined;
+  let originalCodeLldbSha: string | undefined;
 
   beforeEach(async () => {
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dap-cli-concurrent-'));
     adaptersDir = path.join(workDir, 'adapters');
     await fs.mkdir(adaptersDir, { recursive: true });
     originalSha = JS_DEBUG_CHECKSUMS[JS_DEBUG_VERSION];
+    originalCodeLldbSha = CODELLDB_CHECKSUMS[CODELLDB_VERSION]?.[CODELLDB_PLATFORM_KEY];
   });
 
   afterEach(async () => {
     if (originalSha !== undefined) {
       JS_DEBUG_CHECKSUMS[JS_DEBUG_VERSION] = originalSha;
+    }
+    if (originalCodeLldbSha !== undefined && CODELLDB_CHECKSUMS[CODELLDB_VERSION] !== undefined) {
+      CODELLDB_CHECKSUMS[CODELLDB_VERSION][CODELLDB_PLATFORM_KEY] = originalCodeLldbSha;
     }
     if (server !== undefined) {
       await server.close();
@@ -49,6 +60,14 @@ describe('provisionAdapter concurrency', () => {
     }
     await fs.rm(workDir, { recursive: true, force: true });
   });
+
+  function setCodeLldbSha(sha: string): void {
+    const bucket = CODELLDB_CHECKSUMS[CODELLDB_VERSION];
+    if (bucket === undefined) {
+      throw new Error(`CODELLDB_CHECKSUMS missing bucket for ${CODELLDB_VERSION}`);
+    }
+    bucket[CODELLDB_PLATFORM_KEY] = sha;
+  }
 
   test('cold cache: 4 parallel callers serialize on the lock, exactly one download happens', async () => {
     const archive = await buildFakeJsDebugTarball(JS_DEBUG_VERSION, workDir);
@@ -128,6 +147,58 @@ describe('provisionAdapter concurrency', () => {
       expect(result.installRoot).toBe(path.join(adaptersDir, 'js-debug'));
     }
 
+    await archive.cleanup();
+  });
+
+  test('CodeLLDB cold cache: parallel callers publish one complete runtime tree from one download', async () => {
+    const archive = await buildFakeCodeLldbVsix(CODELLDB_VERSION, workDir);
+    setCodeLldbSha(archive.sha256);
+    const body = await fs.readFile(archive.path);
+    server = await startFakeReleaseServer([
+      { match: request => request.url === CODELLDB_RELEASE_PATH, respond: (_request, response) => { response.end(body); } },
+    ]);
+    const env = {
+      DAP_CLI_PROVISION_RELEASE_BASE_URL: server.url,
+      DAP_CLI_PROVISION_CODELLDB_PLATFORM_OVERRIDE: CODELLDB_PLATFORM_KEY,
+      DAP_CLI_LOCK_RETRY_OVERRIDE: JSON.stringify({ retries: 120, minTimeout: 20, maxTimeout: 100, factor: 1 }),
+    };
+
+    const results = await Promise.all([0, 1, 2, 3].map(() => provisionAdapter('codelldb', { env, assumeYes: true, adaptersDir })));
+
+    expect(server.hitCount()).toBe(1);
+    for (const result of results) {
+      expect(result.adapterId).toBe('codelldb');
+      expect(result.installRoot).toBe(path.join(adaptersDir, 'codelldb'));
+    }
+    for (const runtimePath of FAKE_CODELLDB_RUNTIME_PATHS) {
+      await fs.access(path.join(adaptersDir, 'codelldb', runtimePath));
+    }
+    const temporaryEntries = (await fs.readdir(adaptersDir)).filter(entry => entry.startsWith('.codelldb.tmp.'));
+    expect(temporaryEntries).toEqual([]);
+    await archive.cleanup();
+  });
+
+  test('CodeLLDB warm cache: parallel callers use the complete tree without more downloads', async () => {
+    const archive = await buildFakeCodeLldbVsix(CODELLDB_VERSION, workDir);
+    setCodeLldbSha(archive.sha256);
+    const body = await fs.readFile(archive.path);
+    server = await startFakeReleaseServer([
+      { match: request => request.url === CODELLDB_RELEASE_PATH, respond: (_request, response) => { response.end(body); } },
+    ]);
+    const env = {
+      DAP_CLI_PROVISION_RELEASE_BASE_URL: server.url,
+      DAP_CLI_PROVISION_CODELLDB_PLATFORM_OVERRIDE: CODELLDB_PLATFORM_KEY,
+    };
+    await provisionAdapter('codelldb', { env, assumeYes: true, adaptersDir });
+    const hitsAfterPrime = server.hitCount();
+
+    const results = await Promise.all([0, 1, 2, 3].map(() => provisionAdapter('codelldb', { env, assumeYes: true, adaptersDir })));
+
+    expect(server.hitCount()).toBe(hitsAfterPrime);
+    expect(results.every(result => result.fromCache)).toBe(true);
+    for (const runtimePath of FAKE_CODELLDB_RUNTIME_PATHS) {
+      await fs.access(path.join(adaptersDir, 'codelldb', runtimePath));
+    }
     await archive.cleanup();
   });
 });

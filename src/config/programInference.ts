@@ -81,5 +81,8 @@ function defaultTypeForAdapter(adapterId: string, program: string | undefined): 
   if (adapterId === 'delve') {
     return 'go';
   }
+  if (adapterId === 'codelldb') {
+    return 'lldb';
+  }
   return undefined;
 }

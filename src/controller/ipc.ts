@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import net from 'node:net';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { getDapCliLogDir, getDapCliStateDir } from '../config/paths.js';
@@ -44,6 +46,8 @@ const controllerDiscoverySchema = z.object({
   startedAt: z.string().min(1),
   lastHeartbeatAt: z.string().min(1),
 });
+
+const maximumPortableUnixSocketPathLength = 100;
 
 export function resolveControllerDiscoveryPath(options: ControllerPathOptions = {}): string {
   return path.join(resolveStateDir(options), 'controller.json');
@@ -150,7 +154,13 @@ function createControllerEndpoint(stateDir: string, platform: NodeJS.Platform): 
     return { kind: 'ipc', path: `\\\\.\\pipe\\dap-cli-${Buffer.from(stateDir).toString('hex').slice(0, 24)}` };
   }
 
-  return { kind: 'ipc', path: path.join(stateDir, 'controller.sock') };
+  const endpointPath = path.join(stateDir, 'controller.sock');
+  if (Buffer.byteLength(endpointPath, 'utf8') <= maximumPortableUnixSocketPathLength) {
+    return { kind: 'ipc', path: endpointPath };
+  }
+
+  const stateHash = createHash('sha256').update(stateDir).digest('hex').slice(0, 24);
+  return { kind: 'ipc', path: path.join(tmpdir(), `dap-cli-${stateHash}.sock`) };
 }
 
 function resolveStateDir(options: ControllerPathOptions): string {

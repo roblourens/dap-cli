@@ -2,6 +2,7 @@ import type { AdapterDescriptor } from './descriptor.js';
 import { loadAdapterConfig, type AdapterConfig } from './config.js';
 import { createDebugpyDescriptor } from './builtins/debugpy.js';
 import { createDelveDescriptor } from './builtins/delve.js';
+import { createCodeLldbDescriptor } from './builtins/codelldb.js';
 import { createJsDebugDescriptor } from './builtins/jsDebug.js';
 import { usageError } from '../cli/errors.js';
 
@@ -49,6 +50,11 @@ export class AdapterRegistry {
         id: 'delve',
         label: 'Go Debug Adapter (Delve)',
         create: () => createDelveDescriptor(),
+      });
+      this.builtInAdapters.set('codelldb', {
+        id: 'codelldb',
+        label: 'Rust Debug Adapter (CodeLLDB)',
+        create: () => createCodeLldbDescriptor(),
       });
     }
 

@@ -93,6 +93,21 @@ describe('controller discovery and IPC', () => {
     socket.server.close();
   });
 
+  test.skipIf(process.platform === 'win32')('uses a short IPC endpoint when DAP_CLI_HOME exceeds Unix socket path limits', async () => {
+    const longDapCliHome = path.join(dapCliHome, 'long-state-root-'.repeat(12));
+    const socket = await createControllerServerSocket(clientSocket => clientSocket.end(), { dapCliHome: longDapCliHome });
+
+    expect(socket.endpoint.kind).toBe('ipc');
+    if (socket.endpoint.kind === 'ipc') {
+      expect(Buffer.byteLength(socket.endpoint.path, 'utf8')).toBeLessThanOrEqual(100);
+      expect(socket.endpoint.path).not.toContain(longDapCliHome);
+      const clientSocket = await connectControllerEndpoint(socket.endpoint);
+      clientSocket.destroy();
+    }
+
+    await new Promise<void>(resolve => socket.server.close(() => resolve()));
+  });
+
   test('server status and shutdown work across separate controller clients', async () => {
     const server = await startControllerServer({ dapCliHome });
     const firstClient = await createControllerClient({ dapCliHome });

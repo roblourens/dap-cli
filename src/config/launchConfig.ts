@@ -56,6 +56,7 @@ export const launchConfigTypeMap: Record<string, string> = {
   python: 'debugpy',
   debugpy: 'debugpy',
   go: 'delve',
+  lldb: 'codelldb',
 };
 
 const maxLaunchJsonBytes = 256 * 1024;
@@ -289,6 +290,21 @@ export function mapDebugpyFlags(flags: Record<string, unknown>): Record<string, 
   }
 
   return mapped;
+}
+
+export function validateCodeLldbNativeConfig(config: Record<string, unknown>): Record<string, unknown> {
+  if (Object.prototype.hasOwnProperty.call(config, 'cargo')) {
+    throw usageError('CodeLLDB Cargo launch configurations are not supported by dap-cli.', {
+      code: 'codelldb_cargo_config_unsupported',
+      diagnostics: [
+        'The `cargo` property is resolved by the VS Code CodeLLDB extension and cannot be forwarded to the standalone adapter.',
+        'Build an explicitly built Rust binary and pass its executable path with `program`.',
+      ],
+      data: { adapterId: 'codelldb', unsupportedField: 'cargo', requiredField: 'program' },
+    });
+  }
+
+  return config;
 }
 
 export function normalizeGoLaunchConfigProgram(config: Record<string, unknown>, workspaceFolder: string): Record<string, unknown> {

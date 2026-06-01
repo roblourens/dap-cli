@@ -78,3 +78,25 @@ Plans:
 - [x] 21-04-PLAN.md — Failure-surface audit + snapshot tests for every `provision_*` envelope + architecture-test assertions (no shell-out tar/unzip; `provision_`-namespaced codes).
 - [x] 21-05-PLAN.md — FakeReleaseServer + synthetic-archive helpers + concurrent-install test + proxy precedence test + pre-publish tarball + npx-cache contract tests + `check:pack`.
 - [x] 21-06-PLAN.md — README + `docs/adapter-setup.md` rewrite for lazy provisioning UX + hand-driven smoke `Sequence C` + orchestrator-driven UAT recording.
+
+### Phase 22: Onboard Rust debugging through CodeLLDB as a built-in adapter with deterministic provisioning, safe real-project validation, and fresh-agent hardening
+
+**Goal:** Integrate approved Rust debugging through CodeLLDB `v1.12.2` as a built-in adapter, after proving a loopback-only DAP transport and acceptable VSIX asset provenance; provision it through the existing lazy cache model, prove real Rust launch/config/attach behavior, and harden the workflow through screened public crates and transcript-audited fresh-agent runs.
+**Requirements**: TBD
+**Depends on:** Phase 21
+**Plans:** 11/11 plans executed; standalone JSONL-audited Rust/CodeLLDB evidence and mandatory orchestrator terminal UAT are complete
+**Status:** COMPLETE - `darwin-arm64` CodeLLDB provisioning and descriptor implementation are accepted using only the verified official asset and proved loopback-only invocation; bundling, mirroring, offline redistribution, and uninspected platform assets remain out of scope.
+
+Plans:
+
+- [x] 22-01-PLAN.md — Verified the official macOS arm64 VSIX, scoped direct-source local caching, and proved standalone loopback-only Rust DAP behavior.
+- [x] 22-02-PLAN.md — Added gate-approved full CodeLLDB VSIX lazy provisioning plus synthetic archive and cold/warm concurrency tests.
+- [x] 22-03-PLAN.md — Registered the verified built-in descriptor and preserved zero-download discovery behavior.
+- [x] 22-04-PLAN.md — Exposed CodeLLDB setup/prewarm/status and maintainer checksum regeneration.
+- [x] 22-05-PLAN.md — Extended typed-error, architecture-security, and packaged-cache regression gates.
+- [x] 22-06-PLAN.md — Supported explicit `lldb` Rust configuration while rejecting raw Cargo and `.rs` inference.
+- [x] 22-07-PLAN.md — Proved owned real-Rust launch/config/inspection and safe attach behavior under unchanged policy.
+- [x] 22-08-PLAN.md — Published validated Rust/CodeLLDB setup and fresh-agent workflow guidance.
+- [x] 22-09-PLAN.md — Screened public Cargo surfaces and recorded isolated delegated real-project attempts plus clean reruns for audit.
+- [x] 22-10-PLAN.md — Audited standalone fresh-agent JSONL transcripts, retained blocked/preliminary history, and classified nonblocking hardening follow-ups.
+- [x] 22-11-PLAN.md — Ran final verification, fixed the reproduced long Unix socket path blocker, and captured mandatory orchestrator hand-driven UAT smoke for Sequences A, B, and provisioning-applicable C1-C6.

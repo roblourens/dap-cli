@@ -17,6 +17,7 @@ import {
   resolveLaunchConfig,
   resolveLaunchConfigEntry,
   resolveLaunchConfigurationConfig,
+  validateCodeLldbNativeConfig,
 } from '../../config/launchConfig.js';
 import { inferAdapterAndType } from '../../config/programInference.js';
 import type { OutputWriter } from '../outputWriter.js';
@@ -389,6 +390,9 @@ async function mapConfigForAdapter(adapterId: string, config: Record<string, unk
   }
   if (adapterId === 'delve') {
     return normalizeGoLaunchConfigProgram(config, workspaceFolder);
+  }
+  if (adapterId === 'codelldb') {
+    return validateCodeLldbNativeConfig(config);
   }
 
   return config;

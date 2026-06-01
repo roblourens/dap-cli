@@ -1,7 +1,7 @@
 // Shared types for the per-adapter provisioners. Lives in its own module to
 // keep `index.ts` <-> per-adapter modules import graph acyclic.
 
-export type AdapterId = 'js-debug' | 'debugpy' | 'delve';
+export type AdapterId = 'js-debug' | 'debugpy' | 'delve' | 'codelldb';
 
 export interface ProvisionContext {
   readonly env: NodeJS.ProcessEnv;

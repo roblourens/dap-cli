@@ -7,6 +7,7 @@
 export const JS_DEBUG_VERSION = '1.117.0';
 export const DEBUGPY_VERSION = '1.8.20';
 export const DELVE_VERSION = 'v1.26.3';
+export const CODELLDB_VERSION = 'v1.12.2';
 
 export const JS_DEBUG_CHECKSUMS: Record<string, string> = {
   '1.117.0': 'ad8d04ede9d4b75cc290fd5438a65047a06f786d04f604b6112485b36f090772',
@@ -26,5 +27,13 @@ export const DELVE_CHECKSUMS: Record<string, Record<DelvePlatformKey, string>> =
     linux_amd64: 'cdd4d6b2a638d8f26468d82a76b766df594641490bea566629305d90fbccc06e',
     linux_arm64: '5b03fd74895d676c4435bec1aade0863be1489a4be1bb5c9269c6ef389bf5d2d',
     windows_amd64: 'f9e15b8f3628e4c7bfe481011bea458df754d0e75c6ff4ab01c71294165950fd',
+  },
+};
+
+export type CodeLldbPlatformKey = 'darwin_arm64';
+
+export const CODELLDB_CHECKSUMS: Record<string, Record<CodeLldbPlatformKey, string>> = {
+  'v1.12.2': {
+    darwin_arm64: 'c836b81c6f2da467b5920a376a7bfc849dc4b4d81b19779dedf1c685cb4aa1a0',
   },
 };

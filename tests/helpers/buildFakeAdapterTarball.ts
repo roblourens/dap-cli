@@ -164,3 +164,59 @@ export async function buildFakeDelveZip(platformKey: string, destDir: string): P
     },
   };
 }
+
+export const FAKE_CODELLDB_RUNTIME_PATHS = [
+  'extension/adapter/codelldb',
+  'extension/adapter/scripts/codelldb/__init__.py',
+  'extension/lldb/bin/lldb',
+  'extension/lldb/bin/lldb-argdumper',
+  'extension/lldb/bin/lldb-server',
+  'extension/lldb/lib/liblldb.dylib',
+  'extension/lldb/lib/libpython312.dylib',
+  'extension/lldb/lib/python3.12/os.py',
+  'extension/lang_support/rust.py',
+  'extension/package.json',
+] as const;
+
+export interface FakeCodeLldbVsixOptions {
+  readonly omit?: string;
+}
+
+/** Build a synthetic macOS arm64 CodeLLDB VSIX with the gate-approved retained tree. */
+export async function buildFakeCodeLldbVsix(
+  version: string,
+  destDir: string,
+  options: FakeCodeLldbVsixOptions = {},
+): Promise<BuiltArchive> {
+  const contents: Readonly<Record<(typeof FAKE_CODELLDB_RUNTIME_PATHS)[number], string>> = {
+    'extension/adapter/codelldb': '#!/bin/sh\necho synthetic codelldb\n',
+    'extension/adapter/scripts/codelldb/__init__.py': '# synthetic adapter script\n',
+    'extension/lldb/bin/lldb': '#!/bin/sh\necho synthetic lldb\n',
+    'extension/lldb/bin/lldb-argdumper': '#!/bin/sh\necho synthetic lldb-argdumper\n',
+    'extension/lldb/bin/lldb-server': '#!/bin/sh\necho synthetic lldb-server\n',
+    'extension/lldb/lib/liblldb.dylib': 'synthetic liblldb\n',
+    'extension/lldb/lib/libpython312.dylib': 'synthetic libpython\n',
+    'extension/lldb/lib/python3.12/os.py': '# synthetic bundled python\n',
+    'extension/lang_support/rust.py': '# synthetic rust formatter\n',
+    'extension/package.json': `{"name":"vscode-lldb","version":"${version}"}\n`,
+  };
+  const entries = FAKE_CODELLDB_RUNTIME_PATHS
+    .filter(runtimePath => runtimePath !== options.omit)
+    .map(runtimePath => ({
+      name: runtimePath,
+      data: Buffer.from(contents[runtimePath], 'utf8'),
+      unixMode: runtimePath === 'extension/adapter/codelldb' || runtimePath.startsWith('extension/lldb/bin/')
+        ? 0o100755
+        : 0o100644,
+    }));
+  const archivePath = path.join(destDir, 'codelldb-darwin-arm64.vsix');
+  await fs.writeFile(archivePath, buildStoredZip(entries));
+  const sha256 = await hashFile(archivePath);
+  return {
+    path: archivePath,
+    sha256,
+    cleanup: async () => {
+      await fs.rm(archivePath, { force: true });
+    },
+  };
+}

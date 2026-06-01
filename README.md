@@ -2,7 +2,7 @@
 
 Give your agent debugging skills!
 
-A command-line debugger built for AI agents. Drive any [Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/) target — Node.js, Python, Chrome, custom adapters — from shell commands, with stable JSON output and `.vscode/launch.json` support.
+A command-line debugger built for AI agents. Drive any [Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/) target — Node.js, Python, Go, Rust, Chrome, custom adapters — from shell commands, with stable JSON output and `.vscode/launch.json` support.
 
 ## Why
 
@@ -27,7 +27,9 @@ dap-cli --version
 Install vscode-js-debug 1.117.0 into ~/.dap-cli/adapters/js-debug/ (~10MB)? [y/N]
 ```
 
-Answer `y`. The adapter is downloaded into `~/.dap-cli/adapters/` once and reused for every subsequent session. Only the adapter you actually use is downloaded — if you only debug Python, you never download js-debug or delve.
+Answer `y`. The adapter is downloaded into `~/.dap-cli/adapters/` once and reused for every subsequent session. Only the adapter you actually use is downloaded — if you only debug Python, you never download js-debug, delve, or CodeLLDB.
+
+Built-in adapters are `js-debug` for JavaScript/browser targets, `debugpy` for Python, `delve` for Go, and `codelldb` (CodeLLDB) for explicit compiled Rust executables.
 
 **Non-interactive callers (agents, CI, scripts):** pre-consent so the prompt does not block:
 
@@ -38,11 +40,12 @@ DAP_CLI_ASSUME_YES=1 dap-cli launch ...         # equivalent env var
 
 When stdin is not a TTY and neither `--yes` nor `DAP_CLI_ASSUME_YES=1` is set, dap-cli fails fast with `provision_consent_required` rather than hanging on a prompt nobody can answer.
 
-**Pre-warm the cache (optional):** for sealed CI images or fresh dev machines, install all three built-in adapters up front:
+**Pre-warm the cache (optional):** for sealed CI images or fresh dev machines, install all four built-in adapters up front:
 
 ```bash
 dap-cli setup-adapters --yes
 dap-cli setup-adapters --adapter js-debug --yes    # or one at a time
+dap-cli setup-adapters --adapter codelldb --yes    # Rust / CodeLLDB only
 ```
 
 **Custom cache location:** set `DAP_CLI_ADAPTERS_DIR=/path/to/cache` to override the default `~/.dap-cli/adapters/` (useful for shared CI caches or air-gapped pre-staged installs).
@@ -53,7 +56,7 @@ See [docs/adapter-setup.md](docs/adapter-setup.md) for the full reference — pi
 
 ## Install the agent skill
 
-The repo includes an [Open Plugins](https://open-plugins.com/) plugin. The [SKILL.md](dap-cli/skills/dap-cli/SKILL.md) teaches your agent how to use the CLI — common commands, the polling loop, breakpoint verification, and language-specific gotchas for `js-debug` and `debugpy`.
+The repo includes an [Open Plugins](https://open-plugins.com/) plugin. The [SKILL.md](dap-cli/skills/dap-cli/SKILL.md) teaches your agent how to use the CLI — common commands, the polling loop, breakpoint verification, and language-specific gotchas for `js-debug`, `debugpy`, Delve, and CodeLLDB.
 
 **VS Code (Copilot Chat agent mode):**
 

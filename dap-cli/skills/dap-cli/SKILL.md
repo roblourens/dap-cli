@@ -1,11 +1,11 @@
 ---
 name: dap-cli
-description: "Use when: an agent needs to debug, inspect, or control a local program from shell commands with dap-cli; trigger for DAP debugging, breakpoints, stack/variables inspection, launch.json debugging, js-debug, debugpy, Chrome debugging, Playwright interop, or poll-then-inspect debug loops. Assumes dap-cli is already on PATH."
+description: "Use when: an agent needs to debug, inspect, or control a local program from shell commands with dap-cli; trigger for DAP debugging, breakpoints, stack/variables inspection, launch.json debugging, js-debug, debugpy, CodeLLDB, Rust, Chrome debugging, Playwright interop, or poll-then-inspect debug loops. Assumes dap-cli is already on PATH."
 ---
 
 # Debug Adapter Control with dap-cli
 
-`dap-cli` is an agent-facing CLI for the Debug Adapter Protocol. It's language-agnostic — any DAP adapter (js-debug, debugpy, custom) works the same way.
+`dap-cli` is an agent-facing CLI for the Debug Adapter Protocol. It's language-agnostic — any DAP adapter (js-debug, debugpy, delve, codelldb, custom) works through the same control loop.
 
 If the `dap-cli` command is not on `PATH`, run it as `npx @roblourens/dap-cli`.
 
@@ -285,7 +285,7 @@ dap-cli continue --name web-demo
 ## Common gotchas
 
 - **Array-shaped `data` fields.** `sessions`, `sessions --show-children`, and `launch --list-configs` all return the standard `{ok, data, meta}` envelope, but `data` is an array (of session objects, or of config-name strings for `--list-configs`) rather than an object with named fields. Don't assume `data.sessions` or `data.configs` — iterate `data` directly.
-- **Don't set `DAP_CLI_HOME` to a fresh per-task dir.** The adapter cache (js-debug, debugpy) lives there. A clean home means every adapter resolution fails with `js_debug_not_found`. Use the default `~/.dap-cli/`.
+- **Don't set `DAP_CLI_HOME` to a fresh per-task dir without staging adapters.** Built-in adapter caches (js-debug, debugpy, delve, codelldb) live there; prewarm or share the intended cache before real debugging.
 - **Compounds.** Member session names are derived as `<compound>/<member>`; use `dap-cli sessions` to discover exact names before targeting a member. Closing one member closes the group unless `stopAll: false`.
 - **`--json-overrides` cannot bypass `--config` auto-route.** A `'{"request":"launch"}'` override is silently overwritten by the auto-routed `request` field.
 - **Stale state.** When sessions or adapters look wrong: `dap-cli sessions` → `dap-cli cleanup` → `dap-cli cleanup --purge` → `dap-cli stop-controller`.
@@ -296,3 +296,4 @@ dap-cli continue --name web-demo
 - JS / TS / browser → [references/javascript-typescript.md](./references/javascript-typescript.md)
 - Python → [references/python.md](./references/python.md)
 - Go / Delve → [references/go-delve.md](./references/go-delve.md)
+- Rust / CodeLLDB → [references/rust-codelldb.md](./references/rust-codelldb.md)

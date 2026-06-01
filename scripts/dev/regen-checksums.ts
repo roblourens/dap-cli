@@ -14,7 +14,7 @@ import { Buffer } from 'node:buffer';
 // (`node --experimental-strip-types`) without forcing the whole repo to enable
 // `allowImportingTsExtensions`.
 // @ts-expect-error -- TS5097: .ts extension is required at runtime here
-const { JS_DEBUG_VERSION, DELVE_VERSION } = await import('../../src/adapters/provision/checksums.ts');
+const { JS_DEBUG_VERSION, DELVE_VERSION, CODELLDB_VERSION } = await import('../../src/adapters/provision/checksums.ts');
 
 interface Asset {
   readonly label: string;
@@ -63,6 +63,11 @@ function buildAssets(): Asset[] {
       label: `delve ${DELVE_VERSION} windows_amd64`,
       key: `DELVE_CHECKSUMS['${DELVE_VERSION}'].windows_amd64`,
       url: `https://github.com/go-delve/delve/releases/download/${DELVE_VERSION}/dlv_${delveBare}_windows_amd64.zip`,
+    },
+    {
+      label: `codelldb ${CODELLDB_VERSION} darwin_arm64`,
+      key: `CODELLDB_CHECKSUMS['${CODELLDB_VERSION}'].darwin_arm64`,
+      url: `https://github.com/vadimcn/codelldb/releases/download/${CODELLDB_VERSION}/codelldb-darwin-arm64.vsix`,
     },
   ];
 }

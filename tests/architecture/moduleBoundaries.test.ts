@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, test } from 'vitest';
 import {
+  CODELLDB_CHECKSUMS,
   DELVE_CHECKSUMS,
   JS_DEBUG_CHECKSUMS,
 } from '../../src/adapters/provision/checksums.js';
@@ -53,7 +54,7 @@ describe('module boundaries', () => {
   test('protocol modules remain language-neutral', async () => {
     const protocolDirectory = path.join(process.cwd(), 'src', 'protocol');
     const protocolFiles = await findTypeScriptFiles(protocolDirectory);
-    const forbiddenTerms = ['javascript', 'python', 'js-debug', 'debugpy', 'Playwright'] as const;
+    const forbiddenTerms = ['javascript', 'python', 'js-debug', 'debugpy', 'Playwright', 'rust', 'codelldb', 'lldb'] as const;
 
     for (const filePath of protocolFiles) {
       const source = await fs.readFile(filePath, 'utf8');
@@ -133,7 +134,7 @@ describe('module boundaries', () => {
     expect(stat.isDirectory()).toBe(true);
 
     // Required modules must be present.
-    for (const required of ['atomicInstall.ts', 'http.ts', 'lock.ts', 'checksums.ts']) {
+    for (const required of ['atomicInstall.ts', 'http.ts', 'lock.ts', 'checksums.ts', 'extractZip.ts', 'codelldb.ts']) {
       await fs.access(path.join(provisionDir, required));
     }
 
@@ -226,6 +227,11 @@ describe('module boundaries', () => {
     for (const [version, platforms] of Object.entries(DELVE_CHECKSUMS)) {
       for (const [platform, value] of Object.entries(platforms)) {
         allChecksums.push({ where: `delve ${version} ${platform}`, value });
+      }
+    }
+    for (const [version, platforms] of Object.entries(CODELLDB_CHECKSUMS)) {
+      for (const [platform, value] of Object.entries(platforms)) {
+        allChecksums.push({ where: `codelldb ${version} ${platform}`, value });
       }
     }
 

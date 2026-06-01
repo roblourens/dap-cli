@@ -4,13 +4,14 @@ This is the full reference for how dap-cli provisions, caches, and configures de
 
 ## Overview
 
-dap-cli ships three built-in adapter IDs:
+dap-cli ships four built-in adapter IDs:
 
 | ID | Runtime | Upstream |
 | --- | --- | --- |
 | `js-debug` | Node.js, Chrome, Electron, browsers | [`microsoft/vscode-js-debug`](https://github.com/microsoft/vscode-js-debug) |
 | `debugpy` | Python | [`microsoft/debugpy`](https://github.com/microsoft/debugpy) |
 | `delve` | Go (Delve) | [`go-delve/delve`](https://github.com/go-delve/delve) |
+| `codelldb` | Rust (CodeLLDB) | [`vadimcn/codelldb`](https://github.com/vadimcn/codelldb) |
 
 **Adapter binaries are not bundled with dap-cli.** The first time `dap-cli launch` (or `attach`) needs one, the CLI:
 
@@ -19,7 +20,7 @@ dap-cli ships three built-in adapter IDs:
 3. downloads + verifies + atomically installs the adapter into the cache,
 4. records a per-version consent marker so the prompt does not appear again on the next launch.
 
-Only the adapter actually needed for the current session is downloaded; a user who only debugs Python never downloads js-debug or delve. Cached adapters survive `npx` invocations, global installs, and CI restarts — the cache is the source of truth, three install paths share it.
+Only the adapter actually needed for the current session is downloaded; a user who only debugs Python never downloads js-debug, delve, or CodeLLDB. Cached adapters survive `npx` invocations, global installs, and CI restarts — the cache is the source of truth, three install paths share it.
 
 For non-interactive consumers (CI, sealed images, agents in a pipeline), the [`dap-cli setup-adapters`](#the-setup-adapters-subcommand) subcommand pre-warms the cache in one shot.
 
@@ -39,9 +40,14 @@ The canonical cache root is `~/.dap-cli/adapters/` (overridable; see [Cache over
     │   │   ├── bin/python               # (Scripts/python.exe on Windows)
     │   │   └── ...
     │   └── .consent-1.8.20
-    └── delve/
+    ├── delve/
         ├── dlv                          # extracted binary (dlv.exe on Windows; chmod 0o755 on POSIX)
         └── .consent-v1.26.3
+    └── codelldb/
+      ├── extension/adapter/codelldb   # native server entrypoint
+      ├── extension/lldb/              # retained bundled LLDB/Python runtime tree
+      ├── extension/lang_support/rust.py
+      └── .consent-v1.12.2
 ```
 
 Per-adapter sibling sentinels live one level up at `~/.dap-cli/adapters/.<id>.lock-target` (lockfile target) and `.<id>.tmp.<pid>.<hex>/` (staging directories). They never sit inside the canonical adapter directory so the final atomic rename can replace the whole `<id>/` tree in one operation.
@@ -53,6 +59,7 @@ Per-adapter sibling sentinels live one level up at `~/.dap-cli/adapters/.<id>.lo
 | `js-debug` | `1.117.0` | `https://github.com/microsoft/vscode-js-debug/releases/download/v1.117.0/js-debug-dap-v1.117.0.tar.gz` |
 | `debugpy` | `1.8.20` | `pip install debugpy==1.8.20` (PyPI) |
 | `delve` | `v1.26.3` | `https://github.com/go-delve/delve/releases/download/v1.26.3/dlv_<version>_<platform>.<ext>` |
+| `codelldb` | `v1.12.2` | `https://github.com/vadimcn/codelldb/releases/download/v1.12.2/codelldb-darwin-arm64.vsix` (`darwin_arm64` only) |
 
 Versions are constants in [`src/adapters/provision/checksums.ts`](../src/adapters/provision/checksums.ts). Bumping a version requires:
 
@@ -72,12 +79,13 @@ dap-cli setup-adapters                            # interactive: one prompt nami
 dap-cli setup-adapters --yes                      # non-interactive: install everything missing
 dap-cli setup-adapters --adapter js-debug         # single adapter (interactive)
 dap-cli setup-adapters --adapter js-debug --yes   # single adapter, no prompt
+dap-cli setup-adapters --adapter codelldb --yes    # verified Rust / CodeLLDB runtime only
 ```
 
 The subcommand classifies adapters as `pending` (no consent marker OR missing entrypoint) vs `cached` BEFORE prompting, so a warm cache prints `cached` for everything and never asks. The single consolidated prompt names every pending adapter:
 
 ```text
-Install 3 adapters (js-debug 1.117.0, debugpy 1.8.20, delve v1.26.3) into ~/.dap-cli/adapters/?
+Install 4 adapters (js-debug 1.117.0, debugpy 1.8.20, delve v1.26.3, codelldb v1.12.2) into ~/.dap-cli/adapters/?
 Proceed? [y/N]
 ```
 
@@ -119,7 +127,7 @@ The override applies to BOTH read (cache lookup) and write (install destination)
 
 - **Sealed CI images** — bake the cache into a Docker layer once at image-build time.
 - **Shared CI runners** — point every job at a host-volume-mounted cache so the first job warms it for the rest.
-- **Air-gapped installs** — populate the directory offline; the consent marker + present entrypoint together mean dap-cli will not prompt or download.
+- **Air-gapped installs for eligible adapters** — populate the directory offline where distribution terms permit it. CodeLLDB remains direct-official-source local-cache only.
 - **Per-project sandboxes** — point at a project-local directory under your worktree.
 
 When unset, dap-cli falls back to `~/.dap-cli/adapters/` (which itself respects `DAP_CLI_HOME` if set).
@@ -148,13 +156,13 @@ Downloads honor the standard proxy environment variables:
 
 | Variable | Effect |
 | --- | --- |
-| `HTTPS_PROXY` / `https_proxy` | Proxy for `https://` URLs (js-debug, delve, GitHub API). |
+| `HTTPS_PROXY` / `https_proxy` | Proxy for `https://` URLs (js-debug, delve, CodeLLDB, GitHub API). |
 | `HTTP_PROXY` / `http_proxy` | Proxy for `http://` URLs only. |
 | `NO_PROXY` / `no_proxy` | Comma-separated bypass list; supports exact hosts and suffix domains (`github.com` matches `foo.github.com`). |
 
 When `HTTPS_PROXY` is set but the proxy refuses the connection, the error is `provision_proxy_error` (not `provision_network_error`) so the recovery message can point at proxy config. Proxy URLs are sanitized in diagnostics: `user:pass@` credentials and `?query` strings are stripped before any URL is rendered into stderr or `data{}`.
 
-**GitHub rate limits.** Both js-debug and delve download from GitHub releases. Unauthenticated requests share a small per-IP quota. To raise it:
+**GitHub rate limits.** js-debug, delve, and CodeLLDB download from GitHub releases. Unauthenticated requests share a small per-IP quota. To raise it:
 
 ```bash
 export GITHUB_TOKEN=ghp_xxx
@@ -163,7 +171,7 @@ dap-cli setup-adapters --yes
 
 The provisioner attaches the token as `Authorization: Bearer <token>` for github.com hosts.
 
-**Air-gapped / mirror.** There is no per-adapter URL override env var. The supported path is to pre-populate `DAP_CLI_ADAPTERS_DIR` from an internal mirror and let dap-cli short-circuit the download.
+**Air-gapped / mirror.** There is no per-adapter URL override env var. Pre-staging is available only where the adapter payload's acquisition/distribution policy permits it. CodeLLDB support is deliberately narrower: dap-cli downloads its verified `darwin_arm64` VSIX directly from the official GitHub Release into the requesting user's local cache; dap-cli does not bundle, mirror, rehost, or advertise an offline CodeLLDB distribution.
 
 ## Error code reference
 
@@ -180,7 +188,7 @@ The provisioner emits exactly the 13 `provision_*` codes below (D-15). Each carr
 | `provision_python3_missing` | `python3` not on `PATH` (debugpy only). | Install Python 3.8+ (`brew install python` / `apt install python3`). |
 | `provision_python3_venv_unavailable` | `python3 -m venv` failed (Debian-derived distros split this out). | `apt install python3-venv`. |
 | `provision_pip_install_failed` | `pip install debugpy==<v>` exited non-zero. | Inspect stderr tail in `diagnostics`; set `PIP_INDEX_URL` to a mirror. |
-| `provision_arch_unsupported` | Detected `<platform>_<arch>` is not in the delve platform matrix. | See supported set in the diagnostic; manually provide a `dlv` on `PATH`. |
+| `provision_arch_unsupported` | Detected `<platform>_<arch>` is not in the adapter's verified asset matrix (Delve or CodeLLDB). | See supported set in the diagnostic; CodeLLDB currently supports only verified `darwin_arm64` local provisioning. |
 | `provision_cache_unwritable` | `mkdir` / `writeFile` / `lockfile.lock` hit `EACCES` / `EROFS` / `ENOSPC` / `EPERM`. | Override `DAP_CLI_ADAPTERS_DIR` to a writable path. |
 | `provision_lock_timeout` | Another process held the per-adapter lock for >90s. | Wait, or delete the sentinel path named in the diagnostic. |
 | `provision_extract_failed` | Archive corrupt OR rejected by the safe extractor (zip-slip, absolute path, drive letter, symlink). | Re-run (transient); if persistent, file an issue. |
@@ -207,7 +215,7 @@ Removes both the binary and the consent marker. Next launch behaves like a fresh
 
 **"I want to disable provisioning entirely (offline / air-gapped)."**
 
-Pre-stage the adapter into `DAP_CLI_ADAPTERS_DIR` so both the consent marker and the expected entrypoint already exist. The provisioner short-circuits before any network call:
+For adapters that may be distributed through your chosen staging mechanism, pre-stage the adapter into `DAP_CLI_ADAPTERS_DIR` so both the consent marker and the expected entrypoint already exist. CodeLLDB is not included in that offline-distribution guidance: its approved contract is direct official-source local caching only. The provisioner short-circuits before any network call for a complete eligible staged cache:
 
 ```bash
 export DAP_CLI_ADAPTERS_DIR=/srv/dap-cli/cache
@@ -233,13 +241,27 @@ Pass `--yes` or set `DAP_CLI_ASSUME_YES=1`. If you've done that and it still han
 
 Delve attach uses adapter-native start arguments (e.g., `--json '{"mode":"local","processId":12345}'`). If the adapter cannot be located on PATH and provisioning is disabled, the failure surfaces as `delve_not_found` — install Delve via `setup-adapters --adapter delve`, or expose a compatible `dlv` on `PATH`. The error names both recovery paths.
 
+**Rust / CodeLLDB explicit executable contract.**
+
+The built-in `codelldb` adapter supports Rust through CodeLLDB `v1.12.2` on the verified `darwin_arm64` runtime cache. Build the Rust target first, then launch the compiled executable with native type `lldb`:
+
+```bash
+cargo build
+dap-cli launch --adapter codelldb --type lldb \
+  --json '{"program":"/workspace/target/debug/my-app","cwd":"/workspace","sourceLanguages":["rust"]}'
+```
+
+A raw `.rs` source path is not an executable and is deliberately not used for adapter inference. VS Code CodeLLDB `cargo` configuration objects are extension-owned preparation input and are rejected by dap-cli with `codelldb_cargo_config_unsupported`, even when a `program` field is also present. Use an explicitly built Rust executable or a named `type: "lldb"` configuration that points to that executable and omits `cargo`.
+
+Owned local PID attach passed validation using CodeLLDB's native `pid` field, with disconnect survival and explicit cleanup of only the owned target process. Attach only to a local PID you own and intend to debug; generic C/C++, remote debugging, and security-policy workarounds are not supported claims of this Rust built-in.
+
 **"Tests pass but the published binary fails."**
 
 Run [`dev/smoke/hand-driven-smoke.md`](../dev/smoke/hand-driven-smoke.md) Sequence C against the published tarball. The hand-driven smoke catches things the test harness wraps around (real TTY, real network, real filesystem permissions).
 
 ## Security notes
 
-- **SHA-256 verification** is enforced for js-debug and delve. The pinned checksum table is embedded in [`src/adapters/provision/checksums.ts`](../src/adapters/provision/checksums.ts) and an architecture test (`tests/architecture/moduleBoundaries.test.ts`) refuses to compile placeholder / non-64-hex constants.
+- **SHA-256 verification** is enforced for js-debug, delve, and CodeLLDB. The pinned checksum table is embedded in [`src/adapters/provision/checksums.ts`](../src/adapters/provision/checksums.ts) and an architecture test (`tests/architecture/moduleBoundaries.test.ts`) refuses to compile placeholder / non-64-hex constants.
 - **debugpy** is delegated to `pip`, which performs its own wheel hash verification against PyPI.
 - **No shell-out to `tar` or `unzip`.** Extraction goes through `tar@7` (tar.gz) and `yauzl@3` (zip) in-process. An architecture test forbids `spawn`/`exec` of `tar` / `unzip` / `gzip` from any provisioning module (D-11).
 - **Zip-slip and symlink rejection.** The extractor refuses entries with `..` path components, POSIX-absolute entry names, Windows drive letters, or POSIX symlink modes (`0o120000` in the upper 16 bits of `externalFileAttributes`). Snapshot-tested.
@@ -326,11 +348,14 @@ Adapter-only defaults (used when only `--adapter` is given):
 | `js-debug` | `pwa-node` (`pwa-chrome` if `--program` ends in `.html`/`.htm`) |
 | `debugpy` | `python` |
 | `delve` | `go` |
+| `codelldb` | `lldb` |
 | custom | no default — pass `--type` explicitly |
 
-An unsupported program extension produces a `usage_error` with code `adapter_inference_failed`. When `--adapter`, `--type`, `--program`, and `--config` are all absent, dap-cli falls back to the built-in `fake` adapter (legacy test/sandbox behaviour).
+An unsupported program extension produces a `usage_error` with code `adapter_inference_failed`. This intentionally includes `.rs`: Rust input must be a compiled executable selected with `--adapter codelldb --type lldb` or a named `lldb` configuration. When `--adapter`, `--type`, `--program`, and `--config` are all absent, dap-cli falls back to the built-in `fake` adapter (legacy test/sandbox behaviour).
 
 ## Launch config type mapping
+
+The built-in mapping `type: "lldb"` selects `codelldb` for Rust configurations that name an explicit compiled executable and omit VS Code's extension-owned `cargo` property.
 
 Use `launchConfigTypeMap` when `.vscode/launch.json` uses a custom `type` value:
 

@@ -14,6 +14,9 @@ import {
   JS_DEBUG_VERSION,
   DELVE_CHECKSUMS,
   DELVE_VERSION,
+  CODELLDB_CHECKSUMS,
+  CODELLDB_VERSION,
+  type CodeLldbPlatformKey,
   type DelvePlatformKey,
 } from '../../src/adapters/provision/checksums.js';
 import { CliError } from '../../src/cli/errors.js';
@@ -21,6 +24,7 @@ import {
   startFakeReleaseServer,
   type FakeReleaseServer,
 } from '../helpers/fakeReleaseServer.js';
+import { buildFakeCodeLldbVsix } from '../helpers/buildFakeAdapterTarball.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -37,9 +41,11 @@ const python3Available = await detectPython3();
 const skipDebugpy = process.env.DAP_CLI_TEST_SKIP_DEBUGPY === '1' || !python3Available;
 
 const DELVE_PLATFORM: DelvePlatformKey = 'darwin_arm64';
+const CODELLDB_PLATFORM: CodeLldbPlatformKey = 'darwin_arm64';
 const BARE_DELVE_VERSION = DELVE_VERSION.startsWith('v') ? DELVE_VERSION.slice(1) : DELVE_VERSION;
 const JS_DEBUG_PATH = `/microsoft/vscode-js-debug/releases/download/v${JS_DEBUG_VERSION}/js-debug-dap-v${JS_DEBUG_VERSION}.tar.gz`;
 const DELVE_PATH = `/go-delve/delve/releases/download/${DELVE_VERSION}/dlv_${BARE_DELVE_VERSION}_${DELVE_PLATFORM}.tar.gz`;
+const CODELLDB_PATH = `/vadimcn/codelldb/releases/download/${CODELLDB_VERSION}/codelldb-darwin-arm64.vsix`;
 
 async function buildJsDebugTarball(workDir: string): Promise<{ body: Buffer; sha256: string }> {
   const src = path.join(workDir, 'js-tar-src');
@@ -81,16 +87,26 @@ function setDelveSha(platform: DelvePlatformKey, sha: string): void {
   bucket[platform] = sha;
 }
 
+function setCodeLldbSha(sha: string): void {
+  const bucket = CODELLDB_CHECKSUMS[CODELLDB_VERSION];
+  if (bucket === undefined) {
+    throw new Error(`CODELLDB_CHECKSUMS missing bucket for ${CODELLDB_VERSION}`);
+  }
+  bucket[CODELLDB_PLATFORM] = sha;
+}
+
 describe.skipIf(process.platform === 'win32')('runSetupAdaptersAction', () => {
   let workDir: string;
   let server: FakeReleaseServer | undefined;
   let originalJsSha: string | undefined;
   let originalDelveSha: string | undefined;
+  let originalCodeLldbSha: string | undefined;
 
   beforeEach(async () => {
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dap-cli-setup-cmd-'));
     originalJsSha = JS_DEBUG_CHECKSUMS[JS_DEBUG_VERSION];
     originalDelveSha = DELVE_CHECKSUMS[DELVE_VERSION]?.[DELVE_PLATFORM];
+    originalCodeLldbSha = CODELLDB_CHECKSUMS[CODELLDB_VERSION]?.[CODELLDB_PLATFORM];
   });
 
   afterEach(async () => {
@@ -99,6 +115,9 @@ describe.skipIf(process.platform === 'win32')('runSetupAdaptersAction', () => {
     }
     if (originalDelveSha !== undefined && DELVE_CHECKSUMS[DELVE_VERSION] !== undefined) {
       DELVE_CHECKSUMS[DELVE_VERSION][DELVE_PLATFORM] = originalDelveSha;
+    }
+    if (originalCodeLldbSha !== undefined && CODELLDB_CHECKSUMS[CODELLDB_VERSION] !== undefined) {
+      CODELLDB_CHECKSUMS[CODELLDB_VERSION][CODELLDB_PLATFORM] = originalCodeLldbSha;
     }
     if (server !== undefined) {
       await server.close();
@@ -170,12 +189,58 @@ describe.skipIf(process.platform === 'win32')('runSetupAdaptersAction', () => {
     expect(server.hitCount()).toBe(1);
   });
 
+  test('--adapter codelldb installs the approved complete VSIX tree and reports warm cache', async () => {
+    const archive = await buildFakeCodeLldbVsix(CODELLDB_VERSION, workDir);
+    const body = await fs.readFile(archive.path);
+    setCodeLldbSha(archive.sha256);
+    server = await startFakeReleaseServer([
+      { match: request => request.url === CODELLDB_PATH, respond: (_request, response) => { response.end(body); } },
+    ]);
+    const env = {
+      DAP_CLI_HOME: workDir,
+      DAP_CLI_PROVISION_RELEASE_BASE_URL: server.url,
+      DAP_CLI_PROVISION_CODELLDB_PLATFORM_OVERRIDE: CODELLDB_PLATFORM,
+    };
+
+    const first = await runSetupAdaptersAction({ adapter: 'codelldb', assumeYes: true, env });
+    const second = await runSetupAdaptersAction({ adapter: 'codelldb', assumeYes: false, env, stdin: createNonTtyStdin() });
+
+    expect(first.adapters[0]).toMatchObject({ id: 'codelldb', version: CODELLDB_VERSION, status: 'installed' });
+    expect(second.adapters[0]).toMatchObject({ id: 'codelldb', version: CODELLDB_VERSION, status: 'cached' });
+    expect(server.hitCount()).toBe(1);
+  });
+
+  test('partial CodeLLDB tree remains pending and cannot repair without consent', async () => {
+    const archive = await buildFakeCodeLldbVsix(CODELLDB_VERSION, workDir);
+    const body = await fs.readFile(archive.path);
+    setCodeLldbSha(archive.sha256);
+    server = await startFakeReleaseServer([
+      { match: request => request.url === CODELLDB_PATH, respond: (_request, response) => { response.end(body); } },
+    ]);
+    const env = {
+      DAP_CLI_HOME: workDir,
+      DAP_CLI_PROVISION_RELEASE_BASE_URL: server.url,
+      DAP_CLI_PROVISION_CODELLDB_PLATFORM_OVERRIDE: CODELLDB_PLATFORM,
+    };
+    await runSetupAdaptersAction({ adapter: 'codelldb', assumeYes: true, env });
+    await fs.rm(path.join(workDir, 'adapters', 'codelldb', 'extension', 'lldb', 'lib', 'liblldb.dylib'));
+
+    const error = await runSetupAdaptersAction({ adapter: 'codelldb', assumeYes: false, env, stdin: createNonTtyStdin() }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).code).toBe('provision_consent_required');
+    expect(server.hitCount()).toBe(1);
+  });
+
   test('partial failure: bad js-debug checksum surfaces as failed alongside successful delve', async () => {
     const jsTarball = await buildJsDebugTarball(workDir);
     const delveTarball = await buildDelveTarball(workDir);
+    const codelldbArchive = await buildFakeCodeLldbVsix(CODELLDB_VERSION, workDir);
+    const codelldbBody = await fs.readFile(codelldbArchive.path);
     // Mutate the expected js-debug SHA to an invalid value so verification fails.
     JS_DEBUG_CHECKSUMS[JS_DEBUG_VERSION] = '0'.repeat(64);
     setDelveSha(DELVE_PLATFORM, delveTarball.sha256);
+    setCodeLldbSha(codelldbArchive.sha256);
 
     server = await startFakeReleaseServer([
       {
@@ -194,6 +259,7 @@ describe.skipIf(process.platform === 'win32')('runSetupAdaptersAction', () => {
           res.end(delveTarball.body);
         },
       },
+      { match: req => req.url === CODELLDB_PATH, respond: (_req, res) => { res.end(codelldbBody); } },
     ]);
 
     // Pre-warm the debugpy install layout so the action's iteration over all three
@@ -211,15 +277,17 @@ describe.skipIf(process.platform === 'win32')('runSetupAdaptersAction', () => {
         DAP_CLI_HOME: workDir,
         DAP_CLI_PROVISION_RELEASE_BASE_URL: server.url,
         DAP_CLI_PROVISION_DELVE_PLATFORM_OVERRIDE: DELVE_PLATFORM,
+        DAP_CLI_PROVISION_CODELLDB_PLATFORM_OVERRIDE: CODELLDB_PLATFORM,
       },
     });
 
-    expect(result.adapters).toHaveLength(3);
+    expect(result.adapters).toHaveLength(4);
     const byId = Object.fromEntries(result.adapters.map(a => [a.id, a]));
     expect(byId['js-debug']?.status).toBe('failed');
     expect(byId['js-debug']?.error?.code).toBeTruthy();
     expect(byId['delve']?.status).toBe('installed');
     expect(byId['debugpy']?.status).toBe('cached');
+    expect(byId['codelldb']?.status).toBe('installed');
   });
 
   test('non-TTY without --yes throws provision_consent_required once naming every pending adapter', async () => {
@@ -244,17 +312,21 @@ describe.skipIf(process.platform === 'win32')('runSetupAdaptersAction', () => {
     expect(blob).toContain('js-debug');
     expect(blob).toContain('debugpy');
     expect(blob).toContain('delve');
+    expect(blob).toContain('codelldb');
     // The server never opened: no provision attempt should have happened.
     expect(server).toBeUndefined();
   });
 
   test.skipIf(skipDebugpy)(
-    'default invocation installs all three adapters (skipped when python3 unavailable)',
+    'default invocation installs all four adapters (skipped when python3 unavailable)',
     async () => {
       const jsTarball = await buildJsDebugTarball(workDir);
       const delveTarball = await buildDelveTarball(workDir);
+      const codelldbArchive = await buildFakeCodeLldbVsix(CODELLDB_VERSION, workDir);
+      const codelldbBody = await fs.readFile(codelldbArchive.path);
       JS_DEBUG_CHECKSUMS[JS_DEBUG_VERSION] = jsTarball.sha256;
       setDelveSha(DELVE_PLATFORM, delveTarball.sha256);
+      setCodeLldbSha(codelldbArchive.sha256);
 
       server = await startFakeReleaseServer([
         {
@@ -273,6 +345,7 @@ describe.skipIf(process.platform === 'win32')('runSetupAdaptersAction', () => {
             res.end(delveTarball.body);
           },
         },
+        { match: req => req.url === CODELLDB_PATH, respond: (_req, res) => { res.end(codelldbBody); } },
       ]);
 
       const result = await runSetupAdaptersAction({
@@ -282,16 +355,18 @@ describe.skipIf(process.platform === 'win32')('runSetupAdaptersAction', () => {
           DAP_CLI_HOME: workDir,
           DAP_CLI_PROVISION_RELEASE_BASE_URL: server.url,
           DAP_CLI_PROVISION_DELVE_PLATFORM_OVERRIDE: DELVE_PLATFORM,
+          DAP_CLI_PROVISION_CODELLDB_PLATFORM_OVERRIDE: CODELLDB_PLATFORM,
         },
       });
 
-      expect(result.adapters).toHaveLength(3);
+      expect(result.adapters).toHaveLength(4);
       const statuses = Object.fromEntries(result.adapters.map(a => [a.id, a.status]));
       expect(statuses['js-debug']).toBe('installed');
       expect(statuses['debugpy']).toBe('installed');
       expect(statuses['delve']).toBe('installed');
-      // debugpy provisions via pip, not via the FakeReleaseServer: server saw only 2 hits.
-      expect(server.hitCount()).toBe(2);
+      expect(statuses['codelldb']).toBe('installed');
+      // debugpy provisions via pip, not via the FakeReleaseServer: server saw only 3 hits.
+      expect(server.hitCount()).toBe(3);
     },
     180_000,
   );

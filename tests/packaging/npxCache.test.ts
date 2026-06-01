@@ -24,8 +24,9 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
-import { JS_DEBUG_VERSION } from '../../src/adapters/provision/checksums.js';
+import { CODELLDB_VERSION, JS_DEBUG_VERSION } from '../../src/adapters/provision/checksums.js';
 import { startFakeReleaseServer, type FakeReleaseServer } from '../helpers/fakeReleaseServer.js';
+import { FAKE_CODELLDB_RUNTIME_PATHS } from '../helpers/buildFakeAdapterTarball.js';
 
 const execFileAsync = promisify(execFile);
 const RUN = process.env.DAP_CLI_RUN_PACKAGING === '1';
@@ -91,6 +92,17 @@ describe.skipIf(!RUN)('published bin cache behavior across processes', () => {
       `${new Date().toISOString()}\n`,
     );
 
+    const codeLldbRoot = path.join(cacheRoot, 'codelldb');
+    for (const relativePath of FAKE_CODELLDB_RUNTIME_PATHS) {
+      const filePath = path.join(codeLldbRoot, relativePath);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, `fake codelldb runtime: ${relativePath}\n`);
+    }
+    await fs.writeFile(
+      path.join(codeLldbRoot, `.consent-${CODELLDB_VERSION}`),
+      `${new Date().toISOString()}\n`,
+    );
+
     // 3. Server that fails on any request. Cache hits = zero requests =
     //    zero failures. Any miss would route through this server and
     //    produce a provision_* error.
@@ -104,10 +116,10 @@ describe.skipIf(!RUN)('published bin cache behavior across processes', () => {
     await fs.rm(workDir, { recursive: true, force: true });
   });
 
-  function runDapCliSetup(): { status: number | null; stdout: string; stderr: string } {
+  function runDapCliSetup(adapter: 'js-debug' | 'codelldb' = 'js-debug'): { status: number | null; stdout: string; stderr: string } {
     const result = spawnSync(
       process.execPath,
-      [dapCliBin, 'setup-adapters', '--adapter', 'js-debug'],
+      [dapCliBin, 'setup-adapters', '--adapter', adapter],
       {
         cwd: installPrefix,
         env: {
@@ -140,5 +152,11 @@ describe.skipIf(!RUN)('published bin cache behavior across processes', () => {
     expect(second.status, `second invocation failed:\nstdout:\n${second.stdout}\nstderr:\n${second.stderr}`).toBe(0);
 
     expect(server!.hitCount(), 'cache hits should not contact the release server').toBe(0);
+  }, 60_000);
+
+  test('published bin accepts a complete pre-staged CodeLLDB cache without network requests', () => {
+    const result = runDapCliSetup('codelldb');
+    expect(result.status, `CodeLLDB cache invocation failed:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0);
+    expect(server!.hitCount(), 'CodeLLDB cache hit should not contact the release server').toBe(0);
   }, 60_000);
 });

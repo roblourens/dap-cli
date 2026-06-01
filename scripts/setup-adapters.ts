@@ -11,7 +11,7 @@ const { resolveAssumeYes } = await import('../src/cli/confirm.js');
 
 const args = process.argv.slice(2);
 const raw = args[args.indexOf('--adapter') + 1];
-const adapter = raw === 'js-debug' || raw === 'debugpy' || raw === 'delve' ? raw : undefined;
+const adapter = raw === 'js-debug' || raw === 'debugpy' || raw === 'delve' || raw === 'codelldb' ? raw : undefined;
 const assumeYes = resolveAssumeYes(args.includes('--yes') || args.includes('-y'), process.env);
 
 try {

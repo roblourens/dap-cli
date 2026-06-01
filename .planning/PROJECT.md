@@ -8,7 +8,7 @@
 
 v0.1.0 delivers the core agent-facing DAP CLI: persistent controller, language-neutral DAP core with stdio + socket transports, complete typed command surface generated from official protocol metadata, built-in JS (js-debug) + Python (debugpy) + custom adapters, real Chrome/Playwright same-browser handoff with child-session routing, VS Code launch.json + compound execution, paused-state ergonomics with per-child paused-first routing, breakpoint command surface, JSON-by-default-when-piped output mode + opt-in human mode, Python evaluate auto-wrap, and a categorized help command.
 
-Phase 20 completes the next runtime expansion: Go debugging through Delve's native `dlv dap` server, deterministic adapter provisioning, launch/test/exec/local-attach coverage, screened public-repo validation, fresh-agent hardening, and explicit Go/Delve compatibility diagnostics.
+Phase 20 completed Go debugging through Delve's native `dlv dap` server. Phase 22 completes the next runtime expansion: Rust debugging through CodeLLDB `v1.12.2`, using verified direct official-source local caching on `darwin_arm64`, explicit compiled-executable and named `lldb` launch paths, owned local attach, screened public-project validation, transcript-audited fresh-agent hardening, and mandatory hand-driven CLI verification.
 
 ## Next Milestone Goals
 
@@ -44,6 +44,7 @@ Agents can reliably control a DAP debug session from repeatable CLI commands and
 - ✓ Conditional breakpoint metadata through the friendly alias and Playwright/js-debug interop coverage — Phase 6
 - ✓ Post-Phase-6 hardening discovery, external project smoke, gap closure, and final hand-driven CLI smoke — Phase 7
 - ✓ Built-in Go debugging through Delve with deterministic provisioning, real launch/test/exec/local-attach coverage, screened public-repo validation, fresh-agent hardening, and verified compatibility diagnostics — Phase 20
+- ✓ Built-in Rust debugging through CodeLLDB with verified local provisioning, real explicit/config/owned-attach coverage, screened public-project validation, transcript-audited fresh-agent hardening, and final hand-driven CLI smoke — Phase 22
 
 ### Active
 
@@ -71,7 +72,7 @@ Agents can reliably control a DAP debug session from repeatable CLI commands and
 - **Protocol boundary**: Core should be vanilla DAP - avoids binding the product to JavaScript, Python, or any single adapter.
 - **Session behavior**: CLI calls must share debugger state across commands - required for agent workflows that set breakpoints, trigger UI actions, and inspect pause state later.
 - **v1 event model**: Polling only - keeps the first version simple and predictable for agents.
-- **Bundled adapters**: JavaScript, Python, and Go should work out of the box - keeps common agent debugging scenarios on supported built-in paths.
+- **Built-in adapters**: JavaScript, Python, Go, and verified `darwin_arm64` Rust/CodeLLDB should work through deterministic local setup and caching - keeps common agent debugging scenarios on supported built-in paths while retaining CodeLLDB's platform and redistribution boundary.
 - **Extensibility**: Additional adapters must be configurable - users should be able to point dap-cli at any compatible debug adapter.
 - **Implementation integrity**: Use mcp-debugger as product-shape inspiration.
 
@@ -100,6 +101,7 @@ Agents can reliably control a DAP debug session from repeatable CLI commands and
 | Reject duplicate `--name` at session create time instead of disambiguating downstream | Earlier work added a `session_ambiguous` resolver branch on the assumption that two persisted sessions could legitimately share a `--name`. That misread intent — duplicate live names should simply be an error. Quick task `260504-rp5` rejects the second create with `session_name_in_use`, lets `resolveTargetSession` prefer live records over terminated ones when looking up by name, and keeps the `session_ambiguous` branch only as a defensive guard. Reuse against terminated/failed records is allowed. | Reversed 2026-05-04 in quick task 260504-rp5 |
 | Close hardening gaps as GSD-native UAT gaps before milestone closure | A stabilization phase can discover issues first, then plan and execute gap closure inside the same phase without filing external GitHub issues unless explicitly requested. | Validated in Phase 7 with GAP-07-01 closed, GAP-07-02 mitigated/verified, GAP-07-03 closed, full tests green, and final hand-driven smoke pass |
 | Add Go through Delve without weakening Delve's Go-version safety check | Delve `v1.26.3` is a popular real adapter/runtime path, but it requires Go 1.24+ for supported debuggee builds. dap-cli should diagnose mismatches early, forward `GOTOOLCHAIN` when the user selects that supported recovery path, and keep adapter-native failure detail visible. | Validated in Phase 20 built-in Delve support, docs, UAT, and final Go feedback hardening |
+| Add Rust through CodeLLDB without broadening an unverified distribution/platform promise | CodeLLDB `v1.12.2` gives Rust a real native debugger path, but only the official `darwin_arm64` asset and loopback invocation were verified. dap-cli directly caches the official payload locally after consent, rejects unsupported Cargo/raw-source/platform surfaces, and keeps bundling, mirroring, and broader platforms out of scope. | Validated in Phase 22 provisioning, real Rust workflows, screened public transcripts, final UAT, and socket-path gap closure |
 
 ## Evolution
 
@@ -119,4 +121,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-17 after Phase 20 Go/Delve completion*
+*Last updated: 2026-06-01 after Phase 22 Rust/CodeLLDB completion*

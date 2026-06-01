@@ -12,9 +12,13 @@ import { atomicInstall } from '../../../src/adapters/provision/atomicInstall.js'
 import { withAdapterLock } from '../../../src/adapters/provision/lock.js';
 import { provisionDelve } from '../../../src/adapters/provision/delve.js';
 import { provisionDebugpy } from '../../../src/adapters/provision/debugpy.js';
+import { provisionCodeLldb } from '../../../src/adapters/provision/codelldb.js';
 import {
+  CODELLDB_CHECKSUMS,
+  CODELLDB_VERSION,
   DELVE_CHECKSUMS,
   DELVE_VERSION,
+  type CodeLldbPlatformKey,
   type DelvePlatformKey,
 } from '../../../src/adapters/provision/checksums.js';
 import { CliError } from '../../../src/cli/errors.js';
@@ -24,6 +28,7 @@ import {
   serveBuffer,
   type FakeReleaseServer,
 } from '../../helpers/fakeReleaseServer.js';
+import { buildFakeCodeLldbVsix } from '../../helpers/buildFakeAdapterTarball.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,6 +77,7 @@ function createSinkStderr(): NodeJS.WriteStream {
 }
 
 const PLATFORM_KEY: DelvePlatformKey = 'darwin_arm64';
+const CODELLDB_PLATFORM_KEY: CodeLldbPlatformKey = 'darwin_arm64';
 
 function setDelveSha(sha: string): void {
   const bucket = DELVE_CHECKSUMS[DELVE_VERSION];
@@ -82,6 +88,7 @@ function setDelveSha(sha: string): void {
 }
 const BARE_VERSION = DELVE_VERSION.startsWith('v') ? DELVE_VERSION.slice(1) : DELVE_VERSION;
 const RELEASE_PATH = `/go-delve/delve/releases/download/${DELVE_VERSION}/dlv_${BARE_VERSION}_${PLATFORM_KEY}.tar.gz`;
+const CODELLDB_RELEASE_PATH = `/vadimcn/codelldb/releases/download/${CODELLDB_VERSION}/codelldb-darwin-arm64.vsix`;
 
 async function buildDelveTarball(workDir: string): Promise<{ body: Buffer; sha256: string }> {
   const src = path.join(workDir, 'tar-src');
@@ -102,17 +109,22 @@ describe('provision error envelope snapshots', () => {
   let adaptersDir: string;
   let server: FakeReleaseServer | undefined;
   let originalDelveSha: string | undefined;
+  let originalCodeLldbSha: string | undefined;
 
   beforeEach(async () => {
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dap-cli-prov-snap-'));
     adaptersDir = path.join(workDir, 'adapters');
     await fs.mkdir(adaptersDir, { recursive: true });
     originalDelveSha = DELVE_CHECKSUMS[DELVE_VERSION]?.[PLATFORM_KEY];
+    originalCodeLldbSha = CODELLDB_CHECKSUMS[CODELLDB_VERSION]?.[CODELLDB_PLATFORM_KEY];
   });
 
   afterEach(async () => {
     if (originalDelveSha !== undefined && DELVE_CHECKSUMS[DELVE_VERSION] !== undefined) {
       DELVE_CHECKSUMS[DELVE_VERSION][PLATFORM_KEY] = originalDelveSha;
+    }
+    if (originalCodeLldbSha !== undefined && CODELLDB_CHECKSUMS[CODELLDB_VERSION] !== undefined) {
+      CODELLDB_CHECKSUMS[CODELLDB_VERSION][CODELLDB_PLATFORM_KEY] = originalCodeLldbSha;
     }
     if (server !== undefined) {
       await server.close();
@@ -313,6 +325,87 @@ describe('provision error envelope snapshots', () => {
         ],
       }
     `);
+  });
+
+  test('codelldb provision_arch_unsupported retains the inspected-platform boundary', async () => {
+    const error = await provisionCodeLldb({
+      env: { DAP_CLI_PROVISION_CODELLDB_PLATFORM_OVERRIDE: 'linux_x64' },
+      assumeYes: true,
+      adaptersDir,
+    }).catch((err: unknown) => err);
+
+    expect(pickEnvelope(error)).toMatchInlineSnapshot(`
+      {
+        "code": "provision_arch_unsupported",
+        "data": {
+          "adapterId": "codelldb",
+          "detected": "linux_x64",
+          "supported": [
+            "darwin_arm64",
+          ],
+        },
+        "diagnostics": [
+          "Detected platform: linux_x64",
+          "Supported platforms: darwin_arm64.",
+          "Only the official CodeLLDB darwin-arm64 artifact has passed verification.",
+        ],
+      }
+    `);
+  });
+
+  test('codelldb provision_checksum_mismatch identifies the official VSIX input', async () => {
+    const archive = await buildFakeCodeLldbVsix(CODELLDB_VERSION, workDir);
+    const body = await fs.readFile(archive.path);
+    const bucket = CODELLDB_CHECKSUMS[CODELLDB_VERSION];
+    if (bucket === undefined) {
+      throw new Error(`CODELLDB_CHECKSUMS missing bucket for ${CODELLDB_VERSION}`);
+    }
+    bucket[CODELLDB_PLATFORM_KEY] = 'f'.repeat(64);
+    server = await startFakeReleaseServer([
+      { match: request => request.url === CODELLDB_RELEASE_PATH, respond: serveBuffer(body) },
+    ]);
+
+    const error = await provisionCodeLldb({
+      env: {
+        DAP_CLI_PROVISION_RELEASE_BASE_URL: server.url,
+        DAP_CLI_PROVISION_CODELLDB_PLATFORM_OVERRIDE: CODELLDB_PLATFORM_KEY,
+      },
+      assumeYes: true,
+      adaptersDir,
+    }).catch((err: unknown) => err);
+    const envelope = pickEnvelope(error);
+
+    expect(envelope.code).toBe('provision_checksum_mismatch');
+    expect(envelope.data).toMatchObject({ adapterId: 'codelldb', version: CODELLDB_VERSION, expectedSha: 'f'.repeat(64) });
+    expect(envelope.data?.url).toContain(CODELLDB_RELEASE_PATH);
+    expect(envelope.diagnostics).toContain('Re-run setup or report at https://github.com/roblourens/dap-cli/issues if persistent.');
+  });
+
+  test('codelldb provision_extract_failed identifies a missing bundled runtime path', async () => {
+    const archive = await buildFakeCodeLldbVsix(CODELLDB_VERSION, workDir, { omit: 'extension/lldb/lib/liblldb.dylib' });
+    const body = await fs.readFile(archive.path);
+    const bucket = CODELLDB_CHECKSUMS[CODELLDB_VERSION];
+    if (bucket === undefined) {
+      throw new Error(`CODELLDB_CHECKSUMS missing bucket for ${CODELLDB_VERSION}`);
+    }
+    bucket[CODELLDB_PLATFORM_KEY] = archive.sha256;
+    server = await startFakeReleaseServer([
+      { match: request => request.url === CODELLDB_RELEASE_PATH, respond: serveBuffer(body) },
+    ]);
+
+    const error = await provisionCodeLldb({
+      env: {
+        DAP_CLI_PROVISION_RELEASE_BASE_URL: server.url,
+        DAP_CLI_PROVISION_CODELLDB_PLATFORM_OVERRIDE: CODELLDB_PLATFORM_KEY,
+      },
+      assumeYes: true,
+      adaptersDir,
+    }).catch((err: unknown) => err);
+    const envelope = pickEnvelope(error);
+
+    expect(envelope.code).toBe('provision_extract_failed');
+    expect(envelope.data?.entrypoint).toBe('extension/lldb/lib/liblldb.dylib');
+    expect(envelope.diagnostics).toContain('Missing entry point: extension/lldb/lib/liblldb.dylib');
   });
 
   test('provision_python3_missing', async () => {

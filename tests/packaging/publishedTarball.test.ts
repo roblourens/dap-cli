@@ -103,6 +103,8 @@ describe.skipIf(!RUN)('npm pack output', () => {
     expect(body.startsWith('#!/usr/bin/env node'), 'dist/index.js missing shebang').toBe(true);
     expect(body).toContain('provisionAdapter');
     expect(body).toContain('withAdapterLock');
+    expect(body).toContain('codelldb-darwin-arm64.vsix');
+    expect(body).toContain('Only the official CodeLLDB darwin-arm64 artifact has passed verification.');
 
     // Walk the extracted tree and assert no .test.ts/.spec.ts survived.
     const walk = async (dir: string): Promise<string[]> => {

@@ -15,6 +15,7 @@ import {
   resolveLaunchConfigurationConfig,
   resolveLaunchConfigEntry,
   resolveLaunchConfig,
+  validateCodeLldbNativeConfig,
 } from '../../src/config/launchConfig.js';
 
 let tempDir: string;
@@ -42,6 +43,7 @@ describe('launch config resolution', () => {
     expect(resolveAdapterIdFromType('python')).toBe('debugpy');
     expect(resolveAdapterIdFromType('debugpy')).toBe('debugpy');
     expect(resolveAdapterIdFromType('go')).toBe('delve');
+    expect(resolveAdapterIdFromType('lldb')).toBe('codelldb');
   });
 
   test('reports unknown launch types', () => {
@@ -270,6 +272,51 @@ describe('launch config resolution', () => {
       cwd: path.join(tempDir, 'module'),
       program,
     });
+  });
+
+  test('preserves explicit CodeLLDB native Rust launch fields without cargo', () => {
+    const resolved = resolveLaunchConfigurationConfig({
+      type: 'lldb',
+      name: 'Debug Rust executable',
+      request: 'launch',
+      program: '${workspaceFolder}/target/debug/demo',
+      cwd: '${workspaceFolder}',
+      args: ['--flag'],
+      env: { RUST_LOG: 'debug' },
+      sourceLanguages: ['rust'],
+      sourceMap: { '/build': '${workspaceFolder}' },
+    }, { workspaceFolder: tempDir });
+
+    expect(validateCodeLldbNativeConfig(resolved)).toEqual({
+      type: 'lldb',
+      name: 'Debug Rust executable',
+      request: 'launch',
+      program: path.join(tempDir, 'target', 'debug', 'demo'),
+      cwd: tempDir,
+      args: ['--flag'],
+      env: { RUST_LOG: 'debug' },
+      sourceLanguages: ['rust'],
+      sourceMap: { '/build': tempDir },
+    });
+  });
+
+  test('rejects every CodeLLDB extension-owned cargo configuration with explicit-binary recovery', () => {
+    for (const config of [
+      { type: 'lldb', name: 'Cargo', request: 'launch', cargo: { args: ['build'] } },
+      { type: 'lldb', name: 'Cargo plus program', request: 'launch', cargo: { args: ['build'] }, program: '/tmp/target/debug/demo' },
+    ]) {
+      let error: unknown;
+      try {
+        validateCodeLldbNativeConfig(config);
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toMatchObject({
+        code: 'codelldb_cargo_config_unsupported',
+        category: 'usage',
+        data: { adapterId: 'codelldb', unsupportedField: 'cargo', requiredField: 'program' },
+      });
+    }
   });
 
   test('reports invalid launch JSON', async () => {

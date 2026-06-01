@@ -7,6 +7,7 @@ const docsToValidate = [
   'README.md',
   'dap-cli/skills/dap-cli/references/agent-workflows.md',
   'dap-cli/skills/dap-cli/references/go-delve.md',
+  'dap-cli/skills/dap-cli/references/rust-codelldb.md',
   'docs/playwright-interop.md',
   'docs/adapter-setup.md',
 ];
@@ -80,6 +81,38 @@ describe('Phase 20 docs (Go / Delve)', () => {
     const workflows = await fs.readFile(path.join(process.cwd(), 'dap-cli/skills/dap-cli/references/agent-workflows.md'), 'utf8');
     expect(skill).toContain('go-delve.md');
     expect(workflows).toContain('go-delve.md');
+  });
+});
+
+describe('Phase 22 docs (Rust / CodeLLDB)', () => {
+  test('README inventory includes the CodeLLDB Rust built-in', async () => {
+    const content = await fs.readFile(path.join(process.cwd(), 'README.md'), 'utf8');
+    expect(content).toContain('codelldb');
+    expect(content).toContain('CodeLLDB');
+    expect(content).toContain('Rust');
+  });
+
+  test('adapter setup documents verified CodeLLDB provisioning and native Rust limits', async () => {
+    const content = await fs.readFile(path.join(process.cwd(), 'docs/adapter-setup.md'), 'utf8');
+    expect(content).toContain('codelldb');
+    expect(content).toContain('CodeLLDB');
+    expect(content).toContain('v1.12.2');
+    expect(content).toMatch(/compiled (Rust )?executable/i);
+    expect(content).toContain('cargo');
+    expect(content).toContain('.rs');
+    expect(content).toContain('darwin_arm64');
+    expect(content).toMatch(/owned.*attach|attach.*owned/i);
+  });
+
+  test('skill links a bounded Rust CodeLLDB workflow reference', async () => {
+    const skill = await fs.readFile(path.join(process.cwd(), 'dap-cli/skills/dap-cli/SKILL.md'), 'utf8');
+    const rust = await fs.readFile(path.join(process.cwd(), 'dap-cli/skills/dap-cli/references/rust-codelldb.md'), 'utf8');
+    expect(skill).toContain('rust-codelldb.md');
+    expect(rust).toContain('dap-cli launch --adapter codelldb --type lldb');
+    expect(rust).toContain('cargo build');
+    expect(rust).toContain('.rs');
+    expect(rust).toContain('cargo');
+    expect(rust).toMatch(/owned.*PID|PID.*owned/i);
   });
 });
 

@@ -54,6 +54,13 @@ describe('inferAdapterAndType', () => {
     expect(result.inferred).toEqual({ adapter: false, type: true });
   });
 
+  test('adapter-only codelldb defaults type to lldb', () => {
+    const result = inferAdapterAndType({ adapter: 'codelldb' });
+    expect(result.adapterId).toBe('codelldb');
+    expect(result.type).toBe('lldb');
+    expect(result.inferred).toEqual({ adapter: false, type: true });
+  });
+
   test('adapter-only custom adapter returns undefined type (no fabrication)', () => {
     const result = inferAdapterAndType({ adapter: 'my-custom-adapter', program: '/tmp/script.js' });
     expect(result.adapterId).toBe('my-custom-adapter');
@@ -72,6 +79,13 @@ describe('inferAdapterAndType', () => {
     const result = inferAdapterAndType({ type: 'python' });
     expect(result.adapterId).toBe('debugpy');
     expect(result.type).toBe('python');
+  });
+
+  test('type-only lldb maps to codelldb', () => {
+    const result = inferAdapterAndType({ type: 'lldb' });
+    expect(result.adapterId).toBe('codelldb');
+    expect(result.type).toBe('lldb');
+    expect(result.inferred).toEqual({ adapter: true, type: false });
   });
 
   test('type-only with unknown type re-throws unknown_launch_type', () => {
@@ -128,6 +142,12 @@ describe('inferAdapterAndType', () => {
     expect(captured.code).toBe('adapter_inference_failed');
     expect(captured.data?.extension).toBe('.foo');
     expect(captured.data?.program).toBe('/tmp/app.foo');
+  });
+
+  test('program-only .rs remains unsupported because Rust source is not a launch executable', () => {
+    const captured = catchErrorDetail(() => inferAdapterAndType({ program: '/tmp/main.rs' }));
+    expect(captured.code).toBe('adapter_inference_failed');
+    expect(captured.data).toMatchObject({ program: '/tmp/main.rs', extension: '.rs' });
   });
 
   test('program-only with no extension throws adapter_inference_failed with empty extension', () => {

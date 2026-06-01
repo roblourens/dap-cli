@@ -3,10 +3,12 @@ import { promises as fs } from 'node:fs';
 import type { Command} from 'commander';
 import { Option } from 'commander';
 import { provisionAdapter, type AdapterId, type ProvisionContext } from '../../adapters/provision/index.js';
+import { isCodeLldbRuntimeReady } from '../../adapters/provision/codelldb.js';
 import {
   DEBUGPY_VERSION,
   DELVE_VERSION,
   JS_DEBUG_VERSION,
+  CODELLDB_VERSION,
 } from '../../adapters/provision/checksums.js';
 import { hasConsentMarker } from '../../adapters/provision/consent.js';
 import { getDapCliAdaptersDir } from '../../config/paths.js';
@@ -14,12 +16,13 @@ import { confirm, resolveAssumeYes } from '../confirm.js';
 import { CliError, usageError } from '../errors.js';
 import type { OutputWriter } from '../outputWriter.js';
 
-const ALL_ADAPTERS: readonly AdapterId[] = ['js-debug', 'debugpy', 'delve'];
+const ALL_ADAPTERS: readonly AdapterId[] = ['js-debug', 'debugpy', 'delve', 'codelldb'];
 
 const ADAPTER_VERSIONS: Readonly<Record<AdapterId, string>> = {
   'js-debug': JS_DEBUG_VERSION,
   'debugpy': DEBUGPY_VERSION,
   'delve': DELVE_VERSION,
+  'codelldb': CODELLDB_VERSION,
 };
 
 export interface SetupAdaptersOptions {
@@ -62,6 +65,8 @@ function expectedEntrypoint(adaptersDir: string, id: AdapterId): string {
       );
     case 'delve':
       return path.join(adaptersDir, 'delve', process.platform === 'win32' ? 'dlv.exe' : 'dlv');
+    case 'codelldb':
+      return path.join(adaptersDir, 'codelldb', 'extension', 'adapter', 'codelldb');
   }
 }
 
@@ -75,7 +80,13 @@ async function pathExists(p: string): Promise<boolean> {
 }
 
 function isAdapterId(value: string): value is AdapterId {
-  return value === 'js-debug' || value === 'debugpy' || value === 'delve';
+  return value === 'js-debug' || value === 'debugpy' || value === 'delve' || value === 'codelldb';
+}
+
+async function isRuntimeReady(adaptersDir: string, id: AdapterId): Promise<boolean> {
+  return id === 'codelldb'
+    ? isCodeLldbRuntimeReady(path.join(adaptersDir, id))
+    : pathExists(expectedEntrypoint(adaptersDir, id));
 }
 
 export async function runSetupAdaptersAction(opts: SetupAdaptersOptions): Promise<SetupAdaptersResult> {
@@ -90,7 +101,7 @@ export async function runSetupAdaptersAction(opts: SetupAdaptersOptions): Promis
     const version = ADAPTER_VERSIONS[id];
     const cached =
       (await hasConsentMarker(adaptersDir, id, version)) &&
-      (await pathExists(expectedEntrypoint(adaptersDir, id)));
+      (await isRuntimeReady(adaptersDir, id));
     if (!cached) {
       pending.push(id);
     }
@@ -157,10 +168,10 @@ export function registerSetupAdaptersCommand(program: Command, output: OutputWri
   program
     .command('setup-adapters')
     .helpGroup('Adapters')
-    .description('Install or update built-in debug adapters (js-debug, debugpy, delve) into ~/.dap-cli/adapters/')
+    .description('Install or update built-in debug adapters (js-debug, debugpy, delve, codelldb) into ~/.dap-cli/adapters/')
     .addOption(
       new Option('--adapter <id>', 'install only the named adapter')
-        .choices(['js-debug', 'debugpy', 'delve']),
+        .choices(['js-debug', 'debugpy', 'delve', 'codelldb']),
     )
     .action(async (cmdOpts: { adapter?: string }) => {
       const adapterId = cmdOpts.adapter !== undefined && isAdapterId(cmdOpts.adapter)

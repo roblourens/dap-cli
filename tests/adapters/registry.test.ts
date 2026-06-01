@@ -64,6 +64,12 @@ describe('AdapterRegistry', () => {
     expect(registry.listAll()).toContainEqual({ id: 'delve', label: 'Go Debug Adapter (Delve)', source: 'built-in' });
   });
 
+  test('includes codelldb as a lazy Rust built-in without resolving it', () => {
+    const registry = new AdapterRegistry();
+
+    expect(registry.listAll()).toContainEqual({ id: 'codelldb', label: 'Rust Debug Adapter (CodeLLDB)', source: 'built-in' });
+  });
+
   describe('with provisioned debugpy cache', () => {
     let testEnv: CliTestEnv;
     let previousDapCliHome: string | undefined;
