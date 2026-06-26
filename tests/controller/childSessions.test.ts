@@ -1387,3 +1387,76 @@ describe('ChildSessionCoordinator awaitChildrenReadyBounded (S-08 Bug 1)', () =>
     }
   });
 });
+
+/**
+ * Regression: a js-debug pwa-chrome page session attaching to a Code-OSS
+ * Electron renderer acks `initialize`/`configurationDone` and emits
+ * `initialized`, but then auto-attaches the renderer's many
+ * `waitForDebuggerOnStart` web workers and wedges before answering the page
+ * session's `attach`. The previous lifecycle awaited the launch/attach
+ * response after `configurationDone`, so the child sat in `attaching` for the
+ * full 30s child request timeout and then flipped to `failed` with
+ * `DAP request timed out: attach` — breakpoints never bound. Readiness must be
+ * gated on `configurationDone`, not on the trailing launch/attach response.
+ */
+describe('ChildSessionCoordinator readiness does not gate on launch/attach response', () => {
+  test('child reaches running once configurationDone is acked even if the attach response never arrives', async () => {
+    const manager = await SessionManager.create({ dapCliHome });
+    const parent = await manager.create({ name: 'pwa-chrome', adapter: 'js-debug' });
+    const parentEndpoint = new FakeAdapterEndpoint('parent');
+    const parentClient = new DapClient(parentEndpoint);
+    const pageChild = new FakeAdapterEndpoint('page-child');
+    // Model the wedged js-debug page session: it answers `initialize` (and so
+    // emits `initialized`) and `configurationDone`, but never answers `attach`.
+    // A short child request timeout makes the would-be regression surface in
+    // ~100ms instead of after the 30s default.
+    pageChild.silent.add('attach');
+    const parentEventCache = new DapEventCache();
+
+    const coordinator = new ChildSessionCoordinator({
+      parentSessionId: parent.id,
+      parentName: parent.name,
+      parentClient,
+      adapterId: 'js-debug',
+      ownedAdapter: { startedByDapCli: true, stderrTail: [] },
+      sessionManager: manager,
+      parentEventCache,
+      openChildTransport: () => Promise.resolve(pageChild),
+      createChildClient: transport => new DapClient(transport, { requestTimeoutMs: 100 }),
+    });
+    coordinator.attach();
+
+    try {
+      parentEndpoint.emitReverseRequest('startDebugging', {
+        request: 'attach',
+        configuration: { __pendingTargetId: 'tgt-page', type: 'pwa-chrome' },
+      });
+      await coordinator.awaitChildrenReady();
+
+      const childId = coordinator.listChildSessionIds()[0];
+      expect(childId).toBeDefined();
+      // configurationDone was acked → child is usable and must be `running`,
+      // NOT `failed` from a timed-out attach response.
+      expect(manager.status(childId).lifecycle).toBe('running');
+      expect(pageChild.receivedRequests.some(r => r.command === 'configurationDone')).toBe(true);
+
+      // The trailing attach timeout surfaces as a non-fatal warning on the
+      // parent (not as a child failure). Wait past the 100ms child timeout.
+      await new Promise<void>(resolve => setTimeout(resolve, 160));
+      const outputs = parentEventCache.recent().events.filter(e => e.event === 'output');
+      expect(outputs.some(e => {
+        const body = e.body as { output?: string; child_session_id?: string } | undefined;
+        if (body === undefined || body.child_session_id !== childId) {
+          return false;
+        }
+        return (body.output ?? '').includes('attach response not received');
+      })).toBe(true);
+      // The child stays `running` despite the trailing attach timeout.
+      expect(manager.status(childId).lifecycle).toBe('running');
+    } finally {
+      await pageChild.close();
+      await coordinator.dispose();
+      await parentClient.close();
+    }
+  });
+});

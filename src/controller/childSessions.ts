@@ -2,7 +2,7 @@ import type { DapEventCache } from '../protocol/eventCache.js';
 import { breakpointBindingGuidance, threadNotPaused } from './diagnostics.js';
 import type { DapEventMessage } from '../protocol/dapMessages.js';
 import type { DapTransport } from '../protocol/transport.js';
-import { DapClient, type ReverseRequestResult } from '../protocol/dapClient.js';
+import { DapClient, DapTransportClosedError, type ReverseRequestResult } from '../protocol/dapClient.js';
 import { sessionError } from '../cli/errors.js';
 import type { OwnedAdapterMetadata, SessionId } from '../sessions/session.js';
 import type { SessionManager } from '../sessions/sessionManager.js';
@@ -83,11 +83,14 @@ interface ChildRuntime {
   initializedPromise: Promise<void>;
   initializedSeen: boolean;
   /**
-   * Resolves once the child has completed its full handshake (initialize →
-   * initialized → setBreakpoints replay → configurationDone → launch/attach
-   * response → lifecycle 'running'). Rejects if the child fails before
-   * reaching that state. Used by {@link ChildSessionCoordinator.awaitChildrenReady}
-   * to gate fan-out commands like `setBreakpoints` on per-child readiness.
+   * Resolves once the child has completed enough of its handshake to be usable
+   * (initialize → initialized → setBreakpoints replay → configurationDone →
+   * lifecycle 'running'). Readiness is gated on `configurationDone` being
+   * acked, NOT on the trailing launch/attach response, which some adapters
+   * delay or never send (see {@link ChildSessionCoordinator.runChildLifecycle}).
+   * Rejects if the child fails before reaching that state. Used by
+   * {@link ChildSessionCoordinator.awaitChildrenReady} to gate fan-out commands
+   * like `setBreakpoints` on per-child readiness.
    */
   readyPromise: Promise<void>;
   readySeen: boolean;
@@ -557,23 +560,87 @@ export class ChildSessionCoordinator {
       // most DAP servers) hold the launch/attach response until
       // configurationDone is received. We must send configurationDone first.
       const requestPromise = client.request(command, config);
-      // Suppress unhandled-rejection in the microtask window before we await.
-      requestPromise.catch(() => undefined);
+      // Track how the launch/attach response settles WITHOUT blocking on it. An
+      // error that has already arrived by configurationDone time is an explicit
+      // refusal and must fail the child; a response that is still outstanding
+      // must NOT gate readiness (see below). The handler also doubles as the
+      // unhandled-rejection guard for the microtask window before we observe it.
+      let launchAttachOutcome: 'pending' | 'fulfilled' | { readonly error: unknown } = 'pending';
+      requestPromise.then(
+        () => { launchAttachOutcome = 'fulfilled'; },
+        (error: unknown) => { launchAttachOutcome = { error }; },
+      );
       // Wait for the child's `initialized` event before configurationDone.
       await runtime.initializedPromise;
       for (const breakpointArgs of this.pendingSetBreakpoints) {
         await client.request('setBreakpoints', breakpointArgs);
       }
       await client.request('configurationDone');
-      await requestPromise;
+      // Flush microtasks so a launch/attach response already on the wire is
+      // reflected in `launchAttachOutcome` before we read it.
+      await Promise.resolve();
+      if (typeof launchAttachOutcome === 'object') {
+        // The adapter explicitly rejected launch/attach (e.g. `attach refused`)
+        // by configuration time. That is authoritative — fail the child.
+        throw launchAttachOutcome.error;
+      }
+      // The child is configured and executing once `configurationDone` is
+      // acked — that is the DAP signal that the debuggee is running. The
+      // launch/attach *response* is only a trailing confirmation. Some
+      // adapters never settle it promptly: a js-debug pwa-chrome page session
+      // in an Electron renderer acks `configurationDone` and emits
+      // `initialized`, but then auto-attaches the renderer's many
+      // `waitForDebuggerOnStart` web workers and wedges before answering the
+      // page session's `attach`. Awaiting that response here previously
+      // stalled the child for the full 30s child request timeout and then
+      // marked it `failed`, even though breakpoints could already bind. Mark
+      // the child `running` now and observe any trailing response in the
+      // background.
       await this.options.sessionManager.updateLifecycle(childId, 'running').catch(() => undefined);
       if (!runtime.readySeen) {
         runtime.readySeen = true;
         runtime.resolveReady();
       }
+      if (launchAttachOutcome === 'pending') {
+        this.observeTrailingLaunchAttachResponse(childId, command, requestPromise);
+      }
     } catch (error) {
       await this.markChildFailed(childId, error);
     }
+  }
+
+  /**
+   * Observe a launch/attach response that arrives — or times out — AFTER the
+   * child has already been marked `running` off the back of `configurationDone`.
+   *
+   * A trailing rejection no longer fails the child: the session is configured
+   * and usable, and gating readiness on this response wedged js-debug page
+   * sessions (see {@link runChildLifecycle}). Instead it is surfaced as a
+   * non-fatal `output` warning on the parent so the condition stays debuggable
+   * from the agent side. Transport-closed rejections during normal teardown are
+   * ignored — they are not an attach anomaly.
+   */
+  private observeTrailingLaunchAttachResponse(childId: SessionId, command: 'attach' | 'launch', requestPromise: Promise<unknown>): void {
+    void requestPromise.then(
+      () => undefined,
+      (error: unknown) => {
+        if (error instanceof DapTransportClosedError) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        const synthetic: DapEventMessage = {
+          seq: 0,
+          type: 'event',
+          event: 'output',
+          body: {
+            category: 'stderr',
+            output: `child session ${childId} ${command} response not received: ${message}\n`,
+            child_session_id: childId,
+          },
+        };
+        this.options.parentEventCache.append(this.options.parentSessionId, synthetic);
+      },
+    );
   }
 
   private async markChildFailed(childId: SessionId, error: unknown): Promise<void> {
