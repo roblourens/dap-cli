@@ -175,7 +175,10 @@ export class DapClient {
   };
 
   private readonly handleTransportError = (error: Error): void => {
-    this.rejectPending(error);
+    this.closed = true;
+    this.rejectPending(error instanceof DapTransportClosedError
+      ? error
+      : new DapTransportClosedError(error.message));
   };
 
   private handleMessage(message: DapProtocolMessage): void {
