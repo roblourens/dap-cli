@@ -132,6 +132,7 @@ describe.skipIf(!RUN)('published bin cache behavior across processes', () => {
           DAP_CLI_ADAPTERS_DIR: cacheRoot,
           DAP_CLI_PROVISION_RELEASE_BASE_URL: server!.url,
           DAP_CLI_ASSUME_YES: '1',
+          ...(adapter === 'codelldb' ? { DAP_CLI_PROVISION_CODELLDB_PLATFORM_OVERRIDE: 'darwin_arm64' } : {}),
         },
         encoding: 'utf8',
         timeout: 30_000,
