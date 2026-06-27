@@ -45,7 +45,10 @@ jobs:
           echo "Tag $tag matches package.json version $pkg."
 
       - name: Provision built-in adapters (required by integration tests)
-        run: npm run setup-adapters -- --yes
+        run: |
+          npm run setup-adapters -- --adapter js-debug --yes
+          npm run setup-adapters -- --adapter debugpy --yes
+          npm run setup-adapters -- --adapter delve --yes
 
       - name: Install Playwright browsers (required by integration tests)
         run: npx playwright install --with-deps chromium
