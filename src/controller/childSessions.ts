@@ -579,10 +579,12 @@ export class ChildSessionCoordinator {
       // Flush microtasks so a launch/attach response already on the wire is
       // reflected in `launchAttachOutcome` before we read it.
       await Promise.resolve();
-      if (typeof launchAttachOutcome === 'object') {
+      const getLaunchAttachOutcome = (): 'pending' | 'fulfilled' | { readonly error: unknown } => launchAttachOutcome;
+      const outcomeAfterConfiguration = getLaunchAttachOutcome();
+      if (typeof outcomeAfterConfiguration === 'object') {
         // The adapter explicitly rejected launch/attach (e.g. `attach refused`)
         // by configuration time. That is authoritative — fail the child.
-        throw launchAttachOutcome.error;
+        throw outcomeAfterConfiguration.error;
       }
       // The child is configured and executing once `configurationDone` is
       // acked — that is the DAP signal that the debuggee is running. The
@@ -601,7 +603,7 @@ export class ChildSessionCoordinator {
         runtime.readySeen = true;
         runtime.resolveReady();
       }
-      if (launchAttachOutcome === 'pending') {
+      if (outcomeAfterConfiguration === 'pending') {
         this.observeTrailingLaunchAttachResponse(childId, command, requestPromise);
       }
     } catch (error) {

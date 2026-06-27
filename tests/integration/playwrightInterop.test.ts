@@ -63,7 +63,7 @@ describe('Playwright interop', () => {
     await controller?.stop().catch(() => undefined);
     await new Promise<void>(resolve => fixtureServer?.close(() => resolve()));
     await testEnv?.cleanup().catch(() => undefined);
-  });
+  }, 30_000);
 
   test('coordinates Playwright browser action with dap-cli polling and inspection', async () => {
     const launch = await runCli(['launch', '--adapter', 'fake', '--script', 'playwright-inspection', '--name', 'web-demo'], { env: testEnv.env });

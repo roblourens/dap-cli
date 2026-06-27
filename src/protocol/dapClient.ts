@@ -80,6 +80,9 @@ export class DapClient {
     transport.readable.on('close', this.handleClosed);
     transport.readable.on('end', this.handleClosed);
     transport.readable.on('error', this.handleTransportError);
+    if (!Object.is(transport.writable, transport.readable)) {
+      transport.writable.on('error', this.handleTransportError);
+    }
   }
 
   public request<TResponse = unknown>(command: string, args?: unknown): Promise<TResponse> {
@@ -143,9 +146,12 @@ export class DapClient {
 
   public async close(): Promise<void> {
     this.handleClosed();
-    this.detachTransportHandlers();
-    await this.terminateChildProcesses();
-    await this.transport.close();
+    try {
+      await this.terminateChildProcesses();
+      await this.transport.close();
+    } finally {
+      this.detachTransportHandlers();
+    }
   }
 
   private readonly handleData = (chunk: Buffer): void => {
@@ -292,6 +298,9 @@ export class DapClient {
     this.transport.readable.removeListener('close', this.handleClosed);
     this.transport.readable.removeListener('end', this.handleClosed);
     this.transport.readable.removeListener('error', this.handleTransportError);
+    if (!Object.is(this.transport.writable, this.transport.readable)) {
+      this.transport.writable.removeListener('error', this.handleTransportError);
+    }
   }
 
   private handleRunInTerminal(argumentsValue: unknown): { processId?: number } {

@@ -19,9 +19,16 @@ export function createSocketTransport(options: SocketTransportOptions): DapTrans
     readable: options.socket,
     writable: options.socket,
     close(): Promise<void> {
-      options.socket.end();
-      options.socket.destroy();
-      return Promise.resolve();
+      if (options.socket.closed) {
+        return Promise.resolve();
+      }
+      return new Promise(resolve => {
+        options.socket.once('close', resolve);
+        if (!options.socket.destroyed) {
+          options.socket.end();
+          options.socket.destroy();
+        }
+      });
     },
   };
 }

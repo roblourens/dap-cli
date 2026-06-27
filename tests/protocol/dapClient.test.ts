@@ -91,6 +91,17 @@ describe('DapClient', () => {
     await expect(pending).rejects.toThrow('DAP transport closed.');
   });
 
+  test('rejects pending requests when the writable transport errors', async () => {
+    const transport = new FakeTransport();
+    const client = new DapClient(transport);
+
+    const pending = client.request('threads');
+    transport.writable.emit('error', new Error('write EPIPE'));
+
+    await expect(pending).rejects.toThrow('write EPIPE');
+    await client.close();
+  });
+
   test('records last request metadata', () => {
     const transport = new FakeTransport();
     const client = new DapClient(transport);

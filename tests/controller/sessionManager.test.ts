@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -19,7 +20,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(dapCliHome, { recursive: true, force: true });
+  // Child event mirroring persists paused state asynchronously; retry if that
+  // write lands in the same tick as temporary-directory cleanup.
+  await fs.rm(dapCliHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 describe('SessionManager', () => {
@@ -1691,5 +1694,173 @@ describe('ControllerServer.terminateRuntime (H-8)', () => {
       await server.stop().catch(() => undefined);
     }
   }, 20_000);
+
+  // Regression guard for the controller_request_timeout flaky failure:
+  // sessions.stop (and sessions.detach) used to await lifecycle.disconnect()
+  // without any timeout cap, while the DapClient uses a 30 s DAP request
+  // timeout.  Under heavy parallel test-suite load the adapter is slow to ack
+  // disconnect, causing the IPC handler to block longer than the 5 s IPC
+  // client budget, which surfaced as controller_request_timeout.
+  //
+  // The fix mirrors terminateRuntime: cap the disconnect wait at
+  // controllerDisconnectTimeoutMs (1 s) so the handler always returns well
+  // within the IPC budget.
+  test('sessions.stop returns promptly when the adapter never responds to disconnect (controller_request_timeout regression)', async () => {
+    const { startControllerServer } = await import('../../src/controller/server.js');
+    const { createControllerClient } = await import('../../src/controller/client.js');
+
+    // Fake adapter that completes the DAP handshake but silently drops the
+    // disconnect request, simulating a slow or unresponsive adapter under load.
+    const { port: adapterPort, close: closeAdapter } = await startSlowDisconnectFakeAdapter();
+    const server = await startControllerServer({ dapCliHome });
+    try {
+      // Use an IPC timeout of 3 500 ms — comfortably above the 1 s disconnect
+      // cap (so the fixed handler succeeds in time) but well below the 30 s
+      // DAP-request timeout that the broken path would hit.  Without the fix,
+      // this request races against the IPC budget and rejects with
+      // controller_request_timeout.
+      const client = await createControllerClient({ dapCliHome, timeoutMs: 3_500 });
+      try {
+        await client.request('dap.start', {
+          mode: 'launch',
+          name: 'slow-disconnect-demo',
+          use: true,
+          descriptor: {
+            id: 'fake-slow',
+            label: 'fake-slow',
+            transport: { kind: 'socket', host: '127.0.0.1', port: adapterPort },
+          },
+        });
+
+        // Must resolve, not reject with controller_request_timeout.
+        await expect(
+          client.request<{ name: string; status: string }>('sessions.stop', { name: 'slow-disconnect-demo' }),
+        ).resolves.toMatchObject({ name: 'slow-disconnect-demo', status: 'terminated' });
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await server.stop().catch(() => undefined);
+      await closeAdapter();
+    }
+  }, 15_000);
+
+  test('sessions.detach returns promptly when the adapter never responds to disconnect (controller_request_timeout regression)', async () => {
+    const { startControllerServer } = await import('../../src/controller/server.js');
+    const { createControllerClient } = await import('../../src/controller/client.js');
+
+    const { port: adapterPort, close: closeAdapter } = await startSlowDisconnectFakeAdapter('attach');
+    const server = await startControllerServer({ dapCliHome });
+    try {
+      const client = await createControllerClient({ dapCliHome, timeoutMs: 3_500 });
+      try {
+        await client.request('dap.start', {
+          mode: 'attach',
+          name: 'slow-detach-demo',
+          use: true,
+          descriptor: {
+            id: 'fake-slow-attach',
+            label: 'fake-slow-attach',
+            transport: { kind: 'socket', host: '127.0.0.1', port: adapterPort },
+          },
+        });
+
+        await expect(
+          client.request<{ name: string; status: string; lifecycle: string }>('sessions.detach', { name: 'slow-detach-demo' }),
+        ).resolves.toMatchObject({ name: 'slow-detach-demo', lifecycle: 'disconnected' });
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await server.stop().catch(() => undefined);
+      await closeAdapter();
+    }
+  }, 15_000);
 });
 
+/**
+ * Starts a minimal TCP fake adapter that completes the DAP lifecycle handshake
+ * (initialize → launch/attach → configurationDone → stopped event) but never
+ * responds to the `disconnect` request.  Used by the
+ * controller_request_timeout regression tests to simulate a slow adapter.
+ */
+async function startSlowDisconnectFakeAdapter(mode: 'launch' | 'attach' = 'launch'): Promise<{ port: number; close: () => Promise<void> }> {
+  const server = net.createServer(socket => {
+    socket.on('error', () => undefined);
+    const parser = new DapMessageParser();
+    let serverSeq = 100;
+
+    socket.on('data', (chunk: Buffer) => {
+      for (const msg of parser.push(chunk)) {
+        if (msg.type !== 'request') {
+          continue;
+        }
+        const req = msg;
+
+        if (req.command === 'disconnect') {
+          // Intentionally silent: never respond, simulating an adapter that
+          // is alive but too slow to ack disconnect within the budget.
+          return;
+        }
+
+        const body: unknown = req.command === 'initialize'
+          ? { supportsConfigurationDoneRequest: true }
+          : undefined;
+
+        const response: DapResponseMessage = {
+          seq: serverSeq++,
+          type: 'response',
+          request_seq: req.seq,
+          success: true,
+          command: req.command,
+          ...(body !== undefined ? { body } : {}),
+        };
+
+        if (req.command === mode) {
+          // After responding to launch/attach, immediately emit `initialized`
+          // so the lifecycle's `waitForInitializedEvent` resolves.
+          const initialized: DapEventMessage = {
+            seq: serverSeq++,
+            type: 'event',
+            event: 'initialized',
+          };
+          socket.write(Buffer.concat([encodeDapMessage(response), encodeDapMessage(initialized)]));
+          return;
+        }
+
+        if (req.command === 'configurationDone') {
+          // After configurationDone, emit `stopped` so dap.start sees
+          // lifecycle === 'stopped' and the test can call sessions.stop.
+          const stopped: DapEventMessage = {
+            seq: serverSeq++,
+            type: 'event',
+            event: 'stopped',
+            body: { reason: 'entry', threadId: 1 },
+          };
+          socket.write(Buffer.concat([encodeDapMessage(response), encodeDapMessage(stopped)]));
+          return;
+        }
+
+        socket.write(encodeDapMessage(response));
+      }
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+
+  const address = server.address();
+  if (typeof address !== 'object' || address === null) {
+    throw new Error('Slow-disconnect fake adapter did not bind to a TCP port.');
+  }
+
+  return {
+    port: address.port,
+    close: () => new Promise(resolve => server.close(() => resolve())),
+  };
+}

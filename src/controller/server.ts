@@ -996,7 +996,14 @@ export class ControllerServer {
     if (runtime.children !== undefined) {
       await runtime.children.dispose().catch(() => undefined);
     }
-    await runtime.lifecycle.disconnect({ terminateDebuggee: opts.terminateDebuggee }).catch(() => undefined);
+    // Mirror the pattern in terminateRuntime: cap the DAP disconnect wait at
+    // controllerDisconnectTimeoutMs (1 s) so a slow or unresponsive adapter
+    // cannot hold the sessions.stop / sessions.detach IPC handler open beyond
+    // the 5 s IPC client budget, which would surface as
+    // controller_request_timeout to the caller.
+    const disconnect = runtime.lifecycle.disconnect({ terminateDebuggee: opts.terminateDebuggee });
+    disconnect.catch(() => undefined);
+    await this.waitForDisconnect(disconnect, controllerDisconnectTimeoutMs);
     await runtime.client.close().catch(() => undefined);
     await runtime.adapter.close().catch(() => undefined);
     this.runtimes.delete(status.id);

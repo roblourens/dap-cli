@@ -156,6 +156,27 @@ describe('js-debug adapter integration', () => {
       expect(childCount, 'no child sessions registered under pwa-node parent within 10s').toBeGreaterThanOrEqual(1);
       expect(parentOnly, 'default sessions list should show only the parent (05-19 preserved)').toBe(true);
 
+      // Wait for stopOnEntry to pause a child, then use that paused thread
+      // rather than assuming the first aggregated thread is the stopped one.
+      const pauseDeadline = Date.now() + 10_000;
+      let threadId: number | undefined;
+      while (Date.now() < pauseDeadline) {
+        const status = await runCli(['status', '--name', 'pwa-node-route-smoke'], { env: testEnv.env });
+        if (status.exitCode === 0) {
+          const statusEnvelope = status.envelope as { ok: true; data: { paused?: boolean; stoppedThreadIds?: number[] } };
+          if (statusEnvelope.data.paused === true) {
+            threadId = statusEnvelope.data.stoppedThreadIds?.[0];
+            if (threadId !== undefined) {
+              break;
+            }
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (threadId === undefined) {
+        throw new Error('pwa-node child did not remain paused on entry within 10s');
+      }
+
       // 1. threads against parent name — every entry must have sessionName.
       const threads = await runCli(['threads', '--name', 'pwa-node-route-smoke'], { env: testEnv.env });
       expect(threads.exitCode, JSON.stringify(threads)).toBe(0);
@@ -165,7 +186,7 @@ describe('js-debug adapter integration', () => {
         expect(typeof entry.sessionName, JSON.stringify(entry)).toBe('string');
         expect(entry.sessionName.startsWith('pwa-node-route-smoke#')).toBe(true);
       }
-      const threadId = threadsEnvelope.data.threads[0]!.id;
+      expect(threadsEnvelope.data.threads.some(thread => thread.id === threadId)).toBe(true);
 
       // 2. stack against parent name + real thread id.
       const stack = await runCli(
