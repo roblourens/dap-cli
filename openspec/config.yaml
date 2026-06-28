@@ -1,0 +1,40 @@
+schema: spec-driven
+
+context: |
+  This repository is being rewritten as a clean-room Rust application.
+  The shipped binary and all public branding MUST be `agent-debug`.
+  There is no `dap-cli` compatibility alias. Public state paths use
+  `~/.agent-debug`, public environment variables use the `AGENT_DEBUG_`
+  prefix, and the npm package/plugin/skill/docs use the `agent-debug` name.
+
+  The TypeScript implementation will be deleted before implementation begins.
+  The implementation agent MUST work from these OpenSpec artifacts plus the
+  preserved behavioral tests, fixtures, and manual smoke scenarios. It MUST
+  NOT inspect deleted source through git history or reconstruct TypeScript
+  implementation patterns. OpenSpec requirements are authoritative when a
+  legacy test or document conflicts with them.
+
+  The Rust crate lives in a new `agent-debug/` subfolder. Distribution remains
+  npm-based, but `npm install -g @roblourens/agent-debug` MUST install a native
+  executable that runs directly without a Node.js CLI wrapper. Upstream
+  js-debug may still use Node.js as its adapter-specific host process.
+
+  Startup performance is a primary product goal. The planning baseline on the
+  same host was approximately 108-113 ms median for version/help/warm status
+  commands in the TypeScript build. The Rust implementation must include a
+  reproducible benchmark and meet the budgets defined by the change specs.
+
+rules:
+  proposal:
+    - Treat the rewrite as one breaking change with only new capabilities.
+    - Keep openspec/specs empty until this change is reviewed, implemented, and archived.
+  specs:
+    - Describe required future Rust behavior, not TypeScript implementation structure.
+    - Use normative MUST/SHALL language and testable Given/When/Then scenarios.
+    - Include errors, edge cases, platform constraints, and observable output contracts.
+  design:
+    - Explain how the Rust architecture remains independent of the deleted TypeScript source.
+    - Include native npm distribution, performance measurement, security, and test migration.
+  tasks:
+    - Make TypeScript implementation deletion the first implementation action.
+    - Include explicit automated, packaging, performance, and hand-driven acceptance gates.
