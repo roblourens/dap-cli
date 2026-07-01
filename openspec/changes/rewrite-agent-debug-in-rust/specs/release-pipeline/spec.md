@@ -3,7 +3,7 @@
 ### Requirement: Authoritative CI and Release Workflows
 The repository SHALL use `.github/workflows/ci.yml` for pull-request and main-branch validation and `.github/workflows/release.yml` for release builds and publication. The existing `.github/workflows/publish.yml` SHALL be removed rather than retained as a second publication path.
 
-`release.yml` SHALL run automatically for stable tags matching `v<major>.<minor>.<patch>`. It SHALL also support `workflow_dispatch` with an explicit tag, a `publish` boolean that defaults to `false`, an `emergency` boolean that defaults to `false`, and a required justification when `emergency: true`; manual publication SHALL require `publish: true` and an existing matching tag. Pull requests, branch pushes, and dry runs SHALL never publish packages or create a public GitHub Release.
+`release.yml` SHALL run automatically for stable tags matching `v<major>.<minor>.<patch>`. It SHALL also support `workflow_dispatch` with an explicit tag and a `publish` boolean that defaults to `false`; manual publication SHALL require `publish: true` and an existing matching tag. Pull requests, branch pushes, and dry runs SHALL never publish packages or create a public GitHub Release.
 
 #### Scenario: Push a stable release tag
 - **WHEN** a maintainer pushes a valid stable `v<major>.<minor>.<patch>` tag
@@ -38,17 +38,17 @@ The release workflow SHALL build every target on a native-architecture GitHub-ho
 
 | Payload | Runner | Build environment | Rust target |
 | --- | --- | --- | --- |
-| macOS arm64 | `macos-15` | `MACOSX_DEPLOYMENT_TARGET=12.0` | `aarch64-apple-darwin` |
-| macOS x64 | `macos-15-intel` | `MACOSX_DEPLOYMENT_TARGET=12.0` | `x86_64-apple-darwin` |
-| Linux x64 | `ubuntu-24.04` | digest-pinned `manylinux_2_28_x86_64` container | `x86_64-unknown-linux-gnu` |
-| Linux arm64 | `ubuntu-24.04-arm` | digest-pinned `manylinux_2_28_aarch64` container | `aarch64-unknown-linux-gnu` |
+| macOS arm64 | `macos-15` | GitHub-hosted runner image | `aarch64-apple-darwin` |
+| macOS x64 | `macos-15-intel` | GitHub-hosted runner image | `x86_64-apple-darwin` |
+| Linux x64 | `ubuntu-24.04` | GitHub-hosted runner image | `x86_64-unknown-linux-gnu` |
+| Linux arm64 | `ubuntu-24.04-arm` | GitHub-hosted runner image | `aarch64-unknown-linux-gnu` |
 | Windows x64 | `windows-2022` | statically linked MSVC CRT | `x86_64-pc-windows-msvc` |
 
 The workflow SHALL verify the runner architecture before building, SHALL use the repository's pinned `rust-toolchain.toml`, committed `Cargo.lock`, committed Cargo vendor directory, and source-replacement configuration, and SHALL execute:
 
 `cargo build --manifest-path agent-debug/Cargo.toml --locked --offline --release --target <target>`
 
-Runner labels SHALL NOT use `-latest`. Linux container images and all workflow actions SHALL be pinned immutably. Replacing a retired runner label with an equivalent native architecture and operating-system generation MAY be treated as pipeline maintenance only when the target, compatibility floor, toolchain, and verification contracts remain unchanged.
+Runner labels SHALL NOT use `-latest`, and all workflow actions SHALL be pinned immutably. Replacing a retired runner label with an equivalent native architecture and operating-system generation MAY be treated as pipeline maintenance only when the target, toolchain, and verification contracts remain unchanged.
 
 Before native builds, a GitHub-hosted validation job SHALL run a pinned `cargo-deny` version against a reviewed configuration and pinned advisory snapshot to enforce allowed licenses, sources, duplicate/version policy, bans, and known-vulnerability policy. An exception SHALL be versioned, narrowly scoped, justified, and carry an expiration or removal condition.
 
@@ -96,29 +96,23 @@ Each staged directory SHALL be uploaded as a uniquely named immutable workflow a
 - **WHEN** npm assembly receives an artifact from another commit, version, target, or checksum
 - **THEN** assembly fails before creating npm tarballs
 
-### Requirement: Compatibility-Floor and Reference-Performance Runners
-The release SHALL run Linux core CLI and controller smoke tests inside the same glibc 2.28 build containers used for the Linux payloads. It SHALL run downloaded release artifacts on dedicated, credential-free self-hosted compatibility runners with these exact label sets:
+### Requirement: GitHub-Hosted Execution and Performance Matrix
+Every native build job SHALL execute its exact release artifact and run core CLI/controller smoke tests on the same pinned GitHub-hosted runner before upload. Release automation SHALL use no self-hosted runners and SHALL make no older operating-system, kernel, or libc compatibility claim beyond those GitHub-hosted validation environments.
 
-- `[self-hosted, agent-debug-floor, linux-kernel-4.18, glibc-2.28, arm64]`
-- `[self-hosted, agent-debug-floor, linux-kernel-4.18, glibc-2.28, x64]`
-- `[self-hosted, agent-debug-floor, macos-12, arm64]`
-- `[self-hosted, agent-debug-floor, macos-12, x64]`
-- `[self-hosted, agent-debug-floor, windows-10-1809, x64]`
+The `macos-15` arm64 job SHALL run the release-blocking absolute startup benchmark defined by `distribution-performance`. The other four GitHub-hosted jobs SHALL run their stored native regression checks. An unavailable GitHub-hosted runner or failed execution/performance gate SHALL block publication rather than being skipped.
 
-The absolute startup benchmark SHALL run on the recorded Apple M3 Max host using `[self-hosted, agent-debug-performance, macos-15, arm64, m3-max]`. Every self-hosted job SHALL verify the actual OS version, architecture, and required hardware identity before executing the artifact. These jobs SHALL receive no npm credential, repository write permission, or publication token. An unavailable or mismatched required runner SHALL block publication rather than silently skipping its gate.
+#### Scenario: Verify every native payload
+- **WHEN** a release candidate reaches native execution validation
+- **THEN** each of the five artifacts runs on its pinned GitHub-hosted build runner
+- **AND** core CLI and controller smoke tests pass there
 
-#### Scenario: Verify the oldest supported environments
-- **WHEN** a release candidate reaches compatibility validation
-- **THEN** both Linux payloads run in glibc 2.28 build containers and on kernel 4.18/glibc 2.28 floor runners
-- **AND** both macOS payloads and the Windows payload run on their declared floor runners
-
-#### Scenario: Run the absolute performance gate
-- **WHEN** a release candidate reaches performance validation
-- **THEN** the exact artifact intended for macOS arm64 publication is benchmarked on the recorded M3 Max host
+#### Scenario: Run the release performance gate
+- **WHEN** the macOS arm64 candidate is built on `macos-15`
+- **THEN** that exact artifact runs the absolute startup benchmark
 - **AND** publication remains blocked until the distribution-performance budgets pass
 
 ### Requirement: Prepublication npm Registry Verification
-After all native artifacts pass their native and floor gates, one GitHub-hosted `ubuntu-24.04` assembly job SHALL create the five platform-package tarballs and the meta-package tarball from those exact artifacts. The job SHALL emit a versioned `release-manifest.json` containing every raw executable digest, npm tarball digest and integrity value, package name, package version, target, source commit, and artifact-attestation reference.
+After all native artifacts pass their GitHub-hosted execution and performance gates, one GitHub-hosted `ubuntu-24.04` assembly job SHALL create the five platform-package tarballs and the meta-package tarball from those exact artifacts. The job SHALL emit a versioned `release-manifest.json` containing every raw executable digest, npm tarball digest and integrity value, package name, package version, target, source commit, and artifact-attestation reference.
 
 Before public publication, each entry in a five-platform GitHub-hosted runner matrix matching the native build hosts SHALL start its own loopback-only ephemeral npm registry and publish the same six candidate tarballs into that isolated registry. Each entry SHALL install the meta package from its registry through local, global, and `npx` paths, verify the selected payload digest, run core CLI/controller smoke tests, prove core invocation succeeds after Node.js is removed from `PATH`, and separately verify the structured js-debug missing-Node error. Public npm publication SHALL depend on every prepublication package job.
 
@@ -193,7 +187,7 @@ Only after public-registry verification passes SHALL the workflow remove the six
 - **AND** the release evidence identifies the exact published package and executable digests
 
 #### Scenario: Fail before meta-package publication
-- **WHEN** any build, floor, performance, package, or platform-package gate fails before the meta package is published
+- **WHEN** any build, execution, performance, package, or platform-package gate fails before the meta package is published
 - **THEN** no public GitHub Release is created
 - **AND** the meta package version remains unpublished
 
@@ -203,39 +197,18 @@ Only after public-registry verification passes SHALL the workflow remove the six
 - **AND** remediation requires a new version
 
 ### Requirement: Least-Privilege Release Security
-Workflow-level permissions SHALL default to `contents: read`. Only native build jobs that generate attestations MAY add `id-token: write` and `attestations: write`; only the npm publication job MAY add `id-token: write`; and only the draft-bundle and final GitHub Release jobs MAY add `contents: write`. Self-hosted jobs SHALL have read-only permissions and no secrets.
+Workflow-level permissions SHALL default to `contents: read`. Only native build jobs that generate attestations MAY add `id-token: write` and `attestations: write`; only the npm publication job MAY add `id-token: write`; and only the draft-bundle and final GitHub Release jobs MAY add `contents: write`.
 
-All actions SHALL be pinned to full commit SHAs, all build containers SHALL be pinned by digest, and dependency update automation SHALL be configured to propose reviewed pin updates. The release workflow SHALL use a per-tag concurrency group with cancellation disabled, SHALL reject `pull_request_target` and untrusted fork execution, and SHALL never force-push, move, or recreate a release tag.
+All actions SHALL be pinned to full commit SHAs, and dependency update automation SHALL be configured to propose reviewed pin updates. The release workflow SHALL use a per-tag concurrency group with cancellation disabled, SHALL reject `pull_request_target` and untrusted fork execution, and SHALL never force-push, move, or recreate a release tag.
 
 #### Scenario: Inspect release credentials
 - **WHEN** the workflow graph is reviewed
-- **THEN** build, floor, test, packaging, publication, and GitHub Release jobs each have only their required permissions
+- **THEN** build, test, packaging, publication, and GitHub Release jobs each have only their required permissions
 - **AND** no long-lived npm publishing secret is available
 
 #### Scenario: Start two runs for one tag
 - **WHEN** duplicate release runs target the same tag
 - **THEN** the per-tag concurrency policy serializes them without cancelling an in-progress publication
-
-### Requirement: Audited Emergency Release Path
-Normal releases SHALL require every compatibility-floor and reference-performance gate. An urgent security release MAY use `workflow_dispatch` with `publish: true` and `emergency: true` only after a required self-hosted floor or performance runner has remained unavailable through its bounded workflow timeout.
-
-Emergency publication SHALL require approval through a protected `emergency-release` GitHub environment and a non-empty justification. It MAY waive only unavailable self-hosted compatibility or reference-performance jobs. It SHALL NOT waive version/tag validation, dependency policy, native builds, GitHub-hosted tests, artifact checksums and attestations, prepublication package tests, npm integrity ordering, OIDC publication, or public-registry install verification.
-
-`release-manifest.json` and the public GitHub Release SHALL identify every waived gate, the unavailable runner label, justification, approving actor, and a seven-day revalidation deadline. The waived jobs SHALL be rerun against the published artifacts when infrastructure returns. A failed follow-up SHALL require a corrective patch release; the emergency version remains immutable.
-
-#### Scenario: Release an urgent security fix during runner outage
-- **WHEN** a required self-hosted gate times out and an approved emergency dispatch identifies the unavailable gate
-- **THEN** only that self-hosted gate may be waived
-- **AND** every non-waivable release gate still passes before publication
-
-#### Scenario: Attempt an unapproved emergency bypass
-- **WHEN** emergency publication lacks environment approval, justification, a timed-out self-hosted gate, or targets a non-waivable check
-- **THEN** publication is rejected
-
-#### Scenario: Revalidate an emergency release
-- **WHEN** the unavailable infrastructure returns
-- **THEN** the waived checks run against the exact published artifacts within seven days
-- **AND** any failure is remediated with a new version
 
 ### Requirement: Initial Signing and Standalone-Asset Scope
 The initial npm-only distribution SHALL rely on SHA-256 manifests, GitHub artifact attestations, and npm trusted-publishing provenance. It SHALL NOT claim Apple notarization, Apple code signing, Windows Authenticode signing, or support for standalone executable downloads. The GitHub Release SHALL not attach raw executable archives.

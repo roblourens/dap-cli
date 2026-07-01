@@ -94,7 +94,7 @@ Release acceptance SHALL include every gate defined by `release-pipeline`, the d
 - **WHEN** a release candidate is evaluated
 - **THEN** all required verification categories pass
 - **AND** each supported macOS, Linux, and Windows binary target has cross-platform CI evidence
-- **AND** the startup performance budgets and baseline-improvement requirement pass
+- **AND** the GitHub-hosted startup performance budgets and native-regression requirements pass
 
 ### Requirement: Irreversible Implementation Boundary
 The TypeScript implementation deletion SHALL NOT be rolled back during implementation as a means of recovering behavior, passing tests, or completing the Rust rewrite.

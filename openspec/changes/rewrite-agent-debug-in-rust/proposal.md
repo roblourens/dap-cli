@@ -31,7 +31,7 @@ The rewrite must be clean-room and self-contained: the TypeScript implementation
 - `go-debugging`: Delve launch/test/exec/local-attach behavior, toolchain compatibility, environment forwarding, and cleanup safety.
 - `rust-debugging`: CodeLLDB explicit-binary launch and owned local attach, Rust-focused defaults, verified platform boundary, and official-source provisioning.
 - `distribution-performance`: Rust workspace layout, native npm installer, supported release targets, no Node runtime dependency, startup benchmarks, and latency budgets.
-- `release-pipeline`: Exact GitHub Actions workflows, native runner matrix, compatibility-floor and performance runners, artifact handoff, npm trusted publication, recovery, and GitHub Release sequencing.
+- `release-pipeline`: Exact GitHub Actions workflows, GitHub-hosted native and performance runner matrix, artifact handoff, npm trusted publication, recovery, and GitHub Release sequencing.
 - `verification-contract`: Clean-room implementation boundary, retained fixtures and smoke scenarios, black-box compatibility harness, native Rust tests, packaging validation, and release acceptance gates.
 
 ### Modified Capabilities

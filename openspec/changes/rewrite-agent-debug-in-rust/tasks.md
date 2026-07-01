@@ -104,12 +104,12 @@
 
 ## 10. Build Native npm Distribution and Release Automation
 
-- [ ] 10.1 Replace `.github/workflows/publish.yml` with `.github/workflows/ci.yml` and `.github/workflows/release.yml`, including stable-tag, dry-run/recovery, and protected emergency dispatch inputs, immutable tag/version/default-branch validation, per-tag concurrency, and no publication from pull requests or branch refs.
-- [ ] 10.2 Add root `rust-toolchain.toml`, committed Cargo target configuration and vendor directory, offline locked native release builds on `macos-15`, `macos-15-intel`, `ubuntu-24.04`, `ubuntu-24.04-arm`, and `windows-2022`, plus a pinned `cargo-deny` license/source/ban/duplicate/advisory gate; pin actions, Linux containers, Node.js, npm, and other release tooling immutably.
+- [ ] 10.1 Replace `.github/workflows/publish.yml` with `.github/workflows/ci.yml` and `.github/workflows/release.yml`, including stable-tag and dry-run/recovery dispatch inputs, immutable tag/version/default-branch validation, per-tag concurrency, and no publication from pull requests or branch refs.
+- [ ] 10.2 Add root `rust-toolchain.toml`, committed Cargo target configuration and vendor directory, offline locked native release builds on `macos-15`, `macos-15-intel`, `ubuntu-24.04`, `ubuntu-24.04-arm`, and `windows-2022`, plus a pinned `cargo-deny` license/source/ban/duplicate/advisory gate; pin actions, Node.js, npm, and other release tooling immutably.
 - [ ] 10.3 Implement `scripts/release.mjs` with deterministic `validate`, `stage-platform`, `assemble`, `verify`, and `publish` subcommands and expose each through root npm scripts without adding Node.js to the product invocation path.
 - [ ] 10.4 Stage each native build as executable plus `artifact.json` and `SHA256SUMS`, verify target and runner architecture, upload it with 14-day retention, validate upload digests, and generate GitHub build-provenance attestations.
-- [ ] 10.5 Run Linux floor smoke inside digest-pinned glibc 2.28 containers and on credential-free kernel 4.18/glibc 2.28 arm64/x64 runners; configure and validate credential-free macOS 12 arm64/x64 and Windows 10 1809 x64 floor runners; block release when a required floor runner is absent or mismatched.
-- [ ] 10.6 Run the absolute startup gate against the exact macOS arm64 candidate on `[self-hosted, agent-debug-performance, macos-15, arm64, m3-max]` and keep target-relative regression checks in GitHub-hosted jobs.
+- [ ] 10.5 Execute every release artifact and run core CLI/controller smoke tests on the same pinned GitHub-hosted runner that built it; make no older OS, kernel, or libc compatibility claim.
+- [ ] 10.6 Run the absolute startup gate against the exact macOS arm64 candidate on `macos-15` and run target-relative native regression checks in the other GitHub-hosted jobs.
 - [ ] 10.7 Create the exact target-restricted npm platform packages named in `distribution-performance`, containing only the applicable native payload, package metadata, license, and checksum evidence.
 - [ ] 10.8 Create `@roblourens/agent-debug` with exact-version optional platform dependencies and the required local/global/npx install lifecycle hook; implement checksum verification, atomic copy to fixed `bin/agent-debug.exe`, POSIX mode setup, and Unix/Windows command-link repair.
 - [ ] 10.9 Assemble the six npm tarballs only from current-run native artifacts and produce `release-manifest.json` binding package integrity, executable digests, targets, tag, commit, and attestation references.
@@ -118,9 +118,8 @@
 - [ ] 10.12 After prepublication verification, create or verify a draft GitHub Release containing the exact six candidate tarballs, `release-manifest.json`, and aggregate checksums; require fresh recovery runs to use those assets whenever partial public publication exists, and require a new version if they are missing or inconsistent.
 - [ ] 10.13 Implement integrity-aware idempotent publication from the draft bundle: publish or verify all five platform packages first, fail on an integrity collision, and publish the meta package only after every exact platform version is visible.
 - [ ] 10.14 Add five-platform public-registry local/global/npx verification with bounded propagation retries, then remove candidate tarballs from the draft and publish the GitHub Release with `release-manifest.json` and `SHA256SUMS` only after all checks pass.
-- [ ] 10.15 Add the protected `emergency-release` environment flow that can waive only a timed-out self-hosted floor/performance gate for an urgent security release, records approval and justification, and reruns waived gates against published artifacts within seven days.
-- [ ] 10.16 Enforce least-privilege job permissions, credential-free self-hosted jobs, immutable tags, no cancellation during publication, and new-version-only remediation after a published-version defect.
-- [ ] 10.17 Document the npm-only signing scope: checksums, GitHub attestations, and npm provenance are required; raw standalone archives and Apple/Windows signing claims remain blocked pending a reviewed specification update.
+- [ ] 10.15 Enforce least-privilege job permissions, GitHub-hosted-only execution, immutable tags, no cancellation during publication, and new-version-only remediation after a published-version defect.
+- [ ] 10.16 Document the npm-only signing scope: checksums, GitHub attestations, and npm provenance are required; raw standalone archives and Apple/Windows signing claims remain blocked pending a reviewed specification update.
 
 ## 11. Migrate the Complete Verification Suite
 
@@ -147,8 +146,8 @@
 
 ## 13. Meet Performance, Security, and Platform Gates
 
-- [ ] 13.1 Add the specified Apple M3 Max reference harness with release binaries, isolated home, drained non-TTY output, 5 warm-ups, 3 trials of 60 measured spawns, complete metadata, and target-specific 20 percent regression checks elsewhere.
-- [ ] 13.2 Meet median/p95 budgets for `--version`, `--help`, and warm controller `status`, and demonstrate at least fourfold median improvement over each captured TypeScript baseline.
+- [ ] 13.1 Add the specified GitHub-hosted `macos-15` reference harness with release binaries, isolated home, drained non-TTY output, 5 warm-ups, 3 trials of 60 measured spawns, runner-image metadata, and target-specific 20 percent regression checks elsewhere.
+- [ ] 13.2 Meet median/p95 budgets for `--version`, `--help`, and warm controller `status`; retain the captured TypeScript values as historical context rather than a cross-host release ratio.
 - [ ] 13.3 Profile and remove avoidable fast-path initialization until all startup gates pass in release mode.
 - [ ] 13.4 Verify controller and adapter IPC remain local-only on every supported platform.
 - [ ] 13.5 Verify private local-state permissions, archive traversal/symlink defenses, environment/argument/URL/token redaction, checksum enforcement, owned-process-only cleanup, and terminal sanitization.
@@ -157,7 +156,7 @@
 ## 14. Complete End-to-End Release Verification
 
 - [ ] 14.1 Run Rust formatting, clippy with warnings denied, all native tests, all black-box tests, release builds, and strict OpenSpec validation.
-- [ ] 14.2 Run the gated real js-debug, debugpy, Delve, CodeLLDB, Playwright, self-hosting, and packaging suites in their supported environments.
+- [ ] 14.2 Run the gated real js-debug, debugpy, Delve, CodeLLDB, Playwright, dogfood debugging, and packaging suites in their supported environments.
 - [ ] 14.3 Install the produced `@roblourens/agent-debug` package in a clean environment and verify the installed native payload, command tree, JSON contract, state namespace, and no Node invocation dependency.
 - [ ] 14.4 Hand-drive adapted smoke Sequence A and Sequence B with the native executable and capture verbatim terminal output.
 - [ ] 14.5 Hand-drive adapted smoke Sequence C on a clean adapter cache and capture prompt, install, cache reuse, and non-TTY consent behavior.

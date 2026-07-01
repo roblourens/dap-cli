@@ -376,7 +376,7 @@ Performance choices:
 - Avoid scanning adapter caches or launch files unless the command needs them.
 - Keep human rendering and color setup off the JSON fast path.
 
-The absolute benchmark host is the planning machine: Apple M3 Max, arm64, 14 logical CPUs, 36 GiB RAM, macOS 15.7.7, local APFS, AC power. The harness uses release binaries, 5 warm-ups, 3 trials of 60 measured spawns, and wall-clock spawn-to-exit timing with drained non-TTY output. Other targets use stored target-native baselines and a 20 percent regression budget.
+The release-blocking absolute benchmark runs on the pinned GitHub-hosted `macos-15` arm64 runner using the exact release artifact. The harness uses release binaries, 5 warm-ups, 3 trials of 60 measured spawns, and wall-clock spawn-to-exit timing with drained non-TTY output. The report records the runner image and available hardware metadata. Other GitHub-hosted targets use stored target-native baselines and a 20 percent regression budget.
 
 ### 17. Distribute native binaries through npm platform packages
 
@@ -400,17 +400,17 @@ The meta package is `@roblourens/agent-debug`. Platform packages are optional de
 
 Exact packages and targets:
 
-| Package | Rust target | Minimum |
+| Package | Rust target | Release validation runner |
 | --- | --- | --- |
-| `@roblourens/agent-debug-darwin-arm64` | `aarch64-apple-darwin` | macOS 12 |
-| `@roblourens/agent-debug-darwin-x64` | `x86_64-apple-darwin` | macOS 12 |
-| `@roblourens/agent-debug-linux-x64` | `x86_64-unknown-linux-gnu` | kernel 4.18, glibc 2.28 |
-| `@roblourens/agent-debug-linux-arm64` | `aarch64-unknown-linux-gnu` | kernel 4.18, glibc 2.28 |
-| `@roblourens/agent-debug-win32-x64` | `x86_64-pc-windows-msvc` | Windows 10 1809, static CRT |
+| `@roblourens/agent-debug-darwin-arm64` | `aarch64-apple-darwin` | `macos-15` |
+| `@roblourens/agent-debug-darwin-x64` | `x86_64-apple-darwin` | `macos-15-intel` |
+| `@roblourens/agent-debug-linux-x64` | `x86_64-unknown-linux-gnu` | `ubuntu-24.04`, glibc 2.39 |
+| `@roblourens/agent-debug-linux-arm64` | `aarch64-unknown-linux-gnu` | `ubuntu-24.04-arm`, glibc 2.39 |
+| `@roblourens/agent-debug-win32-x64` | `x86_64-pc-windows-msvc` | `windows-2022` |
 
 The meta package uses exact-version optional dependencies. Its required install hook verifies the selected payload and atomically writes a fixed `bin/agent-debug.exe` target (the internal extension is used on every platform). It then creates or repairs Unix links and Windows `.cmd`/PowerShell shims so they execute the native target directly rather than Node. Standard local, global, and npx installs are tested. Lifecycle-disabled package-manager modes are explicitly unsupported.
 
-Release automation builds each target in a clean matrix job, verifies the oldest supported ABI environment, uploads checksums and provenance, assembles npm packages from those exact artifacts, installs the produced meta package through local/global/npx paths, removes Node from the core invocation PATH where practical, and runs the installed command.
+Release automation builds and runs each target on its pinned GitHub-hosted runner, uploads checksums and provenance, assembles npm packages from those exact artifacts, installs the produced meta package through local/global/npx paths, removes Node from the core invocation PATH where practical, and runs the installed command. Older operating-system, kernel, and libc versions are not an initial support claim; the GNU Linux artifacts may require Ubuntu 24.04's glibc 2.39.
 
 ### 18. Use one explicit cross-platform release pipeline
 
@@ -419,17 +419,16 @@ The current Ubuntu-only `.github/workflows/publish.yml` is replaced by:
 - `.github/workflows/ci.yml` for pull requests and pushes to the default branch.
 - `.github/workflows/release.yml` for tagged release builds, package validation, npm publication, and final GitHub Release creation.
 
-`release.yml` runs automatically for stable `v<major>.<minor>.<patch>` tags. A manual dispatch accepts an existing tag, a `publish` input that defaults to false, and an `emergency` input that defaults to false, providing a full dry run, explicit recovery, and a protected break-glass path. Pull requests and ordinary branch pushes cannot enter publication jobs. The workflow uses a per-tag concurrency group with cancellation disabled.
+`release.yml` runs automatically for stable `v<major>.<minor>.<patch>` tags. A manual dispatch accepts an existing tag and a `publish` input that defaults to false, providing a full dry run and explicit recovery path. Pull requests and ordinary branch pushes cannot enter publication jobs. The workflow uses a per-tag concurrency group with cancellation disabled.
 
 The release graph is:
 
 ```text
 validate immutable tag/version/source
   ├─ build-native[5] -> attest and upload native artifacts
-  │    ├─ Linux glibc-floor smoke in build containers
-  │    └─ macOS/Windows floor smoke on credential-free runners
+  │    └─ execute each artifact and run smoke on its build runner
   ├─ native/unit/integration release gates
-  └─ M3 Max absolute performance gate
+  └─ macos-15 arm64 absolute performance gate
        -> assemble six npm tarballs and release manifest
        -> prepublish install matrix[5] through ephemeral npm registry
        -> persist exact candidate tarballs in a draft GitHub Release
@@ -442,10 +441,10 @@ Native release jobs use exact non-`latest` GitHub-hosted runners:
 
 | Target | Runner | Additional build constraint |
 | --- | --- | --- |
-| `aarch64-apple-darwin` | `macos-15` | `MACOSX_DEPLOYMENT_TARGET=12.0` |
-| `x86_64-apple-darwin` | `macos-15-intel` | `MACOSX_DEPLOYMENT_TARGET=12.0` |
-| `x86_64-unknown-linux-gnu` | `ubuntu-24.04` | digest-pinned manylinux glibc 2.28 x64 container |
-| `aarch64-unknown-linux-gnu` | `ubuntu-24.04-arm` | digest-pinned manylinux glibc 2.28 arm64 container |
+| `aarch64-apple-darwin` | `macos-15` | native GitHub-hosted build |
+| `x86_64-apple-darwin` | `macos-15-intel` | native GitHub-hosted build |
+| `x86_64-unknown-linux-gnu` | `ubuntu-24.04` | native GitHub-hosted build |
+| `aarch64-unknown-linux-gnu` | `ubuntu-24.04-arm` | native GitHub-hosted build |
 | `x86_64-pc-windows-msvc` | `windows-2022` | static CRT from committed Cargo configuration |
 
 Every build verifies its runner architecture and uses the committed lockfile, committed Cargo vendor directory, source-replacement configuration, and the toolchain pinned in root `rust-toolchain.toml`:
@@ -459,15 +458,7 @@ Each build stages `release/native/<target>/agent-debug[.exe]`, `artifact.json`, 
 
 A GitHub-hosted prebuild job runs a pinned `cargo-deny` version against a reviewed license/source/ban/duplicate policy and pinned advisory snapshot. Rust release builds use only vendored dependencies and run without registry network access. Exceptions are explicit, scoped, justified, and time-bounded.
 
-Linux floor smoke runs inside the glibc 2.28 build containers. The compatibility floors that GitHub-hosted runners do not provide are maintained as credential-free self-hosted runners:
-
-- `[self-hosted, agent-debug-floor, linux-kernel-4.18, glibc-2.28, arm64]`
-- `[self-hosted, agent-debug-floor, linux-kernel-4.18, glibc-2.28, x64]`
-- `[self-hosted, agent-debug-floor, macos-12, arm64]`
-- `[self-hosted, agent-debug-floor, macos-12, x64]`
-- `[self-hosted, agent-debug-floor, windows-10-1809, x64]`
-
-The absolute performance job uses `[self-hosted, agent-debug-performance, macos-15, arm64, m3-max]`. Every such job validates the actual OS, architecture, and hardware identity and runs only the downloaded candidate artifact. Missing floor or performance infrastructure blocks a release instead of converting the check into a skip.
+Every artifact runs core CLI and controller smoke tests on the same GitHub-hosted runner that built it. The `macos-15` arm64 job also runs the absolute startup budgets; the other jobs run stored native regression checks. No self-hosted runner or private machine is part of CI or release automation, and the initial release does not claim compatibility with older OS, kernel, or libc versions that are not represented by these runners.
 
 Cross-platform release logic is centralized in `scripts/release.mjs` with `validate`, `stage-platform`, `assemble`, `verify`, and `publish` subcommands, exposed through corresponding root npm scripts. Workflow YAML directly invokes Cargo and OS inspection, but does not duplicate package layout, checksum, manifest, integrity-comparison, or publication-order logic in shell snippets. The release tool runs on a pinned Node.js 22 patch and pinned trusted-publishing-compatible npm version; neither is on the installed product invocation path.
 
@@ -481,9 +472,7 @@ Publication is idempotent. Platform packages are handled first. An absent versio
 
 After the meta package is visible, the five-platform matrix repeats local, global, and npx installation from the public registry with bounded propagation retries. Only then does the final job delete the six candidate tarballs from the draft and publish it with `release-manifest.json` and `SHA256SUMS`. Reruns verify and reuse a matching public release or repair missing matching evidence, but fail on conflicting evidence. A defect after meta-package publication requires a new version; the workflow never unpublishes or mutates the released version.
 
-Workflow permissions default to `contents: read`. Attestation, draft-bundle, npm OIDC, and final GitHub Release jobs receive only their narrow additional permissions. Actions are pinned to full commit SHAs, containers to digests, self-hosted jobs receive no secrets, and the workflow never moves or force-pushes a tag.
-
-Required self-hosted jobs have bounded timeouts. An urgent security fix may use `workflow_dispatch` with `emergency: true` only through a protected `emergency-release` environment after a required self-hosted gate times out. The approval and justification may waive only the unavailable self-hosted floor or M3 Max check; GitHub-hosted build, dependency, test, package, integrity, OIDC, and public-install gates remain mandatory. The release manifest records the waiver and a seven-day deadline to rerun the skipped check against the published artifact. A failed follow-up produces a corrective patch release.
+Workflow permissions default to `contents: read`. Attestation, draft-bundle, npm OIDC, and final GitHub Release jobs receive only their narrow additional permissions. Actions are pinned to full commit SHAs, and the workflow never moves or force-pushes a tag.
 
 The initial distribution remains npm-only. Checksums, GitHub attestations, and npm provenance are required, but Apple signing/notarization and Windows Authenticode are not claimed. Raw executable archives are not attached to GitHub Releases. Adding standalone downloads or platform-signing claims requires a reviewed specification update covering key custody and failure handling.
 

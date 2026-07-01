@@ -25,17 +25,19 @@ The npm package `@roblourens/agent-debug` SHALL install a direct native `agent-d
 - **AND** no JavaScript launcher is evaluated
 
 ### Requirement: Supported Native Payloads
-The release SHALL provide these exact native targets and compatibility floors:
+The release SHALL provide these exact native targets and SHALL validate them on the corresponding pinned GitHub-hosted runner:
 
-| npm platform package | Rust target | Compatibility floor |
+| npm platform package | Rust target | Release validation runner |
 | --- | --- | --- |
-| `@roblourens/agent-debug-darwin-arm64` | `aarch64-apple-darwin` | macOS 12 or newer |
-| `@roblourens/agent-debug-darwin-x64` | `x86_64-apple-darwin` | macOS 12 or newer |
-| `@roblourens/agent-debug-linux-x64` | `x86_64-unknown-linux-gnu` | Linux kernel 4.18+ and glibc 2.28+ |
-| `@roblourens/agent-debug-linux-arm64` | `aarch64-unknown-linux-gnu` | Linux kernel 4.18+ and glibc 2.28+ |
-| `@roblourens/agent-debug-win32-x64` | `x86_64-pc-windows-msvc` | Windows 10 version 1809+ with the CRT linked statically |
+| `@roblourens/agent-debug-darwin-arm64` | `aarch64-apple-darwin` | `macos-15` |
+| `@roblourens/agent-debug-darwin-x64` | `x86_64-apple-darwin` | `macos-15-intel` |
+| `@roblourens/agent-debug-linux-x64` | `x86_64-unknown-linux-gnu` | `ubuntu-24.04` with glibc 2.39 |
+| `@roblourens/agent-debug-linux-arm64` | `aarch64-unknown-linux-gnu` | `ubuntu-24.04-arm` with glibc 2.39 |
+| `@roblourens/agent-debug-win32-x64` | `x86_64-pc-windows-msvc` | `windows-2022` |
 
 Each platform package SHALL be restricted with npm `os` and `cpu` metadata and SHALL use exactly the same version as `@roblourens/agent-debug`.
+
+The initial release SHALL support only the pinned GitHub-hosted validation environments and SHALL make no compatibility guarantee for older operating-system, kernel, or libc versions. In particular, the GNU Linux payloads MAY depend on glibc 2.39 from Ubuntu 24.04 and are not expected to run on distributions with an older glibc. Broader compatibility requires a reviewed requirement and a different verified build strategy.
 
 #### Scenario: Install on a supported platform
 - **WHEN** `@roblourens/agent-debug` is installed on a supported operating-system and architecture pair
@@ -46,9 +48,10 @@ Each platform package SHALL be restricted with npm `os` and `cpu` metadata and S
 - **WHEN** installation runs on an operating-system and architecture pair outside the supported target set
 - **THEN** installation fails with a diagnostic that identifies the unsupported pair
 
-#### Scenario: Run on the compatibility floor
-- **WHEN** a release payload is tested on the oldest supported OS/libc environment for its target
-- **THEN** core CLI and controller smoke tests pass without a newer runtime library
+#### Scenario: Run on the release validation runner
+- **WHEN** a release payload is built on its pinned GitHub-hosted runner
+- **THEN** core CLI and controller smoke tests pass on that runner
+- **AND** the release does not claim unverified older-OS compatibility
 
 ### Requirement: Exact npm Installer Layout
 `@roblourens/agent-debug` SHALL declare exact-version optional dependencies on all five platform packages and SHALL include a required install lifecycle hook. The hook SHALL map `process.platform` and `process.arch` to one platform package, resolve its fixed native payload path, verify it against the meta package's checksum manifest, atomically copy it to `bin/agent-debug.exe`, set executable permissions on POSIX, and create or repair npm command links so `agent-debug` executes that native file directly. JavaScript launch shims SHALL NOT remain on the invocation path.
@@ -81,31 +84,29 @@ Every native release SHALL publish checksums and provenance for its native paylo
 - **AND** it records provenance linking the payload to the release build
 
 ### Requirement: Reproducible Startup Benchmark
-The absolute startup gate SHALL run on the recorded reference host: Apple M3 Max, arm64, 14 logical CPUs, 36 GiB RAM, macOS 15.7.7, local APFS storage, AC power, and release-mode binaries. Replacing that host or environment requires a reviewed specification update and a newly captured TypeScript/native comparison.
+The release-blocking startup gate SHALL run on the pinned GitHub-hosted `macos-15` arm64 runner using the exact release-mode artifact intended for `@roblourens/agent-debug-darwin-arm64`. The report SHALL record the GitHub runner image version and available hardware metadata. A runner-image or hardware-class change SHALL require a reviewed native-baseline refresh before regression comparisons resume.
 
-The benchmark harness SHALL measure wall-clock time from immediately before process spawn until process exit after stdout and stderr have been fully drained. It SHALL use a new isolated `AGENT_DEBUG_HOME`, redirect output to files or null without a terminal, perform at least 5 unmeasured warm-up invocations, and run 3 trials of 60 measured invocations per command. Warm controller status SHALL start and verify one controller before each trial and reuse it for that trial. The report SHALL include OS build, hardware, power mode, filesystem, Rust toolchain, binary digest, command, trial samples, median, p95, and captured TypeScript baseline.
+The benchmark harness SHALL measure wall-clock time from immediately before process spawn until process exit after stdout and stderr have been fully drained. It SHALL use a new isolated `AGENT_DEBUG_HOME`, redirect output to files or null without a terminal, perform at least 5 unmeasured warm-up invocations, and run 3 trials of 60 measured invocations per command. Warm controller status SHALL start and verify one controller before each trial and reuse it for that trial. The report SHALL include runner image, available hardware metadata, filesystem, Rust toolchain, binary digest, command, trial samples, median, p95, and the stored native baseline for that runner image.
 
 #### Scenario: Benchmark version and help startup
 - **WHEN** release validation benchmarks `agent-debug --version` and `agent-debug --help`
 - **THEN** each command is measured using the required warm-ups and 3 trials of 60 invocations
-- **AND** at least two of three trials have median latency no greater than 25 ms and p95 latency no greater than 40 ms on the reference host
+- **AND** at least two of three trials have median latency no greater than 25 ms and p95 latency no greater than 40 ms on `macos-15`
 
 #### Scenario: Benchmark warm controller status
 - **WHEN** release validation benchmarks controller status after the controller has been warmed in the isolated home
 - **THEN** status is measured using the required warm-ups and 3 trials of 60 invocations
-- **AND** at least two of three trials have median latency no greater than 30 ms and p95 latency no greater than 50 ms on the reference host
+- **AND** at least two of three trials have median latency no greater than 30 ms and p95 latency no greater than 50 ms on `macos-15`
 
 #### Scenario: Run performance checks on another target
-- **WHEN** CI runs on a supported target other than the absolute reference host
+- **WHEN** CI runs on another supported GitHub-hosted target
 - **THEN** it compares against a stored native baseline for that target with a 20 percent regression budget
-- **AND** it does not apply the Apple M3 Max absolute millisecond thresholds
+- **AND** it does not apply the macOS arm64 absolute millisecond thresholds
 
-### Requirement: TypeScript Baseline Improvement
-The native executable SHALL achieve at least a fourfold improvement in median startup latency over the captured TypeScript baselines of 108.27 ms for version, 112.19 ms for help, and 113.31 ms for warm controller status.
+### Requirement: Historical TypeScript Baseline Context
+Benchmark reports SHALL retain the captured TypeScript baselines of 108.27 ms for version, 112.19 ms for help, and 113.31 ms for warm controller status as planning context. Because those values were measured on a different non-CI host, release automation SHALL NOT use them for a cross-host performance ratio. Release acceptance SHALL use the GitHub-hosted absolute budgets and stored native regression baselines.
 
-#### Scenario: Compare native results with captured baselines
-- **WHEN** the native startup benchmark results are evaluated
-- **THEN** the version median is no greater than 27.0675 ms
-- **AND** the help median is no greater than 28.0475 ms
-- **AND** the warm controller status median is no greater than 28.3275 ms
-- **AND** the stricter absolute latency budgets also remain satisfied
+#### Scenario: Report historical context
+- **WHEN** startup benchmark evidence is produced
+- **THEN** it records the captured TypeScript values as historical context
+- **AND** pass or fail is determined only by the GitHub-hosted absolute and native-regression gates
